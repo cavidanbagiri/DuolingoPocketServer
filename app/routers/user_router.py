@@ -79,6 +79,7 @@ async def login(response: Response, login_data: UserLoginSchema, db_session: Ann
 @router.post("/refresh", status_code=200)
 async def refresh_token(response: Response, request: Request, db: AsyncSession = Depends(get_db)):
 
+
     # Initialize the middleware with the database session
     middleware = VerifyRefreshTokenMiddleware(db)
     try:
