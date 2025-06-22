@@ -1,13 +1,11 @@
 
-import os
-
 from typing import Annotated
 
-import httpx
 from fastapi import APIRouter, HTTPException, status
 from fastapi.params import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.constants.supported_languages import SUPPORTED_LANGUAGES
 from app.database.setup import get_db
 from app.repositories.translate_repository import TranslateRepository
 from app.schemas.translate_schema import TranslateSchema
@@ -32,3 +30,12 @@ async def translate(data: TranslateSchema, db: Annotated[AsyncSession, Depends(g
     except Exception as ex:
         logger.error(f'Create Warehouse Error {ex}')
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='Internal Server Error')
+
+
+@router.get("/languages", status_code = status.HTTP_200_OK)
+def get_supported_languages():
+    try:
+        return SUPPORTED_LANGUAGES
+    except Exception as ex:
+        logger.error(f"Get supported languages error {ex}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal Server Error")
