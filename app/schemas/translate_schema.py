@@ -1,12 +1,15 @@
-
+import os
 
 from pydantic import BaseModel
 
+
 class TranslateSchema(BaseModel):
+    q: str
+    source: str = "auto"
+    target: str
+    alternatives: int = 3
 
-    q: str | None
-    source: str | None
-    target: str | None
-    format: str | None
-    alternatives: int | None
 
+class DetectLanguageSchema(BaseModel):
+    text: str
+    folder_id: str = os.getenv("YANDEX_FOLDER_ID")
