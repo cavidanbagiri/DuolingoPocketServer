@@ -7,6 +7,7 @@ from fastapi import Request, HTTPException
 
 from sqlalchemy import update, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.responses import Response
 
 from app.auth.token_handler import TokenHandler
 
@@ -20,7 +21,7 @@ class VerifyRefreshTokenMiddleware:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def validate_refresh_token(self, request: Request):
+    async def validate_refresh_token(self, request: Request, response: Response):
 
         refresh_token = request.cookies.get('refresh_token')
 
@@ -50,10 +51,18 @@ class VerifyRefreshTokenMiddleware:
             # Refresh token will check expiry date, less than 7 days, will change
             exp = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
             now = datetime.now(timezone.utc)
-
             if exp - now < timedelta(days=7):
                 new_refresh_token = TokenHandler.generate_refresh_token(payload)
                 await UpdateRefreshTokenRepository(self.db).update_refresh_token(int(payload['sub']), new_refresh_token)
+
+                response.set_cookie(
+                    key="refresh_token",
+                    value=new_refresh_token,
+                    httponly=True,
+                    secure=True,  # Ensure this is True in production
+                    samesite="none",
+                )
+
             else:
                 new_refresh_token = refresh_token
 
@@ -107,11 +116,24 @@ class DeleteRefreshTokenRepository:
     async def delete_refresh_token(self, user_id: int) -> None:
 
         try:
+
+            result = await self.db.execute(
+                select(TokenModel).where(TokenModel.user_id == user_id)
+            )
+
+            token = result.scalars().first()
+
+            if not token:
+                user_logger.warning(f"No refresh token found for user {user_id} (already logged out?)")
+                return
+
+            # Delete Token
             await self.db.execute(
                 delete(TokenModel).where(TokenModel.user_id == user_id)
             )
             await self.db.commit()
             user_logger.info(f"Refresh token deleted for user {user_id}.")
+
         except Exception as e:
             user_logger.error(f"Error deleting refresh token for user {user_id}: {str(e)}")
             raise

@@ -4,6 +4,7 @@ from typing import Any, Coroutine, Union
 from fastapi import HTTPException
 
 from sqlalchemy import insert, select, delete
+from sqlalchemy.exc import NoResultFound, DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.refresh_token_handler import DeleteRefreshTokenRepository
@@ -207,7 +208,7 @@ class UserLogoutRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def logout(self, user_id: int) -> bool:
+    async def logout(self, user_id: int):
         """
         Logs out a user by deleting their refresh token.
 
@@ -217,7 +218,14 @@ class UserLogoutRepository:
         try:
             await DeleteRefreshTokenRepository(self.db).delete_refresh_token(user_id)
             logger.info(f"User {user_id} logged out successfully.")
-            return True
+            return {"detail": "Logged out"}
+        except NoResultFound:
+            logger.warning(f"User {user_id} tried to log out but no token found.")
+            return {"detail": "Already logged out"}
+        except DBAPIError as e:
+            logger.error(f"Database error during logout: {str(e)}")
+            raise HTTPException(status_code=500, detail="Internal server error during logout")
         except Exception as e:
-            logger.error(f"Error logging out user {user_id}: {str(e)}")
-            raise HTTPException(status_code=404, detail = f'Error logging out user {user_id}: {str(e)}')
+            logger.exception(f"Unexpected error during logout {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="An unexpected error occurred")
+

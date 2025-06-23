@@ -79,23 +79,12 @@ async def login(response: Response, login_data: UserLoginSchema, db_session: Ann
 @router.post("/refresh", status_code=200)
 async def refresh_token(response: Response, request: Request, db: AsyncSession = Depends(get_db)):
 
-    print('refresh token is working')
-
     middleware = VerifyRefreshTokenMiddleware(db)
     try:
-        user_info = await middleware.validate_refresh_token(request)
+        user_info = await middleware.validate_refresh_token(request, response)
         if not user_info:
             response.delete_cookie(key="refresh_token")
             raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
-
-        # Set the new refresh token in an HTTP-only cookie
-        response.set_cookie(
-            key="refresh_token",
-            value=user_info.get("refresh_token"),
-            httponly=True,
-            secure=True,  # Ensure this is True in production
-            samesite="none",
-        )
 
         return {
             "access_token": user_info.get("access_token"),
