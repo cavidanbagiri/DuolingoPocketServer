@@ -2,11 +2,12 @@ import os
 
 import httpx
 from fastapi import HTTPException
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
-from app.schemas.translate_schema import TranslateSchema, DetectLanguageSchema
-
-
+from app.models.word_model import WordModel, UserSavedWord
+from app.schemas.translate_schema import TranslateSchema, WordSchema
 
 from app.logging_config import setup_logger
 logger = setup_logger(__name__, "translate.log")
@@ -91,75 +92,50 @@ class TranslateRepository:
             )
 
 
+class SaveWordRepository:
 
-# class TranslateRepository:
-#     def __init__(self, data: TranslateSchema):
-#         self.data = data
-#         self.api_key = os.getenv("YANDEX_TRANSLATE_API_SECRET_KEY")
-#         self.folder_id = os.getenv("YANDEX_FOLDER_ID")
-#         self.translate_url = "https://translate.api.cloud.yandex.net/translate/v2/translate"
-#         self.detect_url = "https://translate.api.cloud.yandex.net/translate/v2/detect"
-#
-#     async def translate(self):
-#         headers = {
-#             "Content-Type": "application/json",
-#             "Authorization": f"Api-Key {self.api_key}"
-#         }
-#
-#         payload = {
-#             "targetLanguageCode": self.data.target,
-#             "texts": [self.data.q],
-#             "folderId": self.folder_id,
-#         }
-#
-#         # Only add source if not 'auto'
-#         if self.data.source and self.data.source.strip().lower() != "auto":
-#             payload["sourceLanguageCode"] = self.data.source
-#         else:
-#             # Let Yandex auto-detect
-#             logger.info("Auto-detecting source language...")
-#
-#         try:
-#             print(f'payload is {payload}')
-#             print(f'headers is {headers}')
-#             async with httpx.AsyncClient() as client:
-#                 response = await client.post(self.translate_url, json=payload, headers=headers)
-#                 response.raise_for_status()
-#                 result = response.json()["translations"][0]
-#
-#             return {"translation": result["text"], "detected_lang": result.get("detectedLanguageCode")}
-#
-#         except httpx.HTTPStatusError as e:
-#             logger.exception(f"Translation failed: {e}")
-#             print(f"Translation failed: {e}")
-#             raise HTTPException(status_code=500, detail="Translation service unavailable")
-#         except Exception as ex:
-#             print(f"Unexpected error during translation - {ex}")
-#             logger.exception(f"Unexpected error during translation - {ex}")
-#             raise HTTPException(status_code=500, detail="Internal Server Error")
-#
-#     async def detect_language(self):
-#         headers = {
-#             "Content-Type": "application/json",
-#             "Authorization": f"Api-Key {self.api_key}"
-#         }
-#
-#         payload = {
-#             "text": self.data.q,
-#             "folderId": self.folder_id,
-#         }
-#
-#         try:
-#             async with httpx.AsyncClient() as client:
-#                 response = await client.post(self.detect_url, json=payload, headers=headers)
-#                 response.raise_for_status()
-#                 result = response.json()
-#
-#             return {"translation": result["languageCode"]}
-#
-#         except httpx.HTTPStatusError as e:
-#             logger.exception(f"Language detection failed: {e}")
-#             raise HTTPException(status_code=500, detail="Language detection failed")
-#         except Exception as ex:
-#             logger.exception("Unexpected error during detection %s", ex)
-#             raise HTTPException(status_code=500, detail="Internal Server Error")
+    def __init__(self, data: WordSchema, user_id:int, db: AsyncSession):
+        self.data = data
+        self.user_id = int(user_id)
+        self.db = db
+
+    async def save_word(self):
+        normalized_word = self.data.word.lower().strip()
+        result = await self.db.execute(
+            select(WordModel).where(
+                func.lower(WordModel.word) == normalized_word,
+                WordModel.from_lang == self.data.from_lang,
+                WordModel.to_lang == self.data.to_lang,
+                WordModel.translation == self.data.translation
+            )
+        )
+        word = result.scalar()
+
+        if not word:
+            word = WordModel(**self.data.model_dump())
+            word.word = normalized_word
+            self.db.add(word)
+            await self.db.flush()
+        else:
+            logger.info(f"Word '{word.word}' already exists")
+
+
+        result = await self.db.execute(
+            select(UserSavedWord).where(
+                UserSavedWord.user_id == self.user_id,
+                UserSavedWord.word_id == word.id
+            )
+        )
+        user_word = result.scalars().first()
+
+        if not user_word:
+            user_word = UserSavedWord(user_id=self.user_id, word_id=word.id)
+            self.db.add(user_word)
+            await self.db.flush()
+
+        await self.db.commit()
+        await self.db.refresh(word)
+
+        return word
+
+
