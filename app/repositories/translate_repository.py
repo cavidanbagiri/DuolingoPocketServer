@@ -1,5 +1,7 @@
 import os
 
+import spacy
+
 import httpx
 from fastapi import HTTPException
 from sqlalchemy import select, func
@@ -99,8 +101,37 @@ class SaveWordRepository:
         self.user_id = int(user_id)
         self.db = db
 
+
+    def find_part_of_speech(self, selected_word):
+        nlp_en = spacy.load("en_core_web_sm")
+        doc = nlp_en(selected_word)
+
+        pos_mapping = {
+            'propn': 'NOUN',  # Proper noun → Noun
+            'noun': 'NOUN',
+            'verb': 'VERB',
+            'adj': 'ADJECTIVE',
+            'adv': 'ADVERB',
+            'pron': 'PRONOUN',
+            'adp': 'PREPOSITION',  # Adposition (preposition/postposition)
+            'conj': 'CONJUNCTION'
+        }
+
+        for token in doc:
+            mapped_pos = pos_mapping.get(token.pos_.lower(), 'OTHER')
+            if mapped_pos != 'OTHER':  # Return first significant POS found
+                return mapped_pos.lower().strip()
+
+        return 'other'  # Default fallback
+
+
     async def save_word(self):
         normalized_word = self.data.word.lower().strip()
+
+        self.data.part_of_speech = self.find_part_of_speech(normalized_word)
+
+
+        print(f'}}}}}}}}}}}}}}}}}}}}}}}}}}}}.... {self.data}')
         result = await self.db.execute(
             select(WordModel).where(
                 func.lower(WordModel.word) == normalized_word,
@@ -120,18 +151,22 @@ class SaveWordRepository:
             logger.info(f"Word '{word.word}' already exists")
 
 
-        result = await self.db.execute(
-            select(UserSavedWord).where(
-                UserSavedWord.user_id == self.user_id,
-                UserSavedWord.word_id == word.id
-            )
-        )
-        user_word = result.scalars().first()
+        # result = await self.db.execute(
+        #     select(UserSavedWord).where(
+        #         UserSavedWord.user_id == self.user_id,
+        #         UserSavedWord.word_id == word.id
+        #     )
+        # )
+        # user_word = result.scalars().first()
+        #
+        # if not user_word:
+        #     user_word = UserSavedWord(user_id=self.user_id, word_id=word.id)
+        #     self.db.add(user_word)
+        #     await self.db.flush()
 
-        if not user_word:
-            user_word = UserSavedWord(user_id=self.user_id, word_id=word.id)
-            self.db.add(user_word)
-            await self.db.flush()
+        await self.db.merge(
+            UserSavedWord(user_id=self.user_id, word_id=word.id)
+        )
 
         await self.db.commit()
         await self.db.refresh(word)

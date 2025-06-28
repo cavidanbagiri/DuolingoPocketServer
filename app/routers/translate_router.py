@@ -64,6 +64,7 @@ async def save_word(data: WordSchema,
                     db:Annotated[AsyncSession, Depends(get_db)],
                     user_info = Depends(TokenHandler.verify_access_token)
                     ):
+    print(f'coming data is ........................... {data}')
     try:
         repository = SaveWordRepository(data, user_info.get('sub'), db)
         return_data = await repository.save_word()
