@@ -169,7 +169,7 @@ class SaveWordRepository:
                 func.lower(WordModel.word) == normalized_word,
                 WordModel.from_lang == self.data.from_lang,
                 WordModel.to_lang == self.data.to_lang,
-                WordModel.translation == self.data.translation
+                WordModel.translation == self.data.translation.strip().lower()
             )
         )
         word = word.scalar()

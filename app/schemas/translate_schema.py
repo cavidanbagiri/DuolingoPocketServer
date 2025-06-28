@@ -37,6 +37,10 @@ class WordSchema(BaseModel):
     def normalize_word(cls, value):
         return value.lower().strip()
 
+    @field_validator("translation")
+    def normalize_translation(cls, value):
+        return value.lower().strip()
+
     class Config:
         from_attributes = True
 
