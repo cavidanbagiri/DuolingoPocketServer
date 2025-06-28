@@ -1,6 +1,11 @@
 import os
 
+from fastapi.concurrency import run_in_threadpool
+from functools import lru_cache
 import spacy
+from typing import Optional
+import logging
+
 
 import httpx
 from fastapi import HTTPException
@@ -94,45 +99,72 @@ class TranslateRepository:
             )
 
 
-class SaveWordRepository:
 
-    def __init__(self, data: WordSchema, user_id:int, db: AsyncSession):
+class SaveWordRepository:
+    _nlp = None  # Class-level model instance for thread safety
+
+    def __init__(self, data: WordSchema, user_id: int, db: AsyncSession):
         self.data = data
         self.user_id = int(user_id)
         self.db = db
 
+    @classmethod
+    async def get_nlp(cls):
+        """Thread-safe model loader with optimized pipeline"""
+        if cls._nlp is None:
+            cls._nlp = await run_in_threadpool(
+                lambda: spacy.load("en_core_web_sm",
+                                   exclude=["parser", "ner", "lemmatizer"])
+            )
+            await run_in_threadpool(
+                lambda: cls._nlp.enable_pipe("senter")
+            )
+        return cls._nlp
 
-    def find_part_of_speech(self, selected_word):
-        nlp_en = spacy.load("en_core_web_sm")
-        doc = nlp_en(selected_word)
+    @lru_cache(maxsize=1000)
+    async def find_part_of_speech(self, selected_word: str) -> str:
+        """Proper async POS tagging using FastAPI's threadpool"""
+        if not selected_word.strip():
+            return 'other'
 
-        pos_mapping = {
-            'propn': 'NOUN',  # Proper noun → Noun
-            'noun': 'NOUN',
-            'verb': 'VERB',
-            'adj': 'ADJECTIVE',
-            'adv': 'ADVERB',
-            'pron': 'PRONOUN',
-            'adp': 'PREPOSITION',  # Adposition (preposition/postposition)
-            'conj': 'CONJUNCTION'
-        }
+        try:
+            nlp = await self.get_nlp()
 
-        for token in doc:
-            mapped_pos = pos_mapping.get(token.pos_.lower(), 'OTHER')
-            if mapped_pos != 'OTHER':  # Return first significant POS found
-                return mapped_pos.lower().strip()
+            # Process text in threadpool
+            doc = await run_in_threadpool(
+                nlp,
+                selected_word.lower().strip()
+            )
 
-        return 'other'  # Default fallback
+            pos_mapping = {
+                'propn': 'noun',
+                'noun': 'noun',
+                'verb': 'verb',
+                'adj': 'adjective',
+                'adv': 'adverb',
+                'pron': 'pronoun',
+                'adp': 'preposition',
+                'conj': 'conjunction'
+            }
 
+            for token in doc:
+                if token.pos_.lower() in pos_mapping:
+                    return pos_mapping[token.pos_.lower()]
+
+            return 'other'
+
+        except Exception as e:
+            logger.error(f"POS tagging failed for '{selected_word}': {str(e)}")
+            return 'other'
 
     async def save_word(self):
         normalized_word = self.data.word.lower().strip()
 
-        self.data.part_of_speech = self.find_part_of_speech(normalized_word)
+        # Get POS tag async
+        self.data.part_of_speech = await self.find_part_of_speech(normalized_word)
 
-
-        print(f'}}}}}}}}}}}}}}}}}}}}}}}}}}}}.... {self.data}')
-        result = await self.db.execute(
+        # Upsert word
+        word = await self.db.execute(
             select(WordModel).where(
                 func.lower(WordModel.word) == normalized_word,
                 WordModel.from_lang == self.data.from_lang,
@@ -140,7 +172,7 @@ class SaveWordRepository:
                 WordModel.translation == self.data.translation
             )
         )
-        word = result.scalar()
+        word = word.scalar()
 
         if not word:
             word = WordModel(**self.data.model_dump())
@@ -150,27 +182,11 @@ class SaveWordRepository:
         else:
             logger.info(f"Word '{word.word}' already exists")
 
-
-        # result = await self.db.execute(
-        #     select(UserSavedWord).where(
-        #         UserSavedWord.user_id == self.user_id,
-        #         UserSavedWord.word_id == word.id
-        #     )
-        # )
-        # user_word = result.scalars().first()
-        #
-        # if not user_word:
-        #     user_word = UserSavedWord(user_id=self.user_id, word_id=word.id)
-        #     self.db.add(user_word)
-        #     await self.db.flush()
-
+        # Upsert user-word relationship
         await self.db.merge(
             UserSavedWord(user_id=self.user_id, word_id=word.id)
         )
 
         await self.db.commit()
         await self.db.refresh(word)
-
         return word
-
-
