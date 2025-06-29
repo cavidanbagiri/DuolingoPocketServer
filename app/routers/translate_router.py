@@ -1,14 +1,8 @@
 
-from typing import Annotated
-
 from fastapi import APIRouter, HTTPException, status
-from fastapi.params import Depends
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.token_handler import TokenHandler
 from app.constants.supported_languages import SUPPORTED_LANGUAGES
-from app.database.setup import get_db
-from app.repositories.translate_repository import TranslateRepository, SaveWordRepository
+from app.repositories.translate_repository import TranslateRepository
 from app.schemas.translate_schema import TranslateSchema, WordSchema
 
 router = APIRouter()
@@ -58,23 +52,22 @@ async def translate(data: TranslateSchema):
             detail='Internal Server Error'
         )
 
-
-@router.post('/save', status_code=201)
-async def save_word(data: WordSchema,
-                    db:Annotated[AsyncSession, Depends(get_db)],
-                    user_info = Depends(TokenHandler.verify_access_token)
-                    ):
-    print(f'coming data is ........................... {data}')
-    try:
-        repository = SaveWordRepository(data, user_info.get('sub'), db)
-        return_data = await repository.save_word()
-        return {"msg":"created","data":return_data}
-    except HTTPException as ex:
-        raise ex
-    except Exception as ex:
-        logger.error(f'Translate Error {ex}')
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail='Internal Server Error'
-        )
-
+#
+# @router.post('/save', status_code=201)
+# async def save_word(data: WordSchema,
+#                     db:Annotated[AsyncSession, Depends(get_db)],
+#                     user_info = Depends(TokenHandler.verify_access_token)
+#                     ):
+#     try:
+#         repository = SaveWordRepository(data, user_info.get('sub'), db)
+#         return_data = await repository.save_word()
+#         return {"msg":"created","data":return_data}
+#     except HTTPException as ex:
+#         raise ex
+#     except Exception as ex:
+#         logger.error(f'Translate Error {ex}')
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail='Internal Server Error'
+#         )
+#
