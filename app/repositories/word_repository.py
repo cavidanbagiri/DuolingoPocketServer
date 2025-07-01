@@ -1,4 +1,4 @@
-
+from fastapi import Query
 from sqlalchemy import select, func, text, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,9 +8,6 @@ from app.schemas.translate_schema import WordSchema
 from fastapi.concurrency import run_in_threadpool
 from functools import lru_cache
 import spacy
-from typing import Optional
-import logging
-
 
 from app.logging_config import setup_logger
 logger = setup_logger(__name__, "word.log")
@@ -18,43 +15,154 @@ logger = setup_logger(__name__, "word.log")
 
 
 class DashboardRepository:
+    def __init__(self, user_id: int, db: AsyncSession):
+        self.user_id = int(user_id)
+        self.db = db
+
+    async def get_language_pair_stats(self):
+        # Main query for language pair stats
+        query = """
+            SELECT
+                w.from_lang,
+                w.to_lang,
+                COUNT(*) as word_length,
+                SUM(CASE WHEN usw.learned = TRUE THEN 1 ELSE 0 END) as learned,
+                SUM(CASE WHEN usw.starred = TRUE THEN 1 ELSE 0 END) as starred,
+                (
+                    SELECT JSONB_OBJECT_AGG(pos, cnt)
+                    FROM (
+                        SELECT 
+                            w2.part_of_speech as pos, 
+                            COUNT(*) as cnt
+                        FROM words w2
+                        JOIN user_saved_words usw2 ON w2.id = usw2.word_id
+                        WHERE usw2.user_id = :user_id
+                        AND w2.from_lang = w.from_lang
+                        AND w2.to_lang = w.to_lang
+                        GROUP BY w2.part_of_speech
+                    ) subq
+                ) as pos_stats
+            FROM words w
+            JOIN user_saved_words usw ON w.id = usw.word_id
+            WHERE usw.user_id = :user_id
+            GROUP BY w.from_lang, w.to_lang
+            ORDER BY word_length DESC
+        """
+
+        result = await self.db.execute(
+            text(query),
+            {"user_id": self.user_id}
+        )
+
+        stats = []
+        for row in result:
+            # Convert SQLAlchemy row to dict
+            stat = {
+                "user_id": self.user_id,
+                "from_lang": row.from_lang,
+                "to_lang": row.to_lang,
+                "total_word": row.word_length,
+                "learned": row.learned,
+                "starred": row.starred,
+                "pos_stats": {}
+            }
+
+            # Parse POS stats if available
+            if row.pos_stats:
+                stat["pos_stats"] = dict(row.pos_stats.items())
+
+            stats.append(stat)
+        return stats
+
+
+
+class DashboardRepositoryLang:
+    def __init__(self, user_id: int, db: AsyncSession):
+        self.user_id = int(user_id)
+        self.db = db
+
+    async def get_language_pair_stats_by_lang(self, from_lang: str, to_lang: str):
+        # Get the words first
+        words_result = await self.db.execute(
+            select(WordModel)
+            .join(UserSavedWord)
+            .where(
+                WordModel.from_lang == from_lang,
+                WordModel.to_lang == to_lang,
+                UserSavedWord.user_id == self.user_id
+            )
+        )
+        words = words_result.scalars().all()
+
+        # Get POS statistics
+        pos_stats = await self.db.execute(
+            select(
+                WordModel.part_of_speech,
+                func.count().label("count")
+            )
+            .join(UserSavedWord)
+            .where(
+                WordModel.from_lang == from_lang,
+                WordModel.to_lang == to_lang,
+                UserSavedWord.user_id == self.user_id
+            )
+            .group_by(WordModel.part_of_speech)
+        )
+
+        # Convert POS stats to dictionary
+        pos_dict = {row.part_of_speech: row.count for row in pos_stats}
+
+        # Get learned/starred counts
+        status_counts = await self.db.execute(
+            select(
+                func.sum(case((UserSavedWord.learned == True, 1), else_=0)).label("learned"),
+                func.sum(case((UserSavedWord.starred == True, 1), else_=0)).label("starred")
+            )
+            .join(WordModel)
+            .where(
+                WordModel.from_lang == from_lang,
+                WordModel.to_lang == to_lang,
+                UserSavedWord.user_id == self.user_id
+            )
+        )
+
+        learned, starred = status_counts.first()
+
+        temp =  {
+            "words": words,
+            "stats": {
+                "total_words": len(words),
+                "learned": learned or 0,
+                "starred": starred or 0,
+                "pos_stats": pos_dict
+            }
+        }
+        print(temp)
+        return temp
+
+
+
+class FilterRepository:
 
     def __init__(self, user_id: int, db: AsyncSession):
         self.user_id = int(user_id)
         self.db = db
 
+    async def filter(self,  from_lang: str, to_lang: str, part_of_speech: str):
 
-    async def get_language_pair_stats(self):
-
-        query = """
-                SELECT
-                    w.from_lang,
-                    w.to_lang,
-                    COUNT(*) as word_length,
-                    SUM(CASE WHEN usw.learned = TRUE THEN 1 ELSE 0 END) as learned,
-                    SUM(CASE WHEN usw.starred = TRUE THEN 1 ELSE 0 END) as starred
-                FROM words w
-                JOIN user_saved_words usw ON w.id = usw.word_id
-                WHERE usw.user_id = :user_id
-                GROUP BY w.from_lang, w.to_lang
-                ORDER BY word_length DESC
-            """
-        result = await self.db.execute(
-            text(query),
-            {"user_id": self.user_id}
+        words_result = await self.db.execute(
+            select(WordModel)
+            .join(UserSavedWord)
+            .where(
+                WordModel.from_lang == from_lang,
+                WordModel.to_lang == to_lang,
+                WordModel.part_of_speech == part_of_speech,
+                UserSavedWord.user_id == self.user_id
+            )
         )
-        return [
-            {
-                "user_id": self.user_id,
-                "from_lang": row.from_lang,
-                "to_lang": row.to_lang,
-                "word_length": row.word_length,
-                "learned": row.learned,
-                "starred": row.starred
-            }
-            for row in result
-        ]
+        words = words_result.scalars().all()
 
+        return words
 
 
 class SaveWordRepository:

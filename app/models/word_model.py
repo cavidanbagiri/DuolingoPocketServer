@@ -28,7 +28,6 @@ class WordModel(Base):
         return f'WordModel(from_lang={self.from_lang}, to_lang={self.to_lang}, word={self.word}, part_speech={self.part_of_speech}, translation={self.translation})'
 
 
-# User <-> Word relationship
 class UserSavedWord(Base):
 
     __tablename__ = "user_saved_words"
