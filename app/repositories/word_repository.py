@@ -84,19 +84,31 @@ class DashboardRepositoryLang:
         self.db = db
 
     async def get_language_pair_stats_by_lang(self, from_lang: str, to_lang: str):
-        # Get the words first
+        # Get the words with their learned/starred status
         words_result = await self.db.execute(
-            select(WordModel)
+            select(
+                WordModel,
+                UserSavedWord.learned,
+                UserSavedWord.starred
+            )
             .join(UserSavedWord)
             .where(
                 WordModel.from_lang == from_lang,
                 WordModel.to_lang == to_lang,
-                UserSavedWord.user_id == self.user_id
+                UserSavedWord.user_id == self.user_id,
+                UserSavedWord.learned == False
             )
         )
-        words = words_result.scalars().all()
 
-        # Get POS statistics
+        # Convert results to a list of dictionaries with all fields
+        words = []
+        for word_model, learned, starred in words_result:
+            word_dict = word_model.__dict__
+            # word_dict['learned'] = learned
+            word_dict['starred'] = starred
+            words.append(word_dict)
+
+        # Get POS statistics (unchanged)
         pos_stats = await self.db.execute(
             select(
                 WordModel.part_of_speech,
@@ -110,11 +122,9 @@ class DashboardRepositoryLang:
             )
             .group_by(WordModel.part_of_speech)
         )
-
-        # Convert POS stats to dictionary
         pos_dict = {row.part_of_speech: row.count for row in pos_stats}
 
-        # Get learned/starred counts
+        # Get learned/starred counts (unchanged)
         status_counts = await self.db.execute(
             select(
                 func.sum(case((UserSavedWord.learned == True, 1), else_=0)).label("learned"),
@@ -127,10 +137,9 @@ class DashboardRepositoryLang:
                 UserSavedWord.user_id == self.user_id
             )
         )
-
         learned, starred = status_counts.first()
 
-        temp =  {
+        return {
             "words": words,
             "stats": {
                 "total_words": len(words),
@@ -139,7 +148,6 @@ class DashboardRepositoryLang:
                 "pos_stats": pos_dict
             }
         }
-        return temp
 
 
 
@@ -176,8 +184,6 @@ class ChangeWordStatusRepository:
 
     async def change_word_status(self):
 
-
-
         word = await self.db.execute(select(UserSavedWord).where(UserSavedWord.word_id == self.data.word_id, UserSavedWord.user_id == int(self.user_id)))
 
         word = word.scalar()
@@ -192,6 +198,7 @@ class ChangeWordStatusRepository:
                 .where(UserSavedWord.word_id == self.data.word_id, UserSavedWord.user_id == self.user_id)
                 .values(starred=new_status)
             )
+            await self.db.commit()
 
         elif self.data.w_status == 'learned':
             new_status = not word.learned
@@ -200,9 +207,13 @@ class ChangeWordStatusRepository:
                 .where(UserSavedWord.word_id == self.data.word_id, UserSavedWord.user_id == self.user_id)
                 .values(learned=new_status)
             )
-        await self.db.commit()
+            await self.db.commit()
 
-        return {'msg': 'changed'}
+        return {
+            'w_status': self.data.w_status,
+            'detail': f'{self.data.w_status.title()} successfully changed',
+            'word_id': word.word_id
+        }
 
 
 class SaveWordRepository:
