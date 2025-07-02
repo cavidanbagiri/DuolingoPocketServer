@@ -1,5 +1,5 @@
-from fastapi import Query
-from sqlalchemy import select, func, text, case
+from fastapi import Query, HTTPException
+from sqlalchemy import select, func, text, case, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.word_model import WordModel, UserSavedWord
@@ -10,6 +10,8 @@ from functools import lru_cache
 import spacy
 
 from app.logging_config import setup_logger
+from app.schemas.word_schema import ChangeWordStatusSchema
+
 logger = setup_logger(__name__, "word.log")
 
 
@@ -137,7 +139,6 @@ class DashboardRepositoryLang:
                 "pos_stats": pos_dict
             }
         }
-        print(temp)
         return temp
 
 
@@ -163,6 +164,45 @@ class FilterRepository:
         words = words_result.scalars().all()
 
         return words
+
+
+
+class ChangeWordStatusRepository:
+
+    def __init__(self, data: ChangeWordStatusSchema,  user_id: int, db: AsyncSession):
+        self.data = data
+        self.user_id = int(user_id)
+        self.db = db
+
+    async def change_word_status(self):
+
+
+
+        word = await self.db.execute(select(UserSavedWord).where(UserSavedWord.word_id == self.data.word_id, UserSavedWord.user_id == int(self.user_id)))
+
+        word = word.scalar()
+
+        if not word:
+            raise HTTPException(status_code=404, detail="Word not found")
+
+        if self.data.w_status == 'starred':
+            new_status = not word.starred
+            await self.db.execute(
+                update(UserSavedWord)
+                .where(UserSavedWord.word_id == self.data.word_id, UserSavedWord.user_id == self.user_id)
+                .values(starred=new_status)
+            )
+
+        elif self.data.w_status == 'learned':
+            new_status = not word.learned
+            await self.db.execute(
+                update(UserSavedWord)
+                .where(UserSavedWord.word_id == self.data.word_id, UserSavedWord.user_id == self.user_id)
+                .values(learned=new_status)
+            )
+        await self.db.commit()
+
+        return {'msg': 'changed'}
 
 
 class SaveWordRepository:
