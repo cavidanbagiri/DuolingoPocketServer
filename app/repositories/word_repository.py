@@ -1,5 +1,5 @@
 from fastapi import Query, HTTPException
-from sqlalchemy import select, func, text, case, update
+from sqlalchemy import select, func, text, case, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.word_model import WordModel, UserSavedWord
@@ -206,6 +206,13 @@ class ChangeWordStatusRepository:
                 update(UserSavedWord)
                 .where(UserSavedWord.word_id == self.data.word_id, UserSavedWord.user_id == self.user_id)
                 .values(learned=new_status)
+            )
+            await self.db.commit()
+
+        elif self.data.w_status == 'delete':
+            await self.db.execute(
+                delete(UserSavedWord)
+                .where(UserSavedWord.word_id == self.data.word_id, UserSavedWord.user_id == self.user_id)
             )
             await self.db.commit()
 
