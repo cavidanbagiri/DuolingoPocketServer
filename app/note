@@ -2,3 +2,55 @@
 1 - Need to think about same word can be verb or noun or something else - Big Theme
 2 - Change WOrd schema place from translate to words - Working
 3 - Need to Show starred words in saved words page - Working
+
+
+Language Model
+	1 - en: English
+	2 - es: Spanish
+	3 - tr: Turkish
+
+Words Model - 300
+	1 - en: 100 words
+	2 - es: 100 words
+	3 - tr: 100 words
+
+Translation Model
+	1 - en -> tr : 100 word translation
+	2 - en -> es : 100 word translation
+	3 - es -> en : 100 word translation
+	4 - es -> tr : 100 word translation
+	5 - tr -> en : 100 word translation
+	6 - tr -> es : 100 word translation
+
+Sentence Model
+	1 - en: "Hello world"
+	2 - en: "Hello How a u?"
+	3 - en: "I am going to ... "
+	4 - es: "Hola Como estas"
+	5 - es: "Como de names"
+	6 - tr: "Ben okula gidiyorum"
+	7 - tr: "Hayat guzeldir"
+
+Sentence Translation Model
+    ID  SS-ID   LCode   Tr. Text
+    1   1       es      Hola mundo
+    2   1       tr      Merhaba Dunya
+    3   2       es      Hola Como estas
+    4   2       tr      Merhaba Nasilsin
+    5   3       es      Voy a
+    6   3       tr      Ben gidiyorum/Hazirlaniyorum
+    7   4       en      Hello How are you
+    8   4       tr      Merhaba Nasilsin
+    9   5       en      What is you name?
+    10  5       tr      Ismin nedir?
+    11  6       en      I am going to school
+    12  6       es      Voy a la escuela
+    13  7       en      Life Is beautiful
+    14  7       es      La Vida es bella
+
+Sentence Word Model
+    Sentence ID     Word ID
+    1               1 -> This id will comes from Words model # "Because there is a 'Hello'  "
+    1               103 -> This id will comes from Words model # "Because there is a 'World'  "
+
+

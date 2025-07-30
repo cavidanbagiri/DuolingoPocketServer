@@ -16,6 +16,7 @@ class UserModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     is_premium: Mapped[bool] = mapped_column(Boolean, default=False)
     role: Mapped[str] = mapped_column(String, default="user")
+    native: Mapped[str] = mapped_column(String, nullable=True)
 
 
     def __repr__(self):

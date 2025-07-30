@@ -1,58 +1,114 @@
 
-from sqlalchemy import Integer, String, Boolean, DateTime, ForeignKey, func
-from sqlalchemy.orm import mapped_column, Mapped, relationship
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Boolean
+from sqlalchemy.orm import relationship, mapped_column
+from sqlalchemy.ext.declarative import declarative_base
 from enum import Enum
+from datetime import datetime
 
-from app.models.base_model import Base
+Base = declarative_base()
 
 
+class CEFRLevel(str, Enum):
+    A1 = "A1"
+    A2 = "A2"
+    B1 = "B1"
+    B2 = "B2"
+    C1 = "C1"
+    C2 = "C2"
 
-# SavedWordModel - Core word data
-class WordModel(Base):
+
+class Language(Base):
+    __tablename__ = "languages"
+    code = mapped_column(String(2), primary_key=True)  # en, es, ru
+    name = mapped_column(String(50))  # English, Spanish
+
+
+class Word(Base):
     __tablename__ = "words"
+    id = Column(Integer, primary_key=True)
+    text = Column(String(100), unique=True)  # "book" (shared spelling)
+    language_code = Column(String(2))       # "en"
+    frequency_rank = Column(Integer)
+    level = mapped_column(String(2))  # A1-C2
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    from_lang: Mapped[str] = mapped_column(String)
-    to_lang: Mapped[str] = mapped_column(String)
-    word: Mapped[str] = mapped_column(String, nullable=False)
-    part_of_speech = mapped_column(String, default="other")
-    translation: Mapped[str] = mapped_column(String, nullable=False)
-    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), onupdate=func.now())
-
-    # Relationships
-    user_saved_words = relationship("UserSavedWord", back_populates="word")
-    sentences = relationship("SentenceWordModel", back_populates="word")
+    meanings = relationship("WordMeaning", back_populates="word")
+    translations = relationship("Translation", back_populates="source_word")  # This was missing
+    in_sentences = relationship("SentenceWord", back_populates="word")  # Also add this for comp
 
     def __repr__(self):
-        return f'WordModel(from_lang={self.from_lang}, to_lang={self.to_lang}, word={self.word}, part_speech={self.part_of_speech}, translation={self.translation})'
+        return f'Word(id:({self.id}), text({self.text}, language_code({self.language_code}, frequency_rank:({self.frequency_rank}, level({self.level})))))'
+
+class WordMeaning(Base):
+    __tablename__ = "word_meanings"
+    id = Column(Integer, primary_key=True)
+    word_id = Column(Integer, ForeignKey("words.id"))
+    pos = Column(String(50))     # "noun"/"verb"
+    # definition = Column(String(500))        # "a written work"
+    example = Column(String(500))           # "I'm reading a book"
+
+    word = relationship("Word", back_populates="meanings")
+    sentences = relationship("Sentence", secondary="meaning_sentence_links")
 
 
-class UserSavedWord(Base):
-
-    __tablename__ = "user_saved_words"
-
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), primary_key=True)
-    word_id: Mapped[int] = mapped_column(Integer, ForeignKey("words.id"), primary_key=True)
-    learned: Mapped[bool] = mapped_column(Boolean, default=False)
-    starred: Mapped[bool] = mapped_column(Boolean, default=False)
-    last_reviewed: Mapped[DateTime] = mapped_column(DateTime(timezone=True))
-
-    # Relationships
-    user = relationship("UserModel", foreign_keys=[user_id])
-    word = relationship("WordModel", foreign_keys=[word_id])
-
-    def __repr__(self):
-        return f"UserSavedWord(user_id={self.user_id}, word_id={self.word_id})"
+class MeaningSentenceLink(Base):
+    __tablename__ = "meaning_sentence_links"
+    meaning_id = Column(Integer, ForeignKey("word_meanings.id"), primary_key=True)
+    sentence_id = Column(Integer, ForeignKey("sentences.id"), primary_key=True)
 
 
-# Optional: Sentence hints
-class SentenceWordModel(Base):
-    __tablename__ = "sentence_hints"
+class Translation(Base):
+    __tablename__ = "translations"
+    id = mapped_column(Integer, primary_key=True)
+    source_word_id = mapped_column(Integer, ForeignKey("words.id"))
+    target_language_code = mapped_column(String(2), ForeignKey("languages.code"))
+    translated_text = mapped_column(String(100))  # "hello" → "hola"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    sentence: Mapped[str] = mapped_column(String)
-    translation: Mapped[str] = mapped_column(String)
+    source_word = relationship("Word", back_populates="translations")
+    target_language = relationship("Language")
 
-    word_id: Mapped[int] = mapped_column(Integer, ForeignKey("words.id"))
-    word = relationship("WordModel", back_populates="sentences")
+
+# Define SentenceTranslation BEFORE Sentence
+class SentenceTranslation(Base):
+    __tablename__ = "sentence_translations"
+    id = mapped_column(Integer, primary_key=True)
+    source_sentence_id = mapped_column(Integer, ForeignKey("sentences.id"))
+    language_code = mapped_column(String(2), ForeignKey("languages.code"))
+    translated_text = mapped_column(String(500))
+
+    source_sentence = relationship("Sentence", back_populates="translations")
+    language = relationship("Language")
+
+
+
+class Sentence(Base):
+    __tablename__ = "sentences"
+    id = mapped_column(Integer, primary_key=True)
+    text = mapped_column(String(500))  # "Hello world"
+    language_code = mapped_column(String(2), ForeignKey("languages.code"))
+
+    language = relationship("Language")
+    contains_words = relationship("SentenceWord", back_populates="sentence")
+    translations = relationship("SentenceTranslation", back_populates="source_sentence")
+
+
+class SentenceWord(Base):
+    __tablename__ = "sentence_words"
+    sentence_id = mapped_column(Integer, ForeignKey("sentences.id"), primary_key=True)
+    word_id = mapped_column(Integer, ForeignKey("words.id"), primary_key=True)
+
+    sentence = relationship("Sentence", back_populates="contains_words")
+    word = relationship("Word", back_populates="in_sentences")
+
+
+class LearnedWord(Base):
+    __tablename__ = "learned_words"
+    user_id = mapped_column(Integer, ForeignKey("users.id"), primary_key=True)
+    word_id = mapped_column(Integer, ForeignKey("words.id"), primary_key=True)
+    target_language = mapped_column(String(2))  # Language being learned
+    last_practiced = mapped_column(DateTime, default=datetime.utcnow)
+    strength = mapped_column(Integer, default=0)  # 0-100 mastery level
+
+    word = relationship("Word")
+
+
+
