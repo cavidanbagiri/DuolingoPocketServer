@@ -14,7 +14,8 @@ from sqlalchemy.orm import selectinload
 
 
 from app.logging_config import setup_logger
-from app.models.word_model import Language, Word, Sentence, SentenceWord, WordMeaning
+from app.models.word_model import Language, Word, Sentence, SentenceWord, WordMeaning, Translation, SentenceTranslation
+from app.schemas.translate_schema import TranslateSchema
 
 logger = setup_logger(__name__, "word.log")
 
@@ -46,6 +47,11 @@ class HelperFunction:
         eng_rep = GenerateEnglishSentencesForEachWord(self.db)
         await eng_rep.main_func()
 
+    #5 - Translate Words for eng to ru
+    async def translateentoru(self):
+        tr_repo = TranslateAllENWordsToRU(self.db)
+        await tr_repo.main_func()
+
 
 
 # Main Class Working
@@ -70,6 +76,9 @@ class CreateMainStructureRepository:
 
         # 4 - Create sentence with words in english
         # await self.helper_funcs.generate_five_sentences_about_each_word()
+
+        # 5 - Translate words from eng to rus
+        # await self.helper_funcs.translateentoru()
 
         return 'Added'
 
@@ -390,7 +399,7 @@ class UpdateMainStructureRepositoryForEnglishLanguage:
 
 
 
-# Generate sentence from each english word
+# fetch english words and generate a sentences
 class GenerateEnglishSentencesForEachWord:
 
     def __init__(self, db: AsyncSession):
@@ -401,12 +410,35 @@ class GenerateEnglishSentencesForEachWord:
         self.semaphore = asyncio.Semaphore(5)  # Limit concurrent API calls
 
 
+    # This code block is added by chat gpt
+    async def translate_sentence(self, text: str) -> str:
+        """Translate an English sentence into Russian"""
+        headers = {
+            "Authorization": f"Api-Key {os.getenv('YANDEX_TRANSLATE_API_SECRET_KEY')}"
+        }
+        json_data = {
+            "folder_id": self.folder_id,
+            "texts": [text],
+            "sourceLanguageCode": "en",
+            "targetLanguageCode": "ru"
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post("https://translate.api.cloud.yandex.net/translate/v2/translate", headers=headers,
+                                    json=json_data) as response:
+                if response.status != 200:
+                    full_response = await response.text()
+                    raise Exception(f"API error {response.status}: {full_response}")
+
+                data = await response.json()
+                return data['translations'][0]['text']
+
     async def _get_words_batch(self, offset: int, limit: int) -> List[Word]:
         """Fetch words with consistent ordering"""
         try:
             result = await self.db.execute(
                 select(Word)
-                .where(Word.id.between(16, 100))
+                .where(Word.id.between(6, 100)) # Need to start to generate a sentences from 100 to 1000
                 .order_by(Word.id.asc())
                 .limit(limit)
                 .offset(offset)
@@ -483,24 +515,59 @@ class GenerateEnglishSentencesForEachWord:
         return result.scalar()
 
     async def _save_sentences(self, word: Word, sentences: List[str]):
-        """Save sentences and link them to word and meanings"""
+        """Save EN sentences and their RU translations, and link them to the word"""
         for sentence_text in sentences:
-            # Create Sentence record
+            # 1. Save EN sentence
             sentence = Sentence(
                 text=sentence_text,
-                language_code="en"  # Assuming English sentences
+                language_code="en"
             )
             self.db.add(sentence)
-            await self.db.flush()  # Get the sentence ID
+            await self.db.flush()  # get sentence.id
 
-            # Link sentence to word
+            # 2. Link sentence to word
             sentence_word = SentenceWord(
                 sentence_id=sentence.id,
                 word_id=word.id
             )
             self.db.add(sentence_word)
 
+            # 3. Translate to Russian
+            try:
+                ru_translation = await self.translate_sentence(sentence_text)
+
+                sentence_translation = SentenceTranslation(
+                    source_sentence_id=sentence.id,
+                    language_code="ru",
+                    translated_text=ru_translation
+                )
+                self.db.add(sentence_translation)
+
+            except Exception as e:
+                print(f"ERROR translating sentence '{sentence_text}': {e}")
+
         await self.db.commit()
+
+    # This is real code a and work, l add new function with this name as up
+    # async def _save_sentences(self, word: Word, sentences: List[str]):
+    #     """Save sentences and link them to word and meanings"""
+    #     for sentence_text in sentences:
+    #         # Create Sentence record
+    #         sentence = Sentence(
+    #             text=sentence_text,
+    #             language_code="en"  # Assuming English sentences
+    #         )
+    #         self.db.add(sentence)
+    #         await self.db.flush()  # Get the sentence ID
+    #
+    #         # Link sentence to word
+    #         sentence_word = SentenceWord(
+    #             sentence_id=sentence.id,
+    #             word_id=word.id
+    #         )
+    #         self.db.add(sentence_word)
+    #
+    #     await self.db.commit()
 
     async def generate_sentences(self, word: str) -> List[str]:
         """Generate sentences using Yandex GPT API"""
@@ -548,6 +615,71 @@ class GenerateEnglishSentencesForEachWord:
             except Exception as e:
                 print(f"API Error for word {word}: {str(e)}")
                 return []
+
+
+
+# Translate all the words english to russian
+class TranslateAllENWordsToRU:
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.api_key = os.getenv("YANDEX_TRANSLATE_API_SECRET_KEY")
+        self.folder_id = os.getenv("YANDEX_FOLDER_ID")
+        self.translate_url = "https://translate.api.cloud.yandex.net/translate/v2/translate"
+
+    async def fetch_english_words_without_ru_translation(self):
+
+        # Query English words that do not have Russian translation yet
+        subquery = select(Translation.source_word_id).where(Translation.target_language_code == "ru")
+
+        result = await self.db.execute(
+            select(Word)
+            .where(
+                Word.language_code == "en",
+                Word.id > 1001,  # ⬅️ Start from ID 5
+                Word.id <= 9909,  # ⬅️ End at ID 1000
+                ~Word.id.in_(subquery)
+            )
+            .order_by(Word.id)
+        )
+        return result.scalars().all()
+
+    async def translate_word(self, text: str) -> str:
+        headers = {
+            "Authorization": f"Api-Key {self.api_key}"
+        }
+        json_data = {
+            "folder_id": self.folder_id,
+            "texts": [text],
+            "sourceLanguageCode": "en",
+            "targetLanguageCode": "ru"
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(self.translate_url, headers=headers, json=json_data) as response:
+                data = await response.json()
+                return data['translations'][0]['text']
+
+    async def save_translation(self, word_id: int, translated_text: str):
+        translation = Translation(
+            source_word_id=word_id,
+            target_language_code="ru",
+            translated_text=translated_text
+        )
+        self.db.add(translation)
+
+    async def main_func(self):
+        words = await self.fetch_english_words_without_ru_translation()
+        print(f"Translating {len(words)} words...")
+
+        for word in words:
+            try:
+                translated = await self.translate_word(word.text)
+                await self.save_translation(word.id, translated)
+            except Exception as e:
+                print(f"Error translating '{word.text}': {e}")
+
+        await self.db.commit()
+        return {'msg': f'Translated {len(words)} words to Russian'}
 
 
 
@@ -600,9 +732,6 @@ class RemoveDuplicatePosFromEnglish:
             await self.db.commit()
 
         return {"message": f"Deleted {total_deleted} duplicate meanings", "total_duplicate_groups": len(duplicates)}
-
-
-
 
 
 
