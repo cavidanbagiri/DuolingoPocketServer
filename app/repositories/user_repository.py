@@ -181,20 +181,26 @@ class UserLoginRepository:
 
             await self.refresh_token_repo.manage_refresh_token(user.id, refresh_token)
 
-            return self.return_data(user, access_token, refresh_token)
+            # Fetch existing target languages --->>>> New Added
+            stmt = select(UserLanguage.target_language_code).where(UserLanguage.user_id == user.id)
+            result = await self.db.execute(stmt)
+            target_langs = [row[0] for row in result.all()]  # extract codes as list
+
+            return self.return_data(user, access_token, refresh_token, target_langs)
 
         except HTTPException as ex:
             raise
 
     @staticmethod
-    def return_data(user: UserModel, access_token: str, refresh_token: str):
+    def return_data(user: UserModel, access_token: str, refresh_token: str, target_langs: list[str]):
 
         return {
             'user': {
                 'sub': str(user.id),
                 'email': user.email,
                 'username': user.username,
-                'native': user.native
+                'native': user.native,
+                'learning_targets': target_langs
             },
             'access_token': access_token,
             'refresh_token': refresh_token
@@ -287,7 +293,7 @@ class ChooseLangTargetRepository:
 
         if existing:
             return {
-                "message": "Language already added.",
+                "msg": "Language already added.",
                 "target_language_code": lang_code
             }
 
@@ -301,64 +307,6 @@ class ChooseLangTargetRepository:
         await self.db.commit()
 
         return {
-            "message": "New target language added.",
+            "msg": "New language added.",
             "target_language_code": lang_code
         }
-
-    # async def choose_lang_target(self):
-    #     lang_map = {
-    #         'English': 'en',
-    #         'Russian': 'ru',
-    #         'Turkish': 'tr'
-    #     }
-    #
-    #     stmt = select(UserLanguage).where(UserLanguage.user_id == self.user_id)
-    #     result = await self.db.execute(stmt)
-    #     user_lang = result.scalar_one_or_none()
-    #
-    #     if user_lang:
-    #         # Update existing
-    #         user_lang.target_language_code = lang_map.get(self.target_lang_code)
-    #         user_lang.updated_at = datetime.utcnow()
-    #     else:
-    #         # Create new
-    #         new_pref = UserLanguage(
-    #             user_id=self.user_id,
-    #             target_language_code=lang_map.get(self.target_lang_code),
-    #             updated_at=datetime.utcnow()
-    #         )
-    #         self.db.add(new_pref)
-    #
-    #     await self.db.commit()
-    #     return {"message": "Target language set", "target_language_code": self.target_lang_code}
-
-    # async def choose_lang_target(self):
-    #
-    #     lang_map = {
-    #         'English':'en',
-    #         'Russian':'ru',
-    #         'Turkish':'tr'
-    #     }
-    #
-    #
-    #     stmt = select(UserLanguage).where(UserLanguage.user_id == self.user_id)
-    #     result = await self.db.execute(stmt)
-    #     user_lang = result.scalar_one_or_none()
-    #
-    #     if user_lang:
-    #         # Update the existing row
-    #         user_lang.target_language_code = lang_map.get(self.target_lang_code)
-    #         user_lang.updated_at = datetime.utcnow()
-    #     else:
-    #         # Insert a new row
-    #         new_pref = UserLanguage(
-    #             user_id=self.user_id,
-    #             target_language_code=lang_map.get(self.target_lang_code),
-    #             updated_at=datetime.utcnow()
-    #         )
-    #         self.db.add(new_pref)
-    #
-    #     await self.db.commit()
-    #     return {"message": "Target language set", "target_language_code": self.target_lang_code}
-
-

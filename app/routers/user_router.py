@@ -69,6 +69,7 @@ async def login(response: Response, login_data: UserLoginSchema, db_session: Ann
                             secure=True,
                             samesite="none"
                             )
+        print(f'...............................{data.get("user")}')
         return {
             'user': data.get('user'),
             'access_token': data.get('access_token')
@@ -169,22 +170,3 @@ async def choose_target_lang(
         print(f"Exception: {ex}")
         return {'error': str(ex)}
 
-
-
-#
-# @router.post('/choose_lang', status_code=201)
-# async def choose_target_lang(data: ChooseLangSchema,
-#                         db: AsyncSession = Depends(get_db),
-#                         user_info = Depends(TokenHandler.verify_access_token)
-#                      ):
-#     try:
-#
-#         repository = ChooseLangTargetRepository(db, data.target, user_info.get('sub'))
-#         data = await repository.choose_lang_target()
-#
-#
-#         return {'target_code': data.target_language_code}
-#     except Exception as ex:
-#         print(f"Exception: {ex}")
-#         return {'error': str(ex)}
-#
