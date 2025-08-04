@@ -1,3 +1,4 @@
+import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -10,8 +11,11 @@ from app.auth.refresh_token_handler import VerifyRefreshTokenMiddleware
 from app.auth.token_handler import TokenHandler
 from app.database.setup import get_db
 
-from app.repositories.user_repository import UserRegisterRepository, UserLoginRepository, UserLogoutRepository
-from app.schemas.user_schema import UserLoginSchema, UserTokenSchema, UserRegisterSchema
+from app.repositories.user_repository import (UserRegisterRepository, UserLoginRepository, UserLogoutRepository,
+    CheckUserAvailable, RefreshTokenRepository, DeleteRefreshTokenRepository, SetNativeRepository,)
+
+from app.schemas.user_schema import UserLoginSchema, UserTokenSchema, UserRegisterSchema, NativeLangSchema, \
+    ChooseLangSchema
 
 from app.logging_config import setup_logger
 logger = setup_logger(__name__, "user.log")
@@ -55,6 +59,7 @@ async def login(response: Response, login_data: UserLoginSchema, db_session: Ann
     try:
         data = await repository.login(login_data)
 
+
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
 
@@ -69,6 +74,7 @@ async def login(response: Response, login_data: UserLoginSchema, db_session: Ann
         }
 
     except HTTPException as ex:
+        print(f'error happened {ex}')
         raise ex
     except Exception as ex:  # Catch all other exceptions
         logger.exception("Unexpected error login user: %s", ex)
@@ -127,3 +133,39 @@ async def logout(
     except Exception as e:
         logger.error(f"Error during logout: {str(e)}")
         return JSONResponse(status_code=500, content={"message": f"An error occurred during logout {e}"})
+
+
+
+
+@router.post('/setnative', status_code=201)
+async def set_native(
+    data: NativeLangSchema,
+    db: AsyncSession = Depends(get_db),
+    user_info = Depends(TokenHandler.verify_access_token)
+):
+    try:
+        repo = SetNativeRepository(db=db, user_id=int(user_info.get('sub')), native=data.native, )
+        result = await repo.set_native()
+        return result
+    except Exception as ex:
+        print(f"Exception: {ex}")
+        return {'error': str(ex)}
+
+
+#
+# @router.post('/choose_lang', status_code=201)
+# async def choose_target_lang(data: ChooseLangSchema,
+#                         db: AsyncSession = Depends(get_db),
+#                         user_info = Depends(TokenHandler.verify_access_token)
+#                      ):
+#     try:
+#
+#         repository = ChooseLangTargetRepository(db, data.target, user_info.get('sub'))
+#         data = await repository.choose_lang_target()
+#
+#
+#         return {'target_code': data.target_language_code}
+#     except Exception as ex:
+#         print(f"Exception: {ex}")
+#         return {'error': str(ex)}
+#

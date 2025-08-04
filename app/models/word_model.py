@@ -16,11 +16,11 @@ class CEFRLevel(str, Enum):
     C1 = "C1"
     C2 = "C2"
 
-
-class Language(Base):
-    __tablename__ = "languages"
-    code = mapped_column(String(2), primary_key=True)  # en, es, ru
-    name = mapped_column(String(50))  # English, Spanish
+#
+# class Language(Base):
+#     __tablename__ = "languages"
+#     code = mapped_column(String(2), primary_key=True)  # en, es, ru
+#     name = mapped_column(String(50))  # English, Spanish
 
 
 class Word(Base):

@@ -23,6 +23,10 @@ app = FastAPI()
 origins = [
     "http://localhost:5173",
     "http://localhost:5174",
+    "http://192.168.1.76:8081",  # Expo's Metro bundler origin
+    "http://localhost:8081",
+    "http://192.168.1.76:19006",  # Expo Web Dev Tools
+    "http://192.168.1.76:19000",  # Expo Go (Android)
 ]
 
 app.add_middleware(

@@ -3,6 +3,7 @@
 from pydantic import BaseModel, EmailStr, field_validator, Field
 
 
+
 class UserRegisterSchema(BaseModel):
 
     username: str | None
@@ -48,3 +49,12 @@ class UserLoginSchema(BaseModel):
 
         return value
 
+
+class NativeLangSchema(BaseModel):
+
+    native: str
+
+
+class ChooseLangSchema(BaseModel):
+
+    target_language_code: str

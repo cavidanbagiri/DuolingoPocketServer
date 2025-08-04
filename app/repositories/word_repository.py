@@ -14,7 +14,8 @@ from sqlalchemy.orm import selectinload
 
 
 from app.logging_config import setup_logger
-from app.models.word_model import Language, Word, Sentence, SentenceWord, WordMeaning, Translation, SentenceTranslation
+from app.models.word_model import  Word, Sentence, SentenceWord, WordMeaning, Translation, SentenceTranslation
+from app.models.user_model import Language
 from app.schemas.translate_schema import TranslateSchema
 
 logger = setup_logger(__name__, "word.log")

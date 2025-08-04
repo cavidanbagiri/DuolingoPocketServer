@@ -42,6 +42,7 @@ class TokenHandler:
 
     @staticmethod
     def verify_access_token(req: Request) -> dict:
+        print(f'req is {req.headers}')
         if req.headers.get('Authorization'):
             access_token = req.headers.get('Authorization').split(' ')[1]
             if access_token:
@@ -49,6 +50,7 @@ class TokenHandler:
                     secret_key = os.getenv('JWT_SECRET_KEY')
                     algorithm = os.getenv('JWT_ALGORITHM')
                     payload = jwt.decode(access_token, secret_key, algorithm)
+                    print(f'...............................{payload}')
                     return payload
                 except InvalidTokenError as ex:
                     raise HTTPException(status_code=401, detail=f'Authorization Error {ex}')

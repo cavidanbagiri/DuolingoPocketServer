@@ -72,8 +72,6 @@ class RefreshTokenRepository:
             raise HTTPException(status_code=404, detail=f'Refresh Token can\'t save {str(ex)}')
 
 
-
-
 class UserRegisterRepository:
 
     def __init__(self, db: AsyncSession):
@@ -147,7 +145,6 @@ class CheckUserAvailable:
     async def check_user_exists(self, login_data: UserLoginSchema) -> UserModel:
         data = await self.db.execute(select(UserModel).where(UserModel.email==login_data.email))
         user = data.scalar()
-
         if user:
             logger.info(f'{login_data.email} find in database')
             pass_verify = self.h_password.verify(user.password, login_data.password)
@@ -173,7 +170,7 @@ class UserLoginRepository:
         try:
             logger.info(f'{login_data.email} try to login')
             user = await self.check_user_available.check_user_exists(login_data)
-
+            print(f'second user us {user}')
             token_data = {
                 'sub': str(user.id),
                 'username': user.username,
@@ -197,6 +194,7 @@ class UserLoginRepository:
                 'sub': str(user.id),
                 'email': user.email,
                 'username': user.username,
+                'native': user.native
             },
             'access_token': access_token,
             'refresh_token': refresh_token
@@ -229,3 +227,31 @@ class UserLogoutRepository:
             logger.exception(f"Unexpected error during logout {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="An unexpected error occurred")
 
+
+class SetNativeRepository:
+
+    def __init__(self, db: AsyncSession, user_id: int, native: str):
+        self.db = db
+        self.user_id = user_id
+        self.native = native
+
+    async def set_native(self):
+        try:
+            result = await self.db.execute(select(UserModel).where(UserModel.id == self.user_id))
+            user = result.scalar_one_or_none()
+
+            if not user:
+                return {'error': 'User not found'}
+
+            user.native = self.native  # Set the new native language
+            await self.db.commit()
+            await self.db.refresh(user)
+
+            return {
+                'message': f'Native language set to {self.native}',
+                'native': self.native
+                }
+
+        except Exception as e:
+            await self.db.rollback()
+            return {'error': str(e)}
