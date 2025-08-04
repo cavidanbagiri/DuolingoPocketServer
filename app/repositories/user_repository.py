@@ -1,4 +1,4 @@
-
+from datetime import datetime
 from typing import Any, Coroutine, Union
 
 from fastapi import HTTPException
@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.refresh_token_handler import DeleteRefreshTokenRepository
 from app.schemas.user_schema import UserLoginSchema
 
-from app.models.user_model import UserModel, TokenModel
+from app.models.user_model import UserModel, TokenModel, UserLanguage
 
 from app.utils.hash_password import PasswordHash
 
@@ -255,3 +255,43 @@ class SetNativeRepository:
         except Exception as e:
             await self.db.rollback()
             return {'error': str(e)}
+
+
+
+class ChooseLangTargetRepository:
+
+    def __init__(self, db: AsyncSession, target_lang_code: str, user_id: int):
+        self.db = db
+        self.target_lang_code = target_lang_code
+        self.user_id = user_id
+
+    async def choose_lang_target(self):
+
+        lang_map = {
+            'English':'en',
+            'Russian':'ru',
+            'Turkish':'tr'
+        }
+
+
+        stmt = select(UserLanguage).where(UserLanguage.user_id == self.user_id)
+        result = await self.db.execute(stmt)
+        user_lang = result.scalar_one_or_none()
+
+        if user_lang:
+            # Update the existing row
+            user_lang.target_language_code = lang_map.get(self.target_lang_code)
+            user_lang.updated_at = datetime.utcnow()
+        else:
+            # Insert a new row
+            new_pref = UserLanguage(
+                user_id=self.user_id,
+                target_language_code=lang_map.get(self.target_lang_code),
+                updated_at=datetime.utcnow()
+            )
+            self.db.add(new_pref)
+
+        await self.db.commit()
+        return {"message": "Target language set", "target_language_code": self.target_lang_code}
+
+

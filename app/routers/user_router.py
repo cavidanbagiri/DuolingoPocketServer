@@ -12,7 +12,8 @@ from app.auth.token_handler import TokenHandler
 from app.database.setup import get_db
 
 from app.repositories.user_repository import (UserRegisterRepository, UserLoginRepository, UserLogoutRepository,
-    CheckUserAvailable, RefreshTokenRepository, DeleteRefreshTokenRepository, SetNativeRepository,)
+                                              CheckUserAvailable, RefreshTokenRepository, DeleteRefreshTokenRepository,
+                                              SetNativeRepository, ChooseLangTargetRepository, )
 
 from app.schemas.user_schema import UserLoginSchema, UserTokenSchema, UserRegisterSchema, NativeLangSchema, \
     ChooseLangSchema
@@ -150,6 +151,24 @@ async def set_native(
     except Exception as ex:
         print(f"Exception: {ex}")
         return {'error': str(ex)}
+
+
+
+
+@router.post('/choose_lang', status_code=201)
+async def choose_target_lang(
+    data: ChooseLangSchema,
+    db: AsyncSession = Depends(get_db),
+    user_info = Depends(TokenHandler.verify_access_token)
+):
+    try:
+        repo = ChooseLangTargetRepository(db=db, target_lang_code=data.target_language_code, user_id=int(user_info.get('sub')))
+        result = await repo.choose_lang_target()
+        return result
+    except Exception as ex:
+        print(f"Exception: {ex}")
+        return {'error': str(ex)}
+
 
 
 #
