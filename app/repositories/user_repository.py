@@ -266,32 +266,99 @@ class ChooseLangTargetRepository:
         self.user_id = user_id
 
     async def choose_lang_target(self):
-
         lang_map = {
-            'English':'en',
-            'Russian':'ru',
-            'Turkish':'tr'
+            'English': 'en',
+            'Russian': 'ru',
+            'Turkish': 'tr'
         }
 
+        # Normalize code
+        lang_code = lang_map.get(self.target_lang_code)
+        if not lang_code:
+            raise ValueError("Unsupported language selected.")
 
-        stmt = select(UserLanguage).where(UserLanguage.user_id == self.user_id)
+        # Check if the same language already exists for this user
+        stmt = select(UserLanguage).where(
+            UserLanguage.user_id == self.user_id,
+            UserLanguage.target_language_code == lang_code
+        )
         result = await self.db.execute(stmt)
-        user_lang = result.scalar_one_or_none()
+        existing = result.scalar_one_or_none()
 
-        if user_lang:
-            # Update the existing row
-            user_lang.target_language_code = lang_map.get(self.target_lang_code)
-            user_lang.updated_at = datetime.utcnow()
-        else:
-            # Insert a new row
-            new_pref = UserLanguage(
-                user_id=self.user_id,
-                target_language_code=lang_map.get(self.target_lang_code),
-                updated_at=datetime.utcnow()
-            )
-            self.db.add(new_pref)
+        if existing:
+            return {
+                "message": "Language already added.",
+                "target_language_code": lang_code
+            }
 
+        # Add new target language
+        new_pref = UserLanguage(
+            user_id=self.user_id,
+            target_language_code=lang_code,
+            updated_at=datetime.utcnow()
+        )
+        self.db.add(new_pref)
         await self.db.commit()
-        return {"message": "Target language set", "target_language_code": self.target_lang_code}
+
+        return {
+            "message": "New target language added.",
+            "target_language_code": lang_code
+        }
+
+    # async def choose_lang_target(self):
+    #     lang_map = {
+    #         'English': 'en',
+    #         'Russian': 'ru',
+    #         'Turkish': 'tr'
+    #     }
+    #
+    #     stmt = select(UserLanguage).where(UserLanguage.user_id == self.user_id)
+    #     result = await self.db.execute(stmt)
+    #     user_lang = result.scalar_one_or_none()
+    #
+    #     if user_lang:
+    #         # Update existing
+    #         user_lang.target_language_code = lang_map.get(self.target_lang_code)
+    #         user_lang.updated_at = datetime.utcnow()
+    #     else:
+    #         # Create new
+    #         new_pref = UserLanguage(
+    #             user_id=self.user_id,
+    #             target_language_code=lang_map.get(self.target_lang_code),
+    #             updated_at=datetime.utcnow()
+    #         )
+    #         self.db.add(new_pref)
+    #
+    #     await self.db.commit()
+    #     return {"message": "Target language set", "target_language_code": self.target_lang_code}
+
+    # async def choose_lang_target(self):
+    #
+    #     lang_map = {
+    #         'English':'en',
+    #         'Russian':'ru',
+    #         'Turkish':'tr'
+    #     }
+    #
+    #
+    #     stmt = select(UserLanguage).where(UserLanguage.user_id == self.user_id)
+    #     result = await self.db.execute(stmt)
+    #     user_lang = result.scalar_one_or_none()
+    #
+    #     if user_lang:
+    #         # Update the existing row
+    #         user_lang.target_language_code = lang_map.get(self.target_lang_code)
+    #         user_lang.updated_at = datetime.utcnow()
+    #     else:
+    #         # Insert a new row
+    #         new_pref = UserLanguage(
+    #             user_id=self.user_id,
+    #             target_language_code=lang_map.get(self.target_lang_code),
+    #             updated_at=datetime.utcnow()
+    #         )
+    #         self.db.add(new_pref)
+    #
+    #     await self.db.commit()
+    #     return {"message": "Target language set", "target_language_code": self.target_lang_code}
 
 

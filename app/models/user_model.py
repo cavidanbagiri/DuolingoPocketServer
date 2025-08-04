@@ -28,7 +28,7 @@ class UserModel(Base):
 
     native: Mapped[str] = mapped_column(String, nullable=True)
 
-    # language_preference = relationship("UserLanguage", uselist=False, back_populates="user")
+    language_preferences = relationship("UserLanguage", back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f'UserModel(id:{self.id}, username:{self.username}, email: {self.email}, native: {self.native})'
@@ -38,16 +38,31 @@ class UserModel(Base):
 class UserLanguage(Base):
     __tablename__ = "user_languages"
 
-    user_id = mapped_column(Integer, ForeignKey("users.id"), primary_key=True)
+    id = mapped_column(Integer, primary_key=True, autoincrement=True)  # ✅ new primary key
+    user_id = mapped_column(Integer, ForeignKey("users.id"))
     target_language_code = mapped_column(String(2), ForeignKey("languages.code"))
-    level = mapped_column(String(2), default="A1")  # Optional: CEFR level
+    level = mapped_column(String(2), default="A1")
     updated_at = mapped_column(DateTime, default=datetime.utcnow)
 
-    # user = relationship("UserModel", back_populates="language_preference")
-    # target_language = relationship("Language", foreign_keys=[target_language_code])
+    user = relationship("UserModel", back_populates="language_preferences")
+    target_language = relationship("Language", foreign_keys=[target_language_code])
 
-    def __repr__(self):
-        return f"UserLanguage(user_id={self.user_id}, native='{self.native_language_code}', target='{self.target_language_code}', level='{self.level}')"
+
+
+# Old code but works for one language
+# class UserLanguage(Base):
+#     __tablename__ = "user_languages"
+#
+#     user_id = mapped_column(Integer, ForeignKey("users.id"), primary_key=True)
+#     target_language_code = mapped_column(String(2), ForeignKey("languages.code"))
+#     level = mapped_column(String(2), default="A1")  # Optional: CEFR level
+#     updated_at = mapped_column(DateTime, default=datetime.utcnow)
+#
+#     # user = relationship("UserModel", back_populates="language_preference")
+#     # target_language = relationship("Language", foreign_keys=[target_language_code])
+#
+#     def __repr__(self):
+#         return f"UserLanguage(user_id={self.user_id}, native='{self.native_language_code}', target='{self.target_language_code}', level='{self.level}')"
 
 
 

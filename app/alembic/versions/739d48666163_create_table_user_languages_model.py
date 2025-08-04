@@ -23,10 +23,11 @@ def upgrade() -> None:
     """Upgrade schema."""
     op.create_table(
         'user_languages',
-        sa.Column('user_id', sa.Integer(), sa.ForeignKey('users.id'), primary_key=True),
+        sa.Column('id', sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column('user_id', sa.Integer(), sa.ForeignKey('users.id')),
         sa.Column('target_language_code', sa.String(length=2), sa.ForeignKey('languages.code')),
-        sa.Column('level', sa.String(length=2), nullable=True, server_default='A1'),
-        sa.Column('updated_at', sa.DateTime(), default=datetime.utcnow)
+        sa.Column('level', sa.String(length=2), nullable=True, server_default="A1"),
+        sa.Column('updated_at', sa.DateTime(), default=datetime.utcnow),
     )
 
 
