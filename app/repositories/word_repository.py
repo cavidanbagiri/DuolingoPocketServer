@@ -7,12 +7,11 @@ from typing import List
 import aiohttp
 import asyncio
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, and_
 from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
-
+from sqlalchemy.orm import selectinload, outerjoin
 
 from app.logging_config import setup_logger
 from app.models.word_model import  Word, Sentence, SentenceWord, WordMeaning, Translation, SentenceTranslation
@@ -747,6 +746,7 @@ class FetchWordRepository:
         self.db = db
         self.user_id = user_id
 
+
     async def fetch_words(self):
         # 1. Fetch user
         user_result = await self.db.execute(
@@ -756,7 +756,16 @@ class FetchWordRepository:
         if not user:
             return []
 
-        # 2. Get target language codes
+        native_language = user.native
+        lang_code_map = {
+            "Russian": "ru",
+            "English": "en",
+            "Turkish": "tr",
+        }
+
+        native_language = lang_code_map.get(native_language)
+
+        # 2. Get target languages
         lang_result = await self.db.execute(
             select(UserLanguage.target_language_code).where(UserLanguage.user_id == self.user_id)
         )
@@ -764,27 +773,59 @@ class FetchWordRepository:
         if not target_lang_codes:
             return []
 
-        # 3. LEFT JOIN word_meanings to words
+        # ✅ Correct joins
         stmt = (
-            select(Word, WordMeaning)
-            .outerjoin(WordMeaning, Word.id == WordMeaning.word_id)
+            select(Word, WordMeaning, Translation)
+            .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
+            .outerjoin(
+                Translation,
+                and_(
+                    Translation.source_word_id == Word.id,
+                    Translation.target_language_code == native_language
+                )
+            )
             .where(Word.language_code.in_(target_lang_codes))
+            .limit(10)
         )
 
         result = await self.db.execute(stmt)
-        rows = result.all()  # list of (Word, WordMeaning)
+        rows = result.all()
 
-        # 4. Grouping for frontend output
+
+        # Group words by language
         grouped = defaultdict(list)
-        for word, meaning in rows:
+
+        for word, meaning, translation in rows:
+
             grouped[word.language_code].append({
                 "text": word.text,
                 "frequency_rank": word.frequency_rank,
                 "level": word.level,
-                "pos": meaning.pos if meaning else None
+                "pos": meaning.pos if meaning else None,
+                "translation_to_native": translation.translated_text if translation else None
             })
 
         return [{lang: words} for lang, words in grouped.items()]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
