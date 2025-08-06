@@ -740,14 +740,14 @@ class RemoveDuplicatePosFromEnglish:
 # Create user function
 #############################################################################################################
 
+#
+#
 class FetchWordRepository:
-
     def __init__(self, db: AsyncSession, user_id: int):
         self.db = db
         self.user_id = user_id
 
-
-    async def fetch_words(self):
+    async def fetch_words(self, skip: int = 0, limit: int = 20):
         # 1. Fetch user
         user_result = await self.db.execute(
             select(UserModel).where(UserModel.id == self.user_id)
@@ -762,10 +762,9 @@ class FetchWordRepository:
             "English": "en",
             "Turkish": "tr",
         }
-
         native_language = lang_code_map.get(native_language)
 
-        # 2. Get target languages
+        # 2. Get user's target languages
         lang_result = await self.db.execute(
             select(UserLanguage.target_language_code).where(UserLanguage.user_id == self.user_id)
         )
@@ -773,7 +772,7 @@ class FetchWordRepository:
         if not target_lang_codes:
             return []
 
-        # ✅ Correct joins
+        # 3. Fetch paginated words
         stmt = (
             select(Word, WordMeaning, Translation)
             .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
@@ -785,27 +784,135 @@ class FetchWordRepository:
                 )
             )
             .where(Word.language_code.in_(target_lang_codes))
-            .limit(10)
+            .offset(skip)      # 👈 Pagination starts here
+            .limit(limit)      # 👈 Limit per page
         )
 
         result = await self.db.execute(stmt)
         rows = result.all()
 
+        # 4. Group by language
+        # grouped = defaultdict(list)
+        # for word, meaning, translation in rows:
+        #     grouped[word.language_code].append({
+        #         "text": word.text,
+        #         "frequency_rank": word.frequency_rank,
+        #         "level": word.level,
+        #         "pos": meaning.pos if meaning else None,
+        #         "translation_to_native": translation.translated_text if translation else None
+        #     })
 
-        # Group words by language
-        grouped = defaultdict(list)
-
+        grouped = defaultdict(dict)
         for word, meaning, translation in rows:
+            word_data = grouped[word.id]
 
-            grouped[word.language_code].append({
-                "text": word.text,
-                "frequency_rank": word.frequency_rank,
-                "level": word.level,
-                "pos": meaning.pos if meaning else None,
-                "translation_to_native": translation.translated_text if translation else None
-            })
+            if not word_data:
+                grouped[word.id] = {
+                    "text": word.text,
+                    "frequency_rank": word.frequency_rank,
+                    "level": word.level,
+                    "pos": set(),  # collect unique parts of speech
+                    "translation_to_native": translation.translated_text if translation else None,
+                    "language_code": word.language_code
+                }
 
-        return [{lang: words} for lang, words in grouped.items()]
+            if meaning and meaning.pos:
+                grouped[word.id]["pos"].add(meaning.pos)
+
+        final_result = defaultdict(list)
+        for word_info in grouped.values():
+            word_info["pos"] = list(word_info["pos"])  # convert set to list
+            final_result[word_info["language_code"]].append(word_info)
+
+
+        total_count_stmt = select(func.count()).select_from(Word).where(
+            Word.language_code.in_(target_lang_codes)
+        )
+        total_count_result = await self.db.execute(total_count_stmt)
+        total_count = total_count_result.scalar_one()
+
+        return {
+            "total": total_count,
+            # "data": [{lang: words} for lang, words in grouped.items()]
+            "data": [{lang: words} for lang, words in final_result.items()]
+
+        }
+
+
+
+
+
+
+
+
+
+
+# class FetchWordRepository:
+#
+#     def __init__(self, db: AsyncSession, user_id: int):
+#         self.db = db
+#         self.user_id = user_id
+#
+#
+#     async def fetch_words(self):
+#         # 1. Fetch user
+#         user_result = await self.db.execute(
+#             select(UserModel).where(UserModel.id == self.user_id)
+#         )
+#         user = user_result.scalar_one_or_none()
+#         if not user:
+#             return []
+#
+#         native_language = user.native
+#         lang_code_map = {
+#             "Russian": "ru",
+#             "English": "en",
+#             "Turkish": "tr",
+#         }
+#
+#         native_language = lang_code_map.get(native_language)
+#
+#         # 2. Get target languages
+#         lang_result = await self.db.execute(
+#             select(UserLanguage.target_language_code).where(UserLanguage.user_id == self.user_id)
+#         )
+#         target_lang_codes = [row[0] for row in lang_result.fetchall()]
+#         if not target_lang_codes:
+#             return []
+#
+#         # ✅ Correct joins
+#         stmt = (
+#             select(Word, WordMeaning, Translation)
+#             .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
+#             .outerjoin(
+#                 Translation,
+#                 and_(
+#                     Translation.source_word_id == Word.id,
+#                     Translation.target_language_code == native_language
+#                 )
+#             )
+#             .where(Word.language_code.in_(target_lang_codes))
+#             .limit(10)
+#         )
+#
+#         result = await self.db.execute(stmt)
+#         rows = result.all()
+#
+#
+#         # Group words by language
+#         grouped = defaultdict(list)
+#
+#         for word, meaning, translation in rows:
+#
+#             grouped[word.language_code].append({
+#                 "text": word.text,
+#                 "frequency_rank": word.frequency_rank,
+#                 "level": word.level,
+#                 "pos": meaning.pos if meaning else None,
+#                 "translation_to_native": translation.translated_text if translation else None
+#             })
+#
+#         return [{lang: words} for lang, words in grouped.items()]
 
 
 
