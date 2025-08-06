@@ -4,8 +4,9 @@ from fastapi import APIRouter, HTTPException, status, Query
 from fastapi.params import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.token_handler import TokenHandler
 from app.database.setup import get_db
-from app.repositories.word_repository import CreateMainStructureRepository
+from app.repositories.word_repository import CreateMainStructureRepository, FetchWordRepository
 
 router = APIRouter()
 
@@ -28,10 +29,20 @@ async def update_words(db: AsyncSession = Depends(get_db)):
 
 
 
+@router.get('/fetch_words', status_code=200)
+async def fetch_words(db: AsyncSession = Depends(get_db),
+                      user_info = Depends(TokenHandler.verify_access_token)):
+    try:
+        repo = FetchWordRepository(db, user_id=int(user_info.get('sub')))
+        result = await repo.fetch_words()
+        return result
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=str(ex))
 
 
-#
-#
+
+
+
 # @router.post('/create', status_code=201)
 # async def create_main_structure(db: AsyncSession = Depends(get_db)):
 #

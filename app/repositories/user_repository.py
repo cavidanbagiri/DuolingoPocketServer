@@ -273,20 +273,15 @@ class ChooseLangTargetRepository:
 
     async def choose_lang_target(self):
         lang_map = {
-            'English': 'en',
-            'Russian': 'ru',
-            'Turkish': 'tr'
+            'en': 'English',
+            'ru': 'Russian',
+            'tr': 'Turkish'
         }
-
-        # Normalize code
-        lang_code = lang_map.get(self.target_lang_code)
-        if not lang_code:
-            raise ValueError("Unsupported language selected.")
 
         # Check if the same language already exists for this user
         stmt = select(UserLanguage).where(
             UserLanguage.user_id == self.user_id,
-            UserLanguage.target_language_code == lang_code
+            UserLanguage.target_language_code == self.target_lang_code
         )
         result = await self.db.execute(stmt)
         existing = result.scalar_one_or_none()
@@ -294,13 +289,13 @@ class ChooseLangTargetRepository:
         if existing:
             return {
                 "msg": "Language already added.",
-                "target_language_code": lang_code
+                "target_language_code": self.target_lang_code
             }
 
         # Add new target language
         new_pref = UserLanguage(
             user_id=self.user_id,
-            target_language_code=lang_code,
+            target_language_code=self.target_lang_code,
             updated_at=datetime.utcnow()
         )
         self.db.add(new_pref)
@@ -308,5 +303,5 @@ class ChooseLangTargetRepository:
 
         return {
             "msg": "New language added.",
-            "target_language_code": lang_code
+            "target_language_code": self.target_lang_code
         }

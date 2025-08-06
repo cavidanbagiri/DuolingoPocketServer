@@ -69,7 +69,6 @@ async def login(response: Response, login_data: UserLoginSchema, db_session: Ann
                             secure=True,
                             samesite="none"
                             )
-        print(f'...............................{data.get("user")}')
         return {
             'user': data.get('user'),
             'access_token': data.get('access_token')

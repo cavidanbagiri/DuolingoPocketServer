@@ -6,11 +6,23 @@ from sqlalchemy.orm import mapped_column, Mapped, relationship
 
 from app.models.base_model import Base
 
+# from app.models.word_model import Language
 
-class Language(Base):
-    __tablename__ = "languages"
-    code = mapped_column(String(2), primary_key=True)  # en, es, ru
-    name = mapped_column(String(50))  # English, Spanish
+from app.models.language_model import Language
+
+#
+# class Language(Base):
+#     __tablename__ = "languages"
+#     code = mapped_column(String(2), primary_key=True)  # en, es, ru
+#     name = mapped_column(String(50))  # English, Spanish
+#
+
+
+# class Language(Base):
+#     __tablename__ = "languages"
+#     code = mapped_column(String(2), primary_key=True)  # en, es, ru
+#     name = mapped_column(String(50))  # English, Spanish
+
 
 
 class UserModel(Base):

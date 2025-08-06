@@ -1,5 +1,6 @@
 
 import os
+from collections import defaultdict
 from typing import List
 
 
@@ -15,7 +16,7 @@ from sqlalchemy.orm import selectinload
 
 from app.logging_config import setup_logger
 from app.models.word_model import  Word, Sentence, SentenceWord, WordMeaning, Translation, SentenceTranslation
-from app.models.user_model import Language
+from app.models.user_model import Language, UserModel, UserLanguage
 from app.schemas.translate_schema import TranslateSchema
 
 logger = setup_logger(__name__, "word.log")
@@ -737,12 +738,53 @@ class RemoveDuplicatePosFromEnglish:
 
 
 
+# Create user function
+#############################################################################################################
 
+class FetchWordRepository:
 
+    def __init__(self, db: AsyncSession, user_id: int):
+        self.db = db
+        self.user_id = user_id
 
+    async def fetch_words(self):
+        # 1. Fetch user
+        user_result = await self.db.execute(
+            select(UserModel).where(UserModel.id == self.user_id)
+        )
+        user = user_result.scalar_one_or_none()
+        if not user:
+            return []
 
+        # 2. Get target language codes
+        lang_result = await self.db.execute(
+            select(UserLanguage.target_language_code).where(UserLanguage.user_id == self.user_id)
+        )
+        target_lang_codes = [row[0] for row in lang_result.fetchall()]
+        if not target_lang_codes:
+            return []
 
+        # 3. LEFT JOIN word_meanings to words
+        stmt = (
+            select(Word, WordMeaning)
+            .outerjoin(WordMeaning, Word.id == WordMeaning.word_id)
+            .where(Word.language_code.in_(target_lang_codes))
+        )
 
+        result = await self.db.execute(stmt)
+        rows = result.all()  # list of (Word, WordMeaning)
+
+        # 4. Grouping for frontend output
+        grouped = defaultdict(list)
+        for word, meaning in rows:
+            grouped[word.language_code].append({
+                "text": word.text,
+                "frequency_rank": word.frequency_rank,
+                "level": word.level,
+                "pos": meaning.pos if meaning else None
+            })
+
+        return [{lang: words} for lang, words in grouped.items()]
 
 
 
