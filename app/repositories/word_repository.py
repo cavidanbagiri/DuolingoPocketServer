@@ -8,7 +8,7 @@ import aiohttp
 import asyncio
 
 from fastapi import HTTPException
-from sqlalchemy import select, func, and_, update
+from sqlalchemy import select, func, and_, update, or_
 from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -747,7 +747,7 @@ class FetchWordRepository:
         self.db = db
         self.user_id = user_id
 
-    async def fetch_words(self, skip: int = 0, limit: int = 20):
+    async def fetch_words(self, skip: int = 0, limit: int = 30):
         # 1. Fetch user
         user_result = await self.db.execute(
             select(UserModel).where(UserModel.id == self.user_id)
@@ -772,7 +772,20 @@ class FetchWordRepository:
         if not target_lang_codes:
             return []
 
+
+        # This is new added for checking
+        subquery = (
+            select(UserWord.word_id)
+            .where(
+                UserWord.user_id == self.user_id,
+                or_(UserWord.is_learned == True, UserWord.is_starred == True)
+            )
+            .subquery()
+        )
+
+
         # 3. Fetch paginated words
+        # new code for testing
         stmt = (
             select(Word, WordMeaning, Translation)
             .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
@@ -783,10 +796,28 @@ class FetchWordRepository:
                     Translation.target_language_code == native_language
                 )
             )
-            .where(Word.language_code.in_(target_lang_codes))
-            .offset(skip)      # 👈 Pagination starts here
-            .limit(limit)      # 👈 Limit per page
+            .where(
+                Word.language_code.in_(target_lang_codes),
+                Word.id.notin_(select(subquery.c.word_id))
+            )
+            .offset(skip)
+            .limit(limit)
         )
+        # Old code
+        # stmt = (
+        #     select(Word, WordMeaning, Translation)
+        #     .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
+        #     .outerjoin(
+        #         Translation,
+        #         and_(
+        #             Translation.source_word_id == Word.id,
+        #             Translation.target_language_code == native_language
+        #         )
+        #     )
+        #     .where(Word.language_code.in_(target_lang_codes))
+        #     .offset(skip)      # 👈 Pagination starts here
+        #     .limit(limit)      # 👈 Limit per page
+        # )
 
         result = await self.db.execute(stmt)
         rows = result.all()
@@ -823,10 +854,10 @@ class FetchWordRepository:
 
         return {
             "total": total_count,
-            # "data": [{lang: words} for lang, words in grouped.items()]
             "data": [{lang: words} for lang, words in final_result.items()]
 
         }
+
 
 
 # Change User Word Status
@@ -862,6 +893,21 @@ class ChangeWordStatusRepository:
             "is_starred": user_word.is_starred,
             "is_learned": user_word.is_learned,
         }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
