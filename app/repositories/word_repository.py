@@ -741,6 +741,8 @@ class RemoveDuplicatePosFromEnglish:
 # Create user function
 #############################################################################################################
 
+
+
 # Fetch words
 class FetchWordRepository:
     def __init__(self, db: AsyncSession, user_id: int, only_starred: bool = False):
@@ -773,40 +775,9 @@ class FetchWordRepository:
         if not target_lang_codes:
             return []
 
-
-        # This is new added for checking
-        # subquery = (
-        #     select(UserWord.word_id)
-        #     .where(
-        #         UserWord.user_id == self.user_id,
-        #         or_(UserWord.is_learned == True, UserWord.is_starred == True)
-        #     )
-        #     .subquery()
-        # )
-
-
-        # 3. Fetch paginated words
-        # new code for testing
-        # stmt = (
-        #     select(Word, WordMeaning, Translation)
-        #     .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
-        #     .outerjoin(
-        #         Translation,
-        #         and_(
-        #             Translation.source_word_id == Word.id,
-        #             Translation.target_language_code == native_language
-        #         )
-        #     )
-        #     .where(
-        #         Word.language_code.in_(target_lang_codes),
-        #         Word.id.notin_(select(subquery.c.word_id))
-        #     )
-        #     .offset(skip)
-        #     .limit(limit)
-        # )
-
+        # 3. Build base query
         stmt = (
-            select(Word, WordMeaning, Translation)
+            select(Word, WordMeaning, Translation, UserWord.is_starred, UserWord.is_learned)
             .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
             .outerjoin(
                 Translation,
@@ -815,18 +786,22 @@ class FetchWordRepository:
                     Translation.target_language_code == native_language
                 )
             )
+            .outerjoin(
+                UserWord,
+                and_(
+                    UserWord.word_id == Word.id,
+                    UserWord.user_id == self.user_id
+                )
+            )
             .where(
                 Word.language_code.in_(target_lang_codes),
             )
         )
 
+        # 4. Filter by starred or exclude learned/starred
         if self.only_starred:
-            stmt = stmt.join(UserWord).where(
-                UserWord.user_id == self.user_id,
-                UserWord.is_starred == True
-            )
+            stmt = stmt.where(UserWord.is_starred == True)
         else:
-            # Exclude learned/starred words if not filtering specifically for starred
             subquery = (
                 select(UserWord.word_id)
                 .where(
@@ -837,14 +812,16 @@ class FetchWordRepository:
             )
             stmt = stmt.where(Word.id.notin_(select(subquery.c.word_id)))
 
+        # 5. Pagination
         stmt = stmt.offset(skip).limit(limit)
 
-
+        # 6. Execute query
         result = await self.db.execute(stmt)
         rows = result.all()
 
+        # 7. Group results
         grouped = defaultdict(dict)
-        for word, meaning, translation in rows:
+        for word, meaning, translation, is_starred, is_learned in rows:
             word_data = grouped[word.id]
 
             if not word_data:
@@ -855,18 +832,21 @@ class FetchWordRepository:
                     "level": word.level,
                     "pos": set(),  # collect unique parts of speech
                     "translation_to_native": translation.translated_text if translation else None,
-                    "language_code": word.language_code
+                    "language_code": word.language_code,
+                    "is_starred": is_starred or False,
+                    "is_learned": is_learned or False,
                 }
 
             if meaning and meaning.pos:
                 grouped[word.id]["pos"].add(meaning.pos)
 
+        # 8. Format final result
         final_result = defaultdict(list)
         for word_info in grouped.values():
             word_info["pos"] = list(word_info["pos"])  # convert set to list
             final_result[word_info["language_code"]].append(word_info)
 
-
+        # 9. Count total
         total_count_stmt = select(func.count()).select_from(Word).where(
             Word.language_code.in_(target_lang_codes)
         )
@@ -876,7 +856,6 @@ class FetchWordRepository:
         return {
             "total": total_count,
             "data": [{lang: words} for lang, words in final_result.items()]
-
         }
 
 
