@@ -4,26 +4,9 @@ from sqlalchemy import String, Boolean, DateTime, ForeignKey, func, Integer
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 
 
-from app.models.base_model import Base
-
-# from app.models.word_model import Language
-
 from app.models.language_model import Language
 
-#
-# class Language(Base):
-#     __tablename__ = "languages"
-#     code = mapped_column(String(2), primary_key=True)  # en, es, ru
-#     name = mapped_column(String(50))  # English, Spanish
-#
-
-
-# class Language(Base):
-#     __tablename__ = "languages"
-#     code = mapped_column(String(2), primary_key=True)  # en, es, ru
-#     name = mapped_column(String(50))  # English, Spanish
-
-
+from app.models.base_model import Base
 
 class UserModel(Base):
     __tablename__ = "users"
@@ -61,23 +44,6 @@ class UserLanguage(Base):
 
 
 
-# Old code but works for one language
-# class UserLanguage(Base):
-#     __tablename__ = "user_languages"
-#
-#     user_id = mapped_column(Integer, ForeignKey("users.id"), primary_key=True)
-#     target_language_code = mapped_column(String(2), ForeignKey("languages.code"))
-#     level = mapped_column(String(2), default="A1")  # Optional: CEFR level
-#     updated_at = mapped_column(DateTime, default=datetime.utcnow)
-#
-#     # user = relationship("UserModel", back_populates="language_preference")
-#     # target_language = relationship("Language", foreign_keys=[target_language_code])
-#
-#     def __repr__(self):
-#         return f"UserLanguage(user_id={self.user_id}, native='{self.native_language_code}', target='{self.target_language_code}', level='{self.level}')"
-
-
-
 class TokenModel(Base):
     __tablename__ = 'tokens'
 
@@ -88,3 +54,21 @@ class TokenModel(Base):
 
     def __str__(self):
         return f"{self.id} {self.tokens} {self.user_id}"
+
+
+
+class UserWord(Base):
+    __tablename__ = "user_words"
+
+    id = mapped_column(Integer, primary_key=True)
+    user_id = mapped_column(Integer, ForeignKey("users.id"))
+    word_id = mapped_column(Integer, ForeignKey("words.id"))
+
+    is_starred = mapped_column(Boolean, default=False)
+    is_learned = mapped_column(Boolean, default=False)
+
+    created_at = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    # user = relationship("UserModel", back_populates="user_words")
+    # word = relationship("Word", back_populates="user_words")

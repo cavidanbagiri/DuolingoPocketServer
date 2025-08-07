@@ -7,7 +7,8 @@ from typing import List
 import aiohttp
 import asyncio
 
-from sqlalchemy import select, func, and_
+from fastapi import HTTPException
+from sqlalchemy import select, func, and_, update
 from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +16,7 @@ from sqlalchemy.orm import selectinload, outerjoin
 
 from app.logging_config import setup_logger
 from app.models.word_model import  Word, Sentence, SentenceWord, WordMeaning, Translation, SentenceTranslation
-from app.models.user_model import Language, UserModel, UserLanguage
+from app.models.user_model import Language, UserModel, UserLanguage, UserWord
 from app.schemas.translate_schema import TranslateSchema
 
 logger = setup_logger(__name__, "word.log")
@@ -740,8 +741,7 @@ class RemoveDuplicatePosFromEnglish:
 # Create user function
 #############################################################################################################
 
-#
-#
+# Fetch words
 class FetchWordRepository:
     def __init__(self, db: AsyncSession, user_id: int):
         self.db = db
@@ -791,23 +791,13 @@ class FetchWordRepository:
         result = await self.db.execute(stmt)
         rows = result.all()
 
-        # 4. Group by language
-        # grouped = defaultdict(list)
-        # for word, meaning, translation in rows:
-        #     grouped[word.language_code].append({
-        #         "text": word.text,
-        #         "frequency_rank": word.frequency_rank,
-        #         "level": word.level,
-        #         "pos": meaning.pos if meaning else None,
-        #         "translation_to_native": translation.translated_text if translation else None
-        #     })
-
         grouped = defaultdict(dict)
         for word, meaning, translation in rows:
             word_data = grouped[word.id]
 
             if not word_data:
                 grouped[word.id] = {
+                    "id": word.id,
                     "text": word.text,
                     "frequency_rank": word.frequency_rank,
                     "level": word.level,
@@ -839,8 +829,39 @@ class FetchWordRepository:
         }
 
 
+# Change User Word Status
+class ChangeWordStatusRepository:
+    def __init__(self, db: AsyncSession, word_id: int, action: str, user_id: int):
+        self.word_id = word_id
+        self.action = action
+        self.db = db
+        self.user_id = user_id
 
+    async def set_word_status(self):
 
+        if self.action not in {"star", "learned"}:
+            raise HTTPException(status_code=400, detail="Invalid action")
+
+        result = await self.db.execute(
+            select(UserWord).where(UserWord.user_id == self.user_id, UserWord.word_id == self.word_id)
+        )
+        user_word = result.scalar_one_or_none()
+
+        if not user_word:
+            user_word = UserWord(user_id=self.user_id, word_id=self.word_id)
+            self.db.add(user_word)
+
+        if self.action == "star":
+            user_word.is_starred = not user_word.is_starred
+        elif self.action == "learned":
+            user_word.is_learned = not user_word.is_learned
+
+        await self.db.commit()
+        return {
+            "word_id": self.word_id,
+            "is_starred": user_word.is_starred,
+            "is_learned": user_word.is_learned,
+        }
 
 
 

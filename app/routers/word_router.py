@@ -6,7 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.token_handler import TokenHandler
 from app.database.setup import get_db
-from app.repositories.word_repository import CreateMainStructureRepository, FetchWordRepository
+from app.repositories.word_repository import CreateMainStructureRepository, FetchWordRepository, \
+    ChangeWordStatusRepository
+from app.schemas.user_schema import ChangeWordStatusSchema
 
 router = APIRouter()
 
@@ -38,6 +40,27 @@ async def fetch_words(db: AsyncSession = Depends(get_db),
         return result
     except Exception as ex:
         raise HTTPException(status_code=500, detail=str(ex))
+
+
+
+
+@router.post('/setstatus', status_code=200)
+async def set_word_status(data: ChangeWordStatusSchema, db:
+                            AsyncSession = Depends(get_db),
+                            user_info = Depends(TokenHandler.verify_access_token)):
+    try:
+        repo = ChangeWordStatusRepository(db=db,
+                                          word_id=data.word_id,
+                                          action=data.action,
+                                          user_id=int(user_info.get('sub')))
+        result = await repo.set_word_status()
+        return result
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
+
+
 
 
 

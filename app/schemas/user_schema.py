@@ -58,3 +58,8 @@ class NativeLangSchema(BaseModel):
 class ChooseLangSchema(BaseModel):
 
     target_language_code: str
+
+
+class ChangeWordStatusSchema(BaseModel):
+    word_id: int
+    action: str
