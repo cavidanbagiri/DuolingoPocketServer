@@ -32,10 +32,11 @@ async def update_words(db: AsyncSession = Depends(get_db)):
 
 
 @router.get('/fetch_words', status_code=200)
-async def fetch_words(db: AsyncSession = Depends(get_db),
+async def fetch_words(only_starred: bool = False,
+                      db: AsyncSession = Depends(get_db),
                       user_info = Depends(TokenHandler.verify_access_token)):
     try:
-        repo = FetchWordRepository(db, user_id=int(user_info.get('sub')))
+        repo = FetchWordRepository(db, user_id=int(user_info.get('sub')), only_starred=only_starred)
         result = await repo.fetch_words()
         return result
     except Exception as ex:

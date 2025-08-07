@@ -743,9 +743,10 @@ class RemoveDuplicatePosFromEnglish:
 
 # Fetch words
 class FetchWordRepository:
-    def __init__(self, db: AsyncSession, user_id: int):
+    def __init__(self, db: AsyncSession, user_id: int, only_starred: bool = False):
         self.db = db
         self.user_id = user_id
+        self.only_starred = only_starred
 
     async def fetch_words(self, skip: int = 0, limit: int = 30):
         # 1. Fetch user
@@ -774,18 +775,36 @@ class FetchWordRepository:
 
 
         # This is new added for checking
-        subquery = (
-            select(UserWord.word_id)
-            .where(
-                UserWord.user_id == self.user_id,
-                or_(UserWord.is_learned == True, UserWord.is_starred == True)
-            )
-            .subquery()
-        )
+        # subquery = (
+        #     select(UserWord.word_id)
+        #     .where(
+        #         UserWord.user_id == self.user_id,
+        #         or_(UserWord.is_learned == True, UserWord.is_starred == True)
+        #     )
+        #     .subquery()
+        # )
 
 
         # 3. Fetch paginated words
         # new code for testing
+        # stmt = (
+        #     select(Word, WordMeaning, Translation)
+        #     .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
+        #     .outerjoin(
+        #         Translation,
+        #         and_(
+        #             Translation.source_word_id == Word.id,
+        #             Translation.target_language_code == native_language
+        #         )
+        #     )
+        #     .where(
+        #         Word.language_code.in_(target_lang_codes),
+        #         Word.id.notin_(select(subquery.c.word_id))
+        #     )
+        #     .offset(skip)
+        #     .limit(limit)
+        # )
+
         stmt = (
             select(Word, WordMeaning, Translation)
             .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
@@ -798,26 +817,28 @@ class FetchWordRepository:
             )
             .where(
                 Word.language_code.in_(target_lang_codes),
-                Word.id.notin_(select(subquery.c.word_id))
             )
-            .offset(skip)
-            .limit(limit)
         )
-        # Old code
-        # stmt = (
-        #     select(Word, WordMeaning, Translation)
-        #     .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
-        #     .outerjoin(
-        #         Translation,
-        #         and_(
-        #             Translation.source_word_id == Word.id,
-        #             Translation.target_language_code == native_language
-        #         )
-        #     )
-        #     .where(Word.language_code.in_(target_lang_codes))
-        #     .offset(skip)      # 👈 Pagination starts here
-        #     .limit(limit)      # 👈 Limit per page
-        # )
+
+        if self.only_starred:
+            stmt = stmt.join(UserWord).where(
+                UserWord.user_id == self.user_id,
+                UserWord.is_starred == True
+            )
+        else:
+            # Exclude learned/starred words if not filtering specifically for starred
+            subquery = (
+                select(UserWord.word_id)
+                .where(
+                    UserWord.user_id == self.user_id,
+                    or_(UserWord.is_learned == True, UserWord.is_starred == True)
+                )
+                .subquery()
+            )
+            stmt = stmt.where(Word.id.notin_(select(subquery.c.word_id)))
+
+        stmt = stmt.offset(skip).limit(limit)
+
 
         result = await self.db.execute(stmt)
         rows = result.all()
