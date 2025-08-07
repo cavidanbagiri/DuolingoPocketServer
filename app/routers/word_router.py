@@ -1,4 +1,4 @@
-
+import asyncio
 
 from fastapi import APIRouter, HTTPException, status, Query
 from fastapi.params import Depends
@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.token_handler import TokenHandler
 from app.database.setup import get_db
 from app.repositories.word_repository import CreateMainStructureRepository, FetchWordRepository, \
-    ChangeWordStatusRepository
+    ChangeWordStatusRepository, DetailWordRepository
 from app.schemas.user_schema import ChangeWordStatusSchema
 
 router = APIRouter()
@@ -62,7 +62,17 @@ async def set_word_status(data: ChangeWordStatusSchema, db:
 
 
 
+@router.get('/get_detail_word/{word_id}', status_code=200)
+async def get_detail_word(word_id: int,
+                          db: AsyncSession = Depends(get_db),
+                          user_info = Depends(TokenHandler.verify_access_token)):
 
+    try:
+        repo = DetailWordRepository(db=db, word_id=word_id, user_id=int(user_info.get('sub')))
+        result = await repo.get_word_detail()
+        return result
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=str(ex))
 
 
 

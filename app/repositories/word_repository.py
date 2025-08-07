@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, outerjoin
 
 from app.logging_config import setup_logger
-from app.models.word_model import  Word, Sentence, SentenceWord, WordMeaning, Translation, SentenceTranslation
+from app.models.word_model import Word, Sentence, SentenceWord, WordMeaning, Translation, SentenceTranslation, \
+    LearnedWord
 from app.models.user_model import Language, UserModel, UserLanguage, UserWord
 from app.schemas.translate_schema import TranslateSchema
 
@@ -896,8 +897,124 @@ class ChangeWordStatusRepository:
 
 
 
+class DetailWordRepository:
+
+    def __init__(self, db: AsyncSession, word_id: int, user_id: int):
+        self.db = db
+        self.word_id = word_id
+        self.user_id = user_id
 
 
+    async def get_word_detail(self):
+        # 1. Fetch the word with relationships
+        result = await self.db.execute(
+            select(Word)
+            .where(Word.id == self.word_id)
+            .options(
+                selectinload(Word.meanings).selectinload(WordMeaning.sentences).selectinload(Sentence.translations),
+                selectinload(Word.translations).selectinload(Translation.target_language),
+                selectinload(Word.in_sentences).selectinload(SentenceWord.sentence).selectinload(Sentence.translations)
+            )
+        )
+        word: Word = result.scalar_one_or_none()
+        if not word:
+            return None
+
+        # 2. Check if word is starred or learned
+        user_word_result = await self.db.execute(
+            select(UserWord)
+            .where(UserWord.user_id == self.user_id, UserWord.word_id == self.word_id)
+        )
+        user_word: UserWord = user_word_result.scalar_one_or_none()
+
+        is_starred = user_word.is_starred if user_word else False
+        is_learned = user_word.is_learned if user_word else False
+
+        # 3. Check for learned word strength
+        learned_result = await self.db.execute(
+            select(LearnedWord)
+            .where(LearnedWord.user_id == self.user_id, LearnedWord.word_id == self.word_id)
+        )
+        learned_word: LearnedWord = learned_result.scalar_one_or_none()
+        strength = learned_word.strength if learned_word else 0
+
+        # 4. Structure meanings
+        meanings = []
+        for meaning in word.meanings:
+            meaning_sentences = []
+            for sentence in meaning.sentences:
+                meaning_sentences.append({
+                    "id": sentence.id,
+                    "text": sentence.text,
+                    "translations": [
+                        {
+                            "language_code": t.language_code,
+                            "translated_text": t.translated_text
+                        } for t in sentence.translations
+                    ]
+                })
+            meanings.append({
+                "id": meaning.id,
+                "pos": meaning.pos,
+                "example": meaning.example,
+                "sentences": meaning_sentences
+            })
+
+        # 5. Structure general example sentences
+        general_sentences = []
+        for sentence_link in word.in_sentences:
+            sentence = sentence_link.sentence
+            general_sentences.append({
+                "id": sentence.id,
+                "text": sentence.text,
+                "translations": [
+                    {
+                        "language_code": t.language_code,
+                        "translated_text": t.translated_text
+                    } for t in sentence.translations
+                ]
+            })
+
+        # 6. Structure translations
+        translations = []
+        for t in word.translations:
+            translations.append({
+                "language_code": t.target_language_code,
+                "translated_text": t.translated_text
+            })
+
+
+
+
+        # 7. Build response
+        return {
+            "id": word.id,
+            "text": word.text,
+            "language_code": word.language_code,
+            "frequency_rank": word.frequency_rank,
+            "level": word.level,
+            "is_starred": is_starred,
+            "is_learned": is_learned,
+            "strength": strength,
+            "meanings": meanings,
+            "translations": translations,
+            "example_sentences": general_sentences
+        }
+
+
+
+
+
+
+
+
+    # async def get_word(self):
+    #     result = await self.db.execute(
+    #         select(Word).where(Word.id == self.word_id)
+    #     )
+    #     word = result.scalar_one_or_none()
+    #     return word
+    #
 
 
 
