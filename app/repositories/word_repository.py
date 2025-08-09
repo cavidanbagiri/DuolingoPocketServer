@@ -748,9 +748,15 @@ class GetStatisticsForDashboardRepository:
         result = await self.db.execute(query)
         rows = result.mappings().all()
 
+        lang_code_map = {
+            "ru":"Russian",
+            "en":"English",
+            "tr":"Turkish",
+        }
+
         return [
             {
-                "language_code": row["language_code"],
+                "language_code": lang_code_map.get(row["language_code"]),
                 "total_words": row["total_words"] or 0,
                 "learned_words": row["learned_words"] or 0,
                 "starred_words": row["starred_words"] or 0
@@ -1019,24 +1025,6 @@ class DetailWordRepository:
             "translations": translations,
             "example_sentences": general_sentences
         }
-
-
-
-
-
-
-
-
-    # async def get_word(self):
-    #     result = await self.db.execute(
-    #         select(Word).where(Word.id == self.word_id)
-    #     )
-    #     word = result.scalar_one_or_none()
-    #     return word
-    #
-
-
-
 
 
 
