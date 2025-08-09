@@ -551,26 +551,6 @@ class GenerateEnglishSentencesForEachWord:
 
         await self.db.commit()
 
-    # This is real code a and work, l add new function with this name as up
-    # async def _save_sentences(self, word: Word, sentences: List[str]):
-    #     """Save sentences and link them to word and meanings"""
-    #     for sentence_text in sentences:
-    #         # Create Sentence record
-    #         sentence = Sentence(
-    #             text=sentence_text,
-    #             language_code="en"  # Assuming English sentences
-    #         )
-    #         self.db.add(sentence)
-    #         await self.db.flush()  # Get the sentence ID
-    #
-    #         # Link sentence to word
-    #         sentence_word = SentenceWord(
-    #             sentence_id=sentence.id,
-    #             word_id=word.id
-    #         )
-    #         self.db.add(sentence_word)
-    #
-    #     await self.db.commit()
 
     async def generate_sentences(self, word: str) -> List[str]:
         """Generate sentences using Yandex GPT API"""
@@ -746,10 +726,11 @@ class RemoveDuplicatePosFromEnglish:
 
 # Fetch words
 class FetchWordRepository:
-    def __init__(self, db: AsyncSession, user_id: int, only_starred: bool = False):
+    def __init__(self, db: AsyncSession, user_id: int, only_starred: bool = False, only_learned: bool = False):
         self.db = db
         self.user_id = user_id
         self.only_starred = only_starred
+        self.only_learned = only_learned
 
     async def fetch_words(self, skip: int = 0, limit: int = 30):
         # 1. Fetch user
@@ -802,6 +783,8 @@ class FetchWordRepository:
         # 4. Filter by starred or exclude learned/starred
         if self.only_starred:
             stmt = stmt.where(UserWord.is_starred == True)
+        elif self.only_learned:
+            stmt = stmt.where(UserWord.is_learned == True)
         else:
             subquery = (
                 select(UserWord.word_id)

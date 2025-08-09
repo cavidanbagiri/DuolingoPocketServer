@@ -33,10 +33,13 @@ async def update_words(db: AsyncSession = Depends(get_db)):
 
 @router.get('/fetch_words', status_code=200)
 async def fetch_words(only_starred: bool = False,
+                      only_learned: bool = False,
                       db: AsyncSession = Depends(get_db),
                       user_info = Depends(TokenHandler.verify_access_token)):
+
     try:
-        repo = FetchWordRepository(db, user_id=int(user_info.get('sub')), only_starred=only_starred)
+        repo = FetchWordRepository(db, user_id=int(user_info.get('sub')),
+                                   only_starred=only_starred, only_learned=only_learned)
         result = await repo.fetch_words()
         return result
     except Exception as ex:
@@ -73,6 +76,24 @@ async def get_detail_word(word_id: int,
         return result
     except Exception as ex:
         raise HTTPException(status_code=500, detail=str(ex))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
