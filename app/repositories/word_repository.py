@@ -8,7 +8,7 @@ import aiohttp
 import asyncio
 
 from fastapi import HTTPException
-from sqlalchemy import select, func, and_, update, or_
+from sqlalchemy import select, func, and_, update, or_, case
 from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -722,6 +722,41 @@ class RemoveDuplicatePosFromEnglish:
 # Create user function
 #############################################################################################################
 
+# Get Statistics For Dashboard
+class GetStatisticsForDashboardRepository:
+    def __init__(self, db: AsyncSession, user_id: int):
+        self.db = db
+        self.user_id = user_id
+
+    async def get_statistics(self):
+        query = (
+            select(
+                Word.language_code,
+                func.count(Word.id).label("total_words"),
+                func.count(case((UserWord.is_learned == True, 1))).label("learned_words"),
+                func.count(case((UserWord.is_starred == True, 1))).label("starred_words"),
+            )
+            .select_from(Word)
+            .outerjoin(
+                UserWord,
+                (UserWord.word_id == Word.id) & (UserWord.user_id == self.user_id)
+            )
+            .group_by(Word.language_code)
+            .order_by(Word.language_code)
+        )
+
+        result = await self.db.execute(query)
+        rows = result.mappings().all()
+
+        return [
+            {
+                "language_code": row["language_code"],
+                "total_words": row["total_words"] or 0,
+                "learned_words": row["learned_words"] or 0,
+                "starred_words": row["starred_words"] or 0
+            }
+            for row in rows
+        ]
 
 
 # Fetch words
@@ -880,6 +915,7 @@ class ChangeWordStatusRepository:
 
 
 
+# Get Detail Word with sentences
 class DetailWordRepository:
 
     def __init__(self, db: AsyncSession, word_id: int, user_id: int):
