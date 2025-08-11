@@ -3,9 +3,17 @@
   <database-model serializer="dbm" dbms="POSTGRES" family-id="POSTGRES" format-version="4.53">
     <root id="1">
       <DateStyle>dmy</DateStyle>
-      <IntrospectionStateNumber>2719</IntrospectionStateNumber>
+      <Grants>1||-9223372036854775808|c|G
+1||10|c|G
+1||10|C|G
+1||10|T|G
+4||-9223372036854775808|c|G
+4||10|c|G
+4||10|C|G
+4||10|T|G</Grants>
+      <IntrospectionStateNumber>12858</IntrospectionStateNumber>
       <ServerVersion>17.4</ServerVersion>
-      <StartupTime>1752862508</StartupTime>
+      <StartupTime>1754567134</StartupTime>
       <TimeZones>true ACDT
 true ACSST
 false ACST
@@ -800,7 +808,7 @@ false Zulu
 14704||10|C|G
 14704||-9223372036854775808|U|G
 14704||10|U|G</Grants>
-      <IntrospectionStateNumber>2719</IntrospectionStateNumber>
+      <IntrospectionStateNumber>12858</IntrospectionStateNumber>
       <ObjectId>16880</ObjectId>
       <OwnerName>postgres</OwnerName>
     </database>
@@ -4231,8 +4239,8 @@ false Zulu
     <schema id="266" parent="2" name="public">
       <Comment>standard public schema</Comment>
       <Current>1</Current>
-      <IntrospectionStateNumber>2719</IntrospectionStateNumber>
-      <LastIntrospectionLocalTimestamp>2025-07-20.10:06:20</LastIntrospectionLocalTimestamp>
+      <IntrospectionStateNumber>12858</IntrospectionStateNumber>
+      <LastIntrospectionLocalTimestamp>2025-08-09.12:18:21</LastIntrospectionLocalTimestamp>
       <ObjectId>2200</ObjectId>
       <StateNumber>532</StateNumber>
       <OwnerName>pg_database_owner</OwnerName>
@@ -4269,7 +4277,23 @@ false Zulu
       <StoredType>integer|0s</StoredType>
       <OwnerName>postgres</OwnerName>
     </sequence>
-    <sequence id="271" parent="266" name="users_id_seq">
+    <sequence id="271" parent="266" name="user_languages_id_seq">
+      <ObjectId>42687</ObjectId>
+      <SequenceIdentity>1</SequenceIdentity>
+      <StartValue>1</StartValue>
+      <StateNumber>12340</StateNumber>
+      <StoredType>integer|0s</StoredType>
+      <OwnerName>postgres</OwnerName>
+    </sequence>
+    <sequence id="272" parent="266" name="user_words_id_seq">
+      <ObjectId>42705</ObjectId>
+      <SequenceIdentity>1</SequenceIdentity>
+      <StartValue>1</StartValue>
+      <StateNumber>12570</StateNumber>
+      <StoredType>integer|0s</StoredType>
+      <OwnerName>postgres</OwnerName>
+    </sequence>
+    <sequence id="273" parent="266" name="users_id_seq">
       <ObjectId>17934</ObjectId>
       <SequenceIdentity>1</SequenceIdentity>
       <StartValue>1</StartValue>
@@ -4277,7 +4301,7 @@ false Zulu
       <StoredType>integer|0s</StoredType>
       <OwnerName>postgres</OwnerName>
     </sequence>
-    <sequence id="272" parent="266" name="word_meanings_id_seq">
+    <sequence id="274" parent="266" name="word_meanings_id_seq">
       <ObjectId>18072</ObjectId>
       <SequenceIdentity>1</SequenceIdentity>
       <StartValue>1</StartValue>
@@ -4285,7 +4309,7 @@ false Zulu
       <StoredType>integer|0s</StoredType>
       <OwnerName>postgres</OwnerName>
     </sequence>
-    <sequence id="273" parent="266" name="words_id_seq">
+    <sequence id="275" parent="266" name="words_id_seq">
       <ObjectId>17971</ObjectId>
       <SequenceIdentity>1</SequenceIdentity>
       <StartValue>1</StartValue>
@@ -4293,86 +4317,98 @@ false Zulu
       <StoredType>integer|0s</StoredType>
       <OwnerName>postgres</OwnerName>
     </sequence>
-    <table id="274" parent="266" name="alembic_version">
+    <table id="276" parent="266" name="alembic_version">
       <ObjectId>17288</ObjectId>
       <StateNumber>2362</StateNumber>
       <AccessMethodId>2</AccessMethodId>
       <OwnerName>postgres</OwnerName>
     </table>
-    <table id="275" parent="266" name="languages">
+    <table id="277" parent="266" name="languages">
       <ObjectId>17965</ObjectId>
       <StateNumber>2718</StateNumber>
       <AccessMethodId>2</AccessMethodId>
       <OwnerName>postgres</OwnerName>
     </table>
-    <table id="276" parent="266" name="learned_words">
+    <table id="278" parent="266" name="learned_words">
       <ObjectId>18057</ObjectId>
       <StateNumber>2718</StateNumber>
       <AccessMethodId>2</AccessMethodId>
       <OwnerName>postgres</OwnerName>
     </table>
-    <table id="277" parent="266" name="meaning_sentence_links">
+    <table id="279" parent="266" name="meaning_sentence_links">
       <ObjectId>18088</ObjectId>
       <StateNumber>2718</StateNumber>
       <AccessMethodId>2</AccessMethodId>
       <OwnerName>postgres</OwnerName>
     </table>
-    <table id="278" parent="266" name="sentence_translations">
+    <table id="280" parent="266" name="sentence_translations">
       <ObjectId>18038</ObjectId>
       <StateNumber>2718</StateNumber>
       <AccessMethodId>2</AccessMethodId>
       <OwnerName>postgres</OwnerName>
     </table>
-    <table id="279" parent="266" name="sentence_words">
+    <table id="281" parent="266" name="sentence_words">
       <ObjectId>18020</ObjectId>
       <StateNumber>2718</StateNumber>
       <AccessMethodId>2</AccessMethodId>
       <OwnerName>postgres</OwnerName>
     </table>
-    <table id="280" parent="266" name="sentences">
+    <table id="282" parent="266" name="sentences">
       <ObjectId>18006</ObjectId>
       <StateNumber>2718</StateNumber>
       <AccessMethodId>2</AccessMethodId>
       <OwnerName>postgres</OwnerName>
     </table>
-    <table id="281" parent="266" name="tokens">
+    <table id="283" parent="266" name="tokens">
       <ObjectId>17951</ObjectId>
       <StateNumber>2718</StateNumber>
       <AccessMethodId>2</AccessMethodId>
       <OwnerName>postgres</OwnerName>
     </table>
-    <table id="282" parent="266" name="translations">
+    <table id="284" parent="266" name="translations">
       <ObjectId>17987</ObjectId>
       <StateNumber>2718</StateNumber>
       <AccessMethodId>2</AccessMethodId>
       <OwnerName>postgres</OwnerName>
     </table>
-    <table id="283" parent="266" name="users">
+    <table id="285" parent="266" name="user_languages">
+      <ObjectId>42688</ObjectId>
+      <StateNumber>12340</StateNumber>
+      <AccessMethodId>2</AccessMethodId>
+      <OwnerName>postgres</OwnerName>
+    </table>
+    <table id="286" parent="266" name="user_words">
+      <ObjectId>42706</ObjectId>
+      <StateNumber>12570</StateNumber>
+      <AccessMethodId>2</AccessMethodId>
+      <OwnerName>postgres</OwnerName>
+    </table>
+    <table id="287" parent="266" name="users">
       <ObjectId>17935</ObjectId>
       <StateNumber>2718</StateNumber>
       <AccessMethodId>2</AccessMethodId>
       <OwnerName>postgres</OwnerName>
     </table>
-    <table id="284" parent="266" name="word_meanings">
+    <table id="288" parent="266" name="word_meanings">
       <ObjectId>18073</ObjectId>
       <StateNumber>2718</StateNumber>
       <AccessMethodId>2</AccessMethodId>
       <OwnerName>postgres</OwnerName>
     </table>
-    <table id="285" parent="266" name="words">
+    <table id="289" parent="266" name="words">
       <ObjectId>17972</ObjectId>
       <StateNumber>2718</StateNumber>
       <AccessMethodId>2</AccessMethodId>
       <OwnerName>postgres</OwnerName>
     </table>
-    <column id="286" parent="274" name="version_num">
+    <column id="290" parent="276" name="version_num">
       <NotNull>1</NotNull>
       <Position>1</Position>
       <StateNumber>2362</StateNumber>
       <StoredType>varchar(32)|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <index id="287" parent="274" name="alembic_version_pkc">
+    <index id="291" parent="276" name="alembic_version_pkc">
       <ColNames>version_num</ColNames>
       <ObjectId>17291</ObjectId>
       <Primary>1</Primary>
@@ -4383,26 +4419,26 @@ false Zulu
       <CollationIds>100</CollationIds>
       <CollationParentNames>pg_catalog</CollationParentNames>
     </index>
-    <key id="288" parent="274" name="alembic_version_pkc">
+    <key id="292" parent="276" name="alembic_version_pkc">
       <ObjectId>17292</ObjectId>
       <Primary>1</Primary>
       <StateNumber>2362</StateNumber>
       <UnderlyingIndexId>17291</UnderlyingIndexId>
     </key>
-    <column id="289" parent="275" name="code">
+    <column id="293" parent="277" name="code">
       <NotNull>1</NotNull>
       <Position>1</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar(2)|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <column id="290" parent="275" name="name">
+    <column id="294" parent="277" name="name">
       <Position>2</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar(50)|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <index id="291" parent="275" name="ix_languages_code">
+    <index id="295" parent="277" name="ix_languages_code">
       <ColNames>code</ColNames>
       <ObjectId>17970</ObjectId>
       <StateNumber>2718</StateNumber>
@@ -4412,7 +4448,7 @@ false Zulu
       <CollationIds>100</CollationIds>
       <CollationParentNames>pg_catalog</CollationParentNames>
     </index>
-    <index id="292" parent="275" name="languages_pkey">
+    <index id="296" parent="277" name="languages_pkey">
       <ColNames>code</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>17968</ObjectId>
@@ -4424,49 +4460,49 @@ false Zulu
       <CollationIds>100</CollationIds>
       <CollationParentNames>pg_catalog</CollationParentNames>
     </index>
-    <key id="293" parent="275" name="languages_pkey">
+    <key id="297" parent="277" name="languages_pkey">
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>17969</ObjectId>
       <Primary>1</Primary>
       <StateNumber>2718</StateNumber>
       <UnderlyingIndexId>17968</UnderlyingIndexId>
     </key>
-    <column id="294" parent="276" name="user_id">
+    <column id="298" parent="278" name="user_id">
       <NotNull>1</NotNull>
       <Position>1</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>integer|0s</StoredType>
       <TypeId>23</TypeId>
     </column>
-    <column id="295" parent="276" name="word_id">
+    <column id="299" parent="278" name="word_id">
       <NotNull>1</NotNull>
       <Position>2</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>integer|0s</StoredType>
       <TypeId>23</TypeId>
     </column>
-    <column id="296" parent="276" name="target_language">
+    <column id="300" parent="278" name="target_language">
       <NotNull>1</NotNull>
       <Position>3</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar(2)|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <column id="297" parent="276" name="last_practiced">
+    <column id="301" parent="278" name="last_practiced">
       <DefaultExpression>now()</DefaultExpression>
       <Position>4</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>timestamp|0s</StoredType>
       <TypeId>1114</TypeId>
     </column>
-    <column id="298" parent="276" name="strength">
+    <column id="302" parent="278" name="strength">
       <DefaultExpression>0</DefaultExpression>
       <Position>5</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>integer|0s</StoredType>
       <TypeId>23</TypeId>
     </column>
-    <foreign-key id="299" parent="276" name="learned_words_word_id_fkey">
+    <foreign-key id="303" parent="278" name="learned_words_word_id_fkey">
       <ColNames>word_id</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>18064</ObjectId>
@@ -4474,7 +4510,7 @@ false Zulu
       <RefKeyColPositions>1</RefKeyColPositions>
       <RefTableId>17972</RefTableId>
     </foreign-key>
-    <index id="300" parent="276" name="learned_words_pkey">
+    <index id="304" parent="278" name="learned_words_pkey">
       <ColNames>user_id
 word_id
 target_language</ColNames>
@@ -4494,7 +4530,7 @@ pg_catalog</CollationParentNames>
 
 100</CollationIds>
     </index>
-    <index id="301" parent="276" name="ix_learned_words_user_lang">
+    <index id="305" parent="278" name="ix_learned_words_user_lang">
       <ColNames>user_id
 target_language</ColNames>
       <ObjectId>18071</ObjectId>
@@ -4507,42 +4543,42 @@ pg_catalog</CollationParentNames>
       <CollationNames>
 default</CollationNames>
     </index>
-    <index id="302" parent="276" name="ix_learned_words_practice">
+    <index id="306" parent="278" name="ix_learned_words_practice">
       <ColNames>user_id
 last_practiced</ColNames>
       <ObjectId>18069</ObjectId>
       <StateNumber>2718</StateNumber>
       <AccessMethodId>403</AccessMethodId>
     </index>
-    <index id="303" parent="276" name="ix_learned_words_strength">
+    <index id="307" parent="278" name="ix_learned_words_strength">
       <ColNames>user_id
 strength</ColNames>
       <ObjectId>18070</ObjectId>
       <StateNumber>2718</StateNumber>
       <AccessMethodId>403</AccessMethodId>
     </index>
-    <key id="304" parent="276" name="learned_words_pkey">
+    <key id="308" parent="278" name="learned_words_pkey">
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>18063</ObjectId>
       <Primary>1</Primary>
       <StateNumber>2718</StateNumber>
       <UnderlyingIndexId>18062</UnderlyingIndexId>
     </key>
-    <column id="305" parent="277" name="meaning_id">
+    <column id="309" parent="279" name="meaning_id">
       <NotNull>1</NotNull>
       <Position>1</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>integer|0s</StoredType>
       <TypeId>23</TypeId>
     </column>
-    <column id="306" parent="277" name="sentence_id">
+    <column id="310" parent="279" name="sentence_id">
       <NotNull>1</NotNull>
       <Position>2</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>integer|0s</StoredType>
       <TypeId>23</TypeId>
     </column>
-    <foreign-key id="307" parent="277" name="meaning_sentence_links_meaning_id_fkey">
+    <foreign-key id="311" parent="279" name="meaning_sentence_links_meaning_id_fkey">
       <ColNames>meaning_id</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>18093</ObjectId>
@@ -4551,7 +4587,7 @@ strength</ColNames>
       <RefKeyColPositions>1</RefKeyColPositions>
       <RefTableId>18073</RefTableId>
     </foreign-key>
-    <foreign-key id="308" parent="277" name="meaning_sentence_links_sentence_id_fkey">
+    <foreign-key id="312" parent="279" name="meaning_sentence_links_sentence_id_fkey">
       <ColNames>sentence_id</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>18098</ObjectId>
@@ -4560,7 +4596,7 @@ strength</ColNames>
       <RefKeyColPositions>1</RefKeyColPositions>
       <RefTableId>18006</RefTableId>
     </foreign-key>
-    <index id="309" parent="277" name="meaning_sentence_links_pkey">
+    <index id="313" parent="279" name="meaning_sentence_links_pkey">
       <ColNames>meaning_id
 sentence_id</ColNames>
       <NameSurrogate>1</NameSurrogate>
@@ -4570,26 +4606,26 @@ sentence_id</ColNames>
       <Unique>1</Unique>
       <AccessMethodId>403</AccessMethodId>
     </index>
-    <index id="310" parent="277" name="ix_meaning_sentence_links_meaning">
+    <index id="314" parent="279" name="ix_meaning_sentence_links_meaning">
       <ColNames>meaning_id</ColNames>
       <ObjectId>18105</ObjectId>
       <StateNumber>2718</StateNumber>
       <AccessMethodId>403</AccessMethodId>
     </index>
-    <index id="311" parent="277" name="ix_meaning_sentence_links_sentence">
+    <index id="315" parent="279" name="ix_meaning_sentence_links_sentence">
       <ColNames>sentence_id</ColNames>
       <ObjectId>18106</ObjectId>
       <StateNumber>2718</StateNumber>
       <AccessMethodId>403</AccessMethodId>
     </index>
-    <key id="312" parent="277" name="meaning_sentence_links_pkey">
+    <key id="316" parent="279" name="meaning_sentence_links_pkey">
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>18092</ObjectId>
       <Primary>1</Primary>
       <StateNumber>2718</StateNumber>
       <UnderlyingIndexId>18091</UnderlyingIndexId>
     </key>
-    <column id="313" parent="278" name="id">
+    <column id="317" parent="280" name="id">
       <DefaultExpression>nextval(&apos;sentence_translations_id_seq&apos;::regclass)</DefaultExpression>
       <NotNull>1</NotNull>
       <Position>1</Position>
@@ -4598,28 +4634,28 @@ sentence_id</ColNames>
       <SequenceId>18037</SequenceId>
       <TypeId>23</TypeId>
     </column>
-    <column id="314" parent="278" name="source_sentence_id">
+    <column id="318" parent="280" name="source_sentence_id">
       <NotNull>1</NotNull>
       <Position>2</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>integer|0s</StoredType>
       <TypeId>23</TypeId>
     </column>
-    <column id="315" parent="278" name="language_code">
+    <column id="319" parent="280" name="language_code">
       <NotNull>1</NotNull>
       <Position>3</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar(2)|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <column id="316" parent="278" name="translated_text">
+    <column id="320" parent="280" name="translated_text">
       <NotNull>1</NotNull>
       <Position>4</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar(500)|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <foreign-key id="317" parent="278" name="sentence_translations_source_sentence_id_fkey">
+    <foreign-key id="321" parent="280" name="sentence_translations_source_sentence_id_fkey">
       <ColNames>source_sentence_id</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>18046</ObjectId>
@@ -4627,7 +4663,7 @@ sentence_id</ColNames>
       <RefKeyColPositions>1</RefKeyColPositions>
       <RefTableId>18006</RefTableId>
     </foreign-key>
-    <foreign-key id="318" parent="278" name="sentence_translations_language_code_fkey">
+    <foreign-key id="322" parent="280" name="sentence_translations_language_code_fkey">
       <ColNames>language_code</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>18051</ObjectId>
@@ -4635,7 +4671,7 @@ sentence_id</ColNames>
       <RefKeyColPositions>1</RefKeyColPositions>
       <RefTableId>17965</RefTableId>
     </foreign-key>
-    <index id="319" parent="278" name="sentence_translations_pkey">
+    <index id="323" parent="280" name="sentence_translations_pkey">
       <ColNames>id</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>18044</ObjectId>
@@ -4644,7 +4680,7 @@ sentence_id</ColNames>
       <Unique>1</Unique>
       <AccessMethodId>403</AccessMethodId>
     </index>
-    <index id="320" parent="278" name="ix_sentence_trans_source_lang">
+    <index id="324" parent="280" name="ix_sentence_trans_source_lang">
       <ColNames>source_sentence_id
 language_code</ColNames>
       <ObjectId>18056</ObjectId>
@@ -4658,28 +4694,28 @@ pg_catalog</CollationParentNames>
       <CollationNames>
 default</CollationNames>
     </index>
-    <key id="321" parent="278" name="sentence_translations_pkey">
+    <key id="325" parent="280" name="sentence_translations_pkey">
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>18045</ObjectId>
       <Primary>1</Primary>
       <StateNumber>2718</StateNumber>
       <UnderlyingIndexId>18044</UnderlyingIndexId>
     </key>
-    <column id="322" parent="279" name="sentence_id">
+    <column id="326" parent="281" name="sentence_id">
       <NotNull>1</NotNull>
       <Position>1</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>integer|0s</StoredType>
       <TypeId>23</TypeId>
     </column>
-    <column id="323" parent="279" name="word_id">
+    <column id="327" parent="281" name="word_id">
       <NotNull>1</NotNull>
       <Position>2</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>integer|0s</StoredType>
       <TypeId>23</TypeId>
     </column>
-    <foreign-key id="324" parent="279" name="sentence_words_sentence_id_fkey">
+    <foreign-key id="328" parent="281" name="sentence_words_sentence_id_fkey">
       <ColNames>sentence_id</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>18025</ObjectId>
@@ -4687,7 +4723,7 @@ default</CollationNames>
       <RefKeyColPositions>1</RefKeyColPositions>
       <RefTableId>18006</RefTableId>
     </foreign-key>
-    <foreign-key id="325" parent="279" name="sentence_words_word_id_fkey">
+    <foreign-key id="329" parent="281" name="sentence_words_word_id_fkey">
       <ColNames>word_id</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>18030</ObjectId>
@@ -4695,7 +4731,7 @@ default</CollationNames>
       <RefKeyColPositions>1</RefKeyColPositions>
       <RefTableId>17972</RefTableId>
     </foreign-key>
-    <index id="326" parent="279" name="sentence_words_pkey">
+    <index id="330" parent="281" name="sentence_words_pkey">
       <ColNames>sentence_id
 word_id</ColNames>
       <NameSurrogate>1</NameSurrogate>
@@ -4705,26 +4741,26 @@ word_id</ColNames>
       <Unique>1</Unique>
       <AccessMethodId>403</AccessMethodId>
     </index>
-    <index id="327" parent="279" name="ix_sentence_words_sentence">
+    <index id="331" parent="281" name="ix_sentence_words_sentence">
       <ColNames>sentence_id</ColNames>
       <ObjectId>18036</ObjectId>
       <StateNumber>2718</StateNumber>
       <AccessMethodId>403</AccessMethodId>
     </index>
-    <index id="328" parent="279" name="ix_sentence_words_word">
+    <index id="332" parent="281" name="ix_sentence_words_word">
       <ColNames>word_id</ColNames>
       <ObjectId>18035</ObjectId>
       <StateNumber>2718</StateNumber>
       <AccessMethodId>403</AccessMethodId>
     </index>
-    <key id="329" parent="279" name="sentence_words_pkey">
+    <key id="333" parent="281" name="sentence_words_pkey">
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>18024</ObjectId>
       <Primary>1</Primary>
       <StateNumber>2718</StateNumber>
       <UnderlyingIndexId>18023</UnderlyingIndexId>
     </key>
-    <column id="330" parent="280" name="id">
+    <column id="334" parent="282" name="id">
       <DefaultExpression>nextval(&apos;sentences_id_seq&apos;::regclass)</DefaultExpression>
       <NotNull>1</NotNull>
       <Position>1</Position>
@@ -4733,21 +4769,21 @@ word_id</ColNames>
       <SequenceId>18005</SequenceId>
       <TypeId>23</TypeId>
     </column>
-    <column id="331" parent="280" name="text">
+    <column id="335" parent="282" name="text">
       <NotNull>1</NotNull>
       <Position>2</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar(500)|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <column id="332" parent="280" name="language_code">
+    <column id="336" parent="282" name="language_code">
       <NotNull>1</NotNull>
       <Position>3</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar(2)|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <foreign-key id="333" parent="280" name="sentences_language_code_fkey">
+    <foreign-key id="337" parent="282" name="sentences_language_code_fkey">
       <ColNames>language_code</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>18014</ObjectId>
@@ -4755,7 +4791,7 @@ word_id</ColNames>
       <RefKeyColPositions>1</RefKeyColPositions>
       <RefTableId>17965</RefTableId>
     </foreign-key>
-    <index id="334" parent="280" name="sentences_pkey">
+    <index id="338" parent="282" name="sentences_pkey">
       <ColNames>id</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>18012</ObjectId>
@@ -4764,7 +4800,7 @@ word_id</ColNames>
       <Unique>1</Unique>
       <AccessMethodId>403</AccessMethodId>
     </index>
-    <index id="335" parent="280" name="ix_sentences_language">
+    <index id="339" parent="282" name="ix_sentences_language">
       <ColNames>language_code</ColNames>
       <ObjectId>18019</ObjectId>
       <StateNumber>2718</StateNumber>
@@ -4773,14 +4809,14 @@ word_id</ColNames>
       <CollationIds>100</CollationIds>
       <CollationParentNames>pg_catalog</CollationParentNames>
     </index>
-    <key id="336" parent="280" name="sentences_pkey">
+    <key id="340" parent="282" name="sentences_pkey">
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>18013</ObjectId>
       <Primary>1</Primary>
       <StateNumber>2718</StateNumber>
       <UnderlyingIndexId>18012</UnderlyingIndexId>
     </key>
-    <column id="337" parent="281" name="id">
+    <column id="341" parent="283" name="id">
       <DefaultExpression>nextval(&apos;tokens_id_seq&apos;::regclass)</DefaultExpression>
       <NotNull>1</NotNull>
       <Position>1</Position>
@@ -4789,21 +4825,21 @@ word_id</ColNames>
       <SequenceId>17950</SequenceId>
       <TypeId>23</TypeId>
     </column>
-    <column id="338" parent="281" name="tokens">
+    <column id="342" parent="283" name="tokens">
       <NotNull>1</NotNull>
       <Position>2</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <column id="339" parent="281" name="user_id">
+    <column id="343" parent="283" name="user_id">
       <NotNull>1</NotNull>
       <Position>3</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>integer|0s</StoredType>
       <TypeId>23</TypeId>
     </column>
-    <foreign-key id="340" parent="281" name="tokens_user_id_fkey">
+    <foreign-key id="344" parent="283" name="tokens_user_id_fkey">
       <ColNames>user_id</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>17959</ObjectId>
@@ -4811,7 +4847,7 @@ word_id</ColNames>
       <RefKeyColPositions>1</RefKeyColPositions>
       <RefTableId>17935</RefTableId>
     </foreign-key>
-    <index id="341" parent="281" name="tokens_pkey">
+    <index id="345" parent="283" name="tokens_pkey">
       <ColNames>id</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>17957</ObjectId>
@@ -4820,7 +4856,7 @@ word_id</ColNames>
       <Unique>1</Unique>
       <AccessMethodId>403</AccessMethodId>
     </index>
-    <index id="342" parent="281" name="ix_tokens_tokens">
+    <index id="346" parent="283" name="ix_tokens_tokens">
       <ColNames>tokens</ColNames>
       <ObjectId>17964</ObjectId>
       <StateNumber>2718</StateNumber>
@@ -4830,14 +4866,14 @@ word_id</ColNames>
       <CollationIds>100</CollationIds>
       <CollationParentNames>pg_catalog</CollationParentNames>
     </index>
-    <key id="343" parent="281" name="tokens_pkey">
+    <key id="347" parent="283" name="tokens_pkey">
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>17958</ObjectId>
       <Primary>1</Primary>
       <StateNumber>2718</StateNumber>
       <UnderlyingIndexId>17957</UnderlyingIndexId>
     </key>
-    <column id="344" parent="282" name="id">
+    <column id="348" parent="284" name="id">
       <DefaultExpression>nextval(&apos;translations_id_seq&apos;::regclass)</DefaultExpression>
       <NotNull>1</NotNull>
       <Position>1</Position>
@@ -4846,28 +4882,28 @@ word_id</ColNames>
       <SequenceId>17986</SequenceId>
       <TypeId>23</TypeId>
     </column>
-    <column id="345" parent="282" name="source_word_id">
+    <column id="349" parent="284" name="source_word_id">
       <NotNull>1</NotNull>
       <Position>2</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>integer|0s</StoredType>
       <TypeId>23</TypeId>
     </column>
-    <column id="346" parent="282" name="target_language_code">
+    <column id="350" parent="284" name="target_language_code">
       <NotNull>1</NotNull>
       <Position>3</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar(2)|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <column id="347" parent="282" name="translated_text">
+    <column id="351" parent="284" name="translated_text">
       <NotNull>1</NotNull>
       <Position>4</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar(100)|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <foreign-key id="348" parent="282" name="translations_source_word_id_fkey">
+    <foreign-key id="352" parent="284" name="translations_source_word_id_fkey">
       <ColNames>source_word_id</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>17993</ObjectId>
@@ -4875,7 +4911,7 @@ word_id</ColNames>
       <RefKeyColPositions>1</RefKeyColPositions>
       <RefTableId>17972</RefTableId>
     </foreign-key>
-    <foreign-key id="349" parent="282" name="translations_target_language_code_fkey">
+    <foreign-key id="353" parent="284" name="translations_target_language_code_fkey">
       <ColNames>target_language_code</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>17998</ObjectId>
@@ -4883,7 +4919,7 @@ word_id</ColNames>
       <RefKeyColPositions>1</RefKeyColPositions>
       <RefTableId>17965</RefTableId>
     </foreign-key>
-    <index id="350" parent="282" name="translations_pkey">
+    <index id="354" parent="284" name="translations_pkey">
       <ColNames>id</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>17991</ObjectId>
@@ -4892,7 +4928,7 @@ word_id</ColNames>
       <Unique>1</Unique>
       <AccessMethodId>403</AccessMethodId>
     </index>
-    <index id="351" parent="282" name="ix_translations_source_target">
+    <index id="355" parent="284" name="ix_translations_source_target">
       <ColNames>source_word_id
 target_language_code</ColNames>
       <ObjectId>18004</ObjectId>
@@ -4906,7 +4942,7 @@ pg_catalog</CollationParentNames>
       <CollationNames>
 default</CollationNames>
     </index>
-    <index id="352" parent="282" name="ix_translations_text">
+    <index id="356" parent="284" name="ix_translations_text">
       <ColNames>translated_text</ColNames>
       <ObjectId>18003</ObjectId>
       <StateNumber>2718</StateNumber>
@@ -4915,14 +4951,154 @@ default</CollationNames>
       <CollationIds>100</CollationIds>
       <CollationParentNames>pg_catalog</CollationParentNames>
     </index>
-    <key id="353" parent="282" name="translations_pkey">
+    <key id="357" parent="284" name="translations_pkey">
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>17992</ObjectId>
       <Primary>1</Primary>
       <StateNumber>2718</StateNumber>
       <UnderlyingIndexId>17991</UnderlyingIndexId>
     </key>
-    <column id="354" parent="283" name="id">
+    <column id="358" parent="285" name="id">
+      <DefaultExpression>nextval(&apos;user_languages_id_seq&apos;::regclass)</DefaultExpression>
+      <NotNull>1</NotNull>
+      <Position>1</Position>
+      <StateNumber>12340</StateNumber>
+      <StoredType>integer|0s</StoredType>
+      <SequenceId>42687</SequenceId>
+      <TypeId>23</TypeId>
+    </column>
+    <column id="359" parent="285" name="user_id">
+      <Position>2</Position>
+      <StateNumber>12340</StateNumber>
+      <StoredType>integer|0s</StoredType>
+      <TypeId>23</TypeId>
+    </column>
+    <column id="360" parent="285" name="target_language_code">
+      <Position>3</Position>
+      <StateNumber>12340</StateNumber>
+      <StoredType>varchar(2)|0s</StoredType>
+      <TypeId>1043</TypeId>
+    </column>
+    <column id="361" parent="285" name="level">
+      <DefaultExpression>&apos;A1&apos;::character varying</DefaultExpression>
+      <Position>4</Position>
+      <StateNumber>12340</StateNumber>
+      <StoredType>varchar(2)|0s</StoredType>
+      <TypeId>1043</TypeId>
+    </column>
+    <column id="362" parent="285" name="updated_at">
+      <Position>5</Position>
+      <StateNumber>12340</StateNumber>
+      <StoredType>timestamp|0s</StoredType>
+      <TypeId>1114</TypeId>
+    </column>
+    <foreign-key id="363" parent="285" name="user_languages_user_id_fkey">
+      <ColNames>user_id</ColNames>
+      <NameSurrogate>1</NameSurrogate>
+      <ObjectId>42695</ObjectId>
+      <StateNumber>12340</StateNumber>
+      <RefKeyColPositions>1</RefKeyColPositions>
+      <RefTableId>17935</RefTableId>
+    </foreign-key>
+    <foreign-key id="364" parent="285" name="user_languages_target_language_code_fkey">
+      <ColNames>target_language_code</ColNames>
+      <NameSurrogate>1</NameSurrogate>
+      <ObjectId>42700</ObjectId>
+      <StateNumber>12340</StateNumber>
+      <RefKeyColPositions>1</RefKeyColPositions>
+      <RefTableId>17965</RefTableId>
+    </foreign-key>
+    <index id="365" parent="285" name="user_languages_pkey">
+      <ColNames>id</ColNames>
+      <NameSurrogate>1</NameSurrogate>
+      <ObjectId>42693</ObjectId>
+      <Primary>1</Primary>
+      <StateNumber>12340</StateNumber>
+      <Unique>1</Unique>
+      <AccessMethodId>403</AccessMethodId>
+    </index>
+    <key id="366" parent="285" name="user_languages_pkey">
+      <NameSurrogate>1</NameSurrogate>
+      <ObjectId>42694</ObjectId>
+      <Primary>1</Primary>
+      <StateNumber>12340</StateNumber>
+      <UnderlyingIndexId>42693</UnderlyingIndexId>
+    </key>
+    <column id="367" parent="286" name="id">
+      <DefaultExpression>nextval(&apos;user_words_id_seq&apos;::regclass)</DefaultExpression>
+      <NotNull>1</NotNull>
+      <Position>1</Position>
+      <StateNumber>12570</StateNumber>
+      <StoredType>integer|0s</StoredType>
+      <SequenceId>42705</SequenceId>
+      <TypeId>23</TypeId>
+    </column>
+    <column id="368" parent="286" name="user_id">
+      <NotNull>1</NotNull>
+      <Position>2</Position>
+      <StateNumber>12570</StateNumber>
+      <StoredType>integer|0s</StoredType>
+      <TypeId>23</TypeId>
+    </column>
+    <column id="369" parent="286" name="word_id">
+      <NotNull>1</NotNull>
+      <Position>3</Position>
+      <StateNumber>12570</StateNumber>
+      <StoredType>integer|0s</StoredType>
+      <TypeId>23</TypeId>
+    </column>
+    <column id="370" parent="286" name="is_starred">
+      <Position>4</Position>
+      <StateNumber>12570</StateNumber>
+      <StoredType>boolean|0s</StoredType>
+      <TypeId>16</TypeId>
+    </column>
+    <column id="371" parent="286" name="is_learned">
+      <Position>5</Position>
+      <StateNumber>12570</StateNumber>
+      <StoredType>boolean|0s</StoredType>
+      <TypeId>16</TypeId>
+    </column>
+    <column id="372" parent="286" name="created_at">
+      <DefaultExpression>now()</DefaultExpression>
+      <Position>6</Position>
+      <StateNumber>12570</StateNumber>
+      <StoredType>timestamp with time zone|0s</StoredType>
+      <TypeId>1184</TypeId>
+    </column>
+    <foreign-key id="373" parent="286" name="user_words_user_id_fkey">
+      <ColNames>user_id</ColNames>
+      <NameSurrogate>1</NameSurrogate>
+      <ObjectId>42713</ObjectId>
+      <StateNumber>12570</StateNumber>
+      <RefKeyColPositions>1</RefKeyColPositions>
+      <RefTableId>17935</RefTableId>
+    </foreign-key>
+    <foreign-key id="374" parent="286" name="user_words_word_id_fkey">
+      <ColNames>word_id</ColNames>
+      <NameSurrogate>1</NameSurrogate>
+      <ObjectId>42718</ObjectId>
+      <StateNumber>12570</StateNumber>
+      <RefKeyColPositions>1</RefKeyColPositions>
+      <RefTableId>17972</RefTableId>
+    </foreign-key>
+    <index id="375" parent="286" name="user_words_pkey">
+      <ColNames>id</ColNames>
+      <NameSurrogate>1</NameSurrogate>
+      <ObjectId>42711</ObjectId>
+      <Primary>1</Primary>
+      <StateNumber>12570</StateNumber>
+      <Unique>1</Unique>
+      <AccessMethodId>403</AccessMethodId>
+    </index>
+    <key id="376" parent="286" name="user_words_pkey">
+      <NameSurrogate>1</NameSurrogate>
+      <ObjectId>42712</ObjectId>
+      <Primary>1</Primary>
+      <StateNumber>12570</StateNumber>
+      <UnderlyingIndexId>42711</UnderlyingIndexId>
+    </key>
+    <column id="377" parent="287" name="id">
       <DefaultExpression>nextval(&apos;users_id_seq&apos;::regclass)</DefaultExpression>
       <NotNull>1</NotNull>
       <Position>1</Position>
@@ -4931,54 +5107,54 @@ default</CollationNames>
       <SequenceId>17934</SequenceId>
       <TypeId>23</TypeId>
     </column>
-    <column id="355" parent="283" name="username">
+    <column id="378" parent="287" name="username">
       <Position>2</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <column id="356" parent="283" name="email">
+    <column id="379" parent="287" name="email">
       <NotNull>1</NotNull>
       <Position>3</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar(100)|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <column id="357" parent="283" name="password">
+    <column id="380" parent="287" name="password">
       <NotNull>1</NotNull>
       <Position>4</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar(100)|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <column id="358" parent="283" name="native">
+    <column id="381" parent="287" name="native">
       <Position>5</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar(100)|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <column id="359" parent="283" name="created_at">
+    <column id="382" parent="287" name="created_at">
       <DefaultExpression>now()</DefaultExpression>
       <Position>6</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>timestamp with time zone|0s</StoredType>
       <TypeId>1184</TypeId>
     </column>
-    <column id="360" parent="283" name="is_premium">
+    <column id="383" parent="287" name="is_premium">
       <NotNull>1</NotNull>
       <Position>7</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>boolean|0s</StoredType>
       <TypeId>16</TypeId>
     </column>
-    <column id="361" parent="283" name="role">
+    <column id="384" parent="287" name="role">
       <NotNull>1</NotNull>
       <Position>8</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <index id="362" parent="283" name="users_pkey">
+    <index id="385" parent="287" name="users_pkey">
       <ColNames>id</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>17942</ObjectId>
@@ -4987,7 +5163,7 @@ default</CollationNames>
       <Unique>1</Unique>
       <AccessMethodId>403</AccessMethodId>
     </index>
-    <index id="363" parent="283" name="ix_users_username">
+    <index id="386" parent="287" name="ix_users_username">
       <ColNames>username</ColNames>
       <ObjectId>17949</ObjectId>
       <StateNumber>2718</StateNumber>
@@ -4997,7 +5173,7 @@ default</CollationNames>
       <CollationIds>100</CollationIds>
       <CollationParentNames>pg_catalog</CollationParentNames>
     </index>
-    <index id="364" parent="283" name="users_username_key">
+    <index id="387" parent="287" name="users_username_key">
       <ColNames>username</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>17946</ObjectId>
@@ -5008,7 +5184,7 @@ default</CollationNames>
       <CollationIds>100</CollationIds>
       <CollationParentNames>pg_catalog</CollationParentNames>
     </index>
-    <index id="365" parent="283" name="ix_users_email">
+    <index id="388" parent="287" name="ix_users_email">
       <ColNames>email</ColNames>
       <ObjectId>17948</ObjectId>
       <StateNumber>2718</StateNumber>
@@ -5018,7 +5194,7 @@ default</CollationNames>
       <CollationIds>100</CollationIds>
       <CollationParentNames>pg_catalog</CollationParentNames>
     </index>
-    <index id="366" parent="283" name="users_email_key">
+    <index id="389" parent="287" name="users_email_key">
       <ColNames>email</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>17944</ObjectId>
@@ -5029,26 +5205,26 @@ default</CollationNames>
       <CollationIds>100</CollationIds>
       <CollationParentNames>pg_catalog</CollationParentNames>
     </index>
-    <key id="367" parent="283" name="users_pkey">
+    <key id="390" parent="287" name="users_pkey">
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>17943</ObjectId>
       <Primary>1</Primary>
       <StateNumber>2718</StateNumber>
       <UnderlyingIndexId>17942</UnderlyingIndexId>
     </key>
-    <key id="368" parent="283" name="users_username_key">
+    <key id="391" parent="287" name="users_username_key">
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>17947</ObjectId>
       <StateNumber>2718</StateNumber>
       <UnderlyingIndexId>17946</UnderlyingIndexId>
     </key>
-    <key id="369" parent="283" name="users_email_key">
+    <key id="392" parent="287" name="users_email_key">
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>17945</ObjectId>
       <StateNumber>2718</StateNumber>
       <UnderlyingIndexId>17944</UnderlyingIndexId>
     </key>
-    <column id="370" parent="284" name="id">
+    <column id="393" parent="288" name="id">
       <DefaultExpression>nextval(&apos;word_meanings_id_seq&apos;::regclass)</DefaultExpression>
       <NotNull>1</NotNull>
       <Position>1</Position>
@@ -5057,27 +5233,27 @@ default</CollationNames>
       <SequenceId>18072</SequenceId>
       <TypeId>23</TypeId>
     </column>
-    <column id="371" parent="284" name="word_id">
+    <column id="394" parent="288" name="word_id">
       <NotNull>1</NotNull>
       <Position>2</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>integer|0s</StoredType>
       <TypeId>23</TypeId>
     </column>
-    <column id="372" parent="284" name="pos">
+    <column id="395" parent="288" name="pos">
       <NotNull>1</NotNull>
       <Position>3</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar(50)|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <column id="373" parent="284" name="example">
+    <column id="396" parent="288" name="example">
       <Position>4</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar(500)|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <column id="374" parent="284" name="created_at">
+    <column id="397" parent="288" name="created_at">
       <DefaultExpression>now()</DefaultExpression>
       <NotNull>1</NotNull>
       <Position>5</Position>
@@ -5085,7 +5261,7 @@ default</CollationNames>
       <StoredType>timestamp|0s</StoredType>
       <TypeId>1114</TypeId>
     </column>
-    <column id="375" parent="284" name="updated_at">
+    <column id="398" parent="288" name="updated_at">
       <DefaultExpression>now()</DefaultExpression>
       <NotNull>1</NotNull>
       <Position>6</Position>
@@ -5093,7 +5269,7 @@ default</CollationNames>
       <StoredType>timestamp|0s</StoredType>
       <TypeId>1114</TypeId>
     </column>
-    <foreign-key id="376" parent="284" name="word_meanings_word_id_fkey">
+    <foreign-key id="399" parent="288" name="word_meanings_word_id_fkey">
       <ColNames>word_id</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>18083</ObjectId>
@@ -5102,7 +5278,7 @@ default</CollationNames>
       <RefKeyColPositions>1</RefKeyColPositions>
       <RefTableId>17972</RefTableId>
     </foreign-key>
-    <index id="377" parent="284" name="word_meanings_pkey">
+    <index id="400" parent="288" name="word_meanings_pkey">
       <ColNames>id</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>18081</ObjectId>
@@ -5111,13 +5287,13 @@ default</CollationNames>
       <Unique>1</Unique>
       <AccessMethodId>403</AccessMethodId>
     </index>
-    <index id="378" parent="284" name="ix_word_meanings_word_id">
+    <index id="401" parent="288" name="ix_word_meanings_word_id">
       <ColNames>word_id</ColNames>
       <ObjectId>18103</ObjectId>
       <StateNumber>2718</StateNumber>
       <AccessMethodId>403</AccessMethodId>
     </index>
-    <index id="379" parent="284" name="ix_word_meanings_pos">
+    <index id="402" parent="288" name="ix_word_meanings_pos">
       <ColNames>pos</ColNames>
       <ObjectId>18104</ObjectId>
       <StateNumber>2718</StateNumber>
@@ -5126,14 +5302,14 @@ default</CollationNames>
       <CollationIds>100</CollationIds>
       <CollationParentNames>pg_catalog</CollationParentNames>
     </index>
-    <key id="380" parent="284" name="word_meanings_pkey">
+    <key id="403" parent="288" name="word_meanings_pkey">
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>18082</ObjectId>
       <Primary>1</Primary>
       <StateNumber>2718</StateNumber>
       <UnderlyingIndexId>18081</UnderlyingIndexId>
     </key>
-    <column id="381" parent="285" name="id">
+    <column id="404" parent="289" name="id">
       <DefaultExpression>nextval(&apos;words_id_seq&apos;::regclass)</DefaultExpression>
       <NotNull>1</NotNull>
       <Position>1</Position>
@@ -5142,33 +5318,33 @@ default</CollationNames>
       <SequenceId>17971</SequenceId>
       <TypeId>23</TypeId>
     </column>
-    <column id="382" parent="285" name="text">
+    <column id="405" parent="289" name="text">
       <NotNull>1</NotNull>
       <Position>2</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar(100)|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <column id="383" parent="285" name="language_code">
+    <column id="406" parent="289" name="language_code">
       <NotNull>1</NotNull>
       <Position>3</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar(2)|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <column id="384" parent="285" name="level">
+    <column id="407" parent="289" name="level">
       <Position>4</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>varchar(2)|0s</StoredType>
       <TypeId>1043</TypeId>
     </column>
-    <column id="385" parent="285" name="frequency_rank">
+    <column id="408" parent="289" name="frequency_rank">
       <Position>5</Position>
       <StateNumber>2718</StateNumber>
       <StoredType>integer|0s</StoredType>
       <TypeId>23</TypeId>
     </column>
-    <foreign-key id="386" parent="285" name="words_language_code_fkey">
+    <foreign-key id="409" parent="289" name="words_language_code_fkey">
       <ColNames>language_code</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>17978</ObjectId>
@@ -5176,7 +5352,7 @@ default</CollationNames>
       <RefKeyColPositions>1</RefKeyColPositions>
       <RefTableId>17965</RefTableId>
     </foreign-key>
-    <index id="387" parent="285" name="words_pkey">
+    <index id="410" parent="289" name="words_pkey">
       <ColNames>id</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>17976</ObjectId>
@@ -5185,7 +5361,7 @@ default</CollationNames>
       <Unique>1</Unique>
       <AccessMethodId>403</AccessMethodId>
     </index>
-    <index id="388" parent="285" name="ix_words_text_lang">
+    <index id="411" parent="289" name="ix_words_text_lang">
       <ColNames>text
 language_code</ColNames>
       <ObjectId>17985</ObjectId>
@@ -5198,7 +5374,7 @@ default</CollationNames>
       <CollationParentNames>pg_catalog
 pg_catalog</CollationParentNames>
     </index>
-    <index id="389" parent="285" name="ix_words_lang_level">
+    <index id="412" parent="289" name="ix_words_lang_level">
       <ColNames>language_code
 level</ColNames>
       <ObjectId>17983</ObjectId>
@@ -5211,7 +5387,7 @@ default</CollationNames>
       <CollationParentNames>pg_catalog
 pg_catalog</CollationParentNames>
     </index>
-    <index id="390" parent="285" name="ix_words_lang_freq">
+    <index id="413" parent="289" name="ix_words_lang_freq">
       <ColNames>language_code
 frequency_rank</ColNames>
       <ObjectId>17984</ObjectId>
@@ -5221,7 +5397,7 @@ frequency_rank</ColNames>
       <CollationIds>100</CollationIds>
       <CollationParentNames>pg_catalog</CollationParentNames>
     </index>
-    <key id="391" parent="285" name="words_pkey">
+    <key id="414" parent="289" name="words_pkey">
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>17977</ObjectId>
       <Primary>1</Primary>

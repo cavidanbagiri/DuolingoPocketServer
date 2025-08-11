@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.token_handler import TokenHandler
 from app.database.setup import get_db
 from app.repositories.word_repository import CreateMainStructureRepository, FetchWordRepository, \
-    ChangeWordStatusRepository, DetailWordRepository, GetStatisticsForDashboardRepository
+    ChangeWordStatusRepository, DetailWordRepository, GetStatisticsForDashboardRepository, GetPosStatisticsRepository
 from app.schemas.user_schema import ChangeWordStatusSchema
 
 router = APIRouter()
@@ -94,7 +94,17 @@ async def get_detail_word(word_id: int,
 
 
 
+@router.get('/get_pos_statistics', status_code=200)
+async def get_pos_statistics(db: AsyncSession = Depends(get_db),
+                             user_info = Depends(TokenHandler.verify_access_token)):
 
+    try:
+        repo = GetPosStatisticsRepository(db=db, user_id=int(user_info.get('sub')))
+        result = await repo.get_pos_statistics()
+        return result
+
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=str(ex))
 
 
 

@@ -55,6 +55,11 @@ class HelperFunction:
         tr_repo = TranslateAllENWordsToRU(self.db)
         await tr_repo.main_func()
 
+    #6 - Fix others pos to true pos
+    async def fix_other_pos(self):
+        repo = FixPosFunctionality(self.db)
+        await repo.find_others_and_fix_it()
+
 
 
 # Main Class Working
@@ -82,6 +87,9 @@ class CreateMainStructureRepository:
 
         # 5 - Translate words from eng to rus
         # await self.helper_funcs.translateentoru()
+
+        # 6 - Fix Others pos
+        await self.helper_funcs.fix_other_pos()
 
         return 'Added'
 
@@ -718,6 +726,91 @@ class RemoveDuplicatePosFromEnglish:
 
 
 
+# Fix english pos others
+class FixPosFunctionality:
+
+    def __init__(self, db):
+        self.db = db
+        self.pos_mapping = {
+            'you': 'pronoun',
+            'to': 'preposition',
+            'the': 'article',
+            'and': 'conjunction',
+            'that': 'pronoun',
+            'of': 'preposition',
+            'this': 'pronoun',
+            'for': 'preposition',
+            'with': 'preposition',
+            'if': 'conjunction',
+            'her': 'pronoun',
+            'she': 'pronoun',
+            'him': 'pronoun',
+            'they': 'pronoun',
+            'from': 'preposition',
+            'because': 'conjunction',
+            'our': 'determiner',
+            'into': 'preposition',
+            'than': 'conjunction',
+            'yourself': 'pronoun',
+            'myself': 'pronoun',
+            'since': 'preposition',
+            'until': 'preposition',
+            'without': 'preposition',
+            'against': 'preposition',
+            'them': 'pronoun',
+            'unless': 'conjunction',
+            'himself': 'pronoun',
+            'herself': 'pronoun',
+            'during': 'preposition',
+            'whose': 'pronoun',
+            'itself': 'pronoun',
+            'whoever': 'pronoun',
+            'themselves': 'pronoun',
+            'upon': 'preposition',
+            'whom': 'pronoun',
+            'it': 'pronoun',
+            'beside': 'preposition',
+            'via': 'preposition',
+            'nor': 'conjunction',
+            'per': 'preposition',
+            'ourselves': 'pronoun',
+            'versus': 'preposition',
+            'oneself': 'pronoun',
+            'onto': 'preposition',
+            'toward': 'preposition',
+            'yourselves': 'pronoun'
+        }
+
+    async def find_others_and_fix_it(self):
+        updated_counts = {}
+        total_updated = 0
+
+        for word_text, new_pos in self.pos_mapping.items():
+            stmt = (
+                update(WordMeaning)
+                .where(WordMeaning.pos == "other")
+                .where(WordMeaning.word_id == select(Word.id).where(Word.text == word_text).scalar_subquery())
+                .values(pos=new_pos)
+                .execution_options(synchronize_session=False)
+            )
+            result = await self.db.execute(stmt)
+            updated = result.rowcount or 0
+            if updated:
+                updated_counts[word_text] = updated
+                total_updated += updated
+
+        await self.db.commit()
+
+        return {
+            "message": "POS tags updated",
+            "updated_counts": updated_counts,
+            "total_updated": total_updated
+        }
+
+
+
+
+
 
 # Create user function
 #############################################################################################################
@@ -765,6 +858,7 @@ class GetStatisticsForDashboardRepository:
         ]
 
 
+
 # Fetch words
 class FetchWordRepository:
     def __init__(self, db: AsyncSession, user_id: int, only_starred: bool = False, only_learned: bool = False):
@@ -773,7 +867,7 @@ class FetchWordRepository:
         self.only_starred = only_starred
         self.only_learned = only_learned
 
-    async def fetch_words(self, skip: int = 0, limit: int = 30):
+    async def fetch_words(self, skip: int = 0, limit: int = 50):
         # 1. Fetch user
         user_result = await self.db.execute(
             select(UserModel).where(UserModel.id == self.user_id)
@@ -1028,85 +1122,53 @@ class DetailWordRepository:
 
 
 
+# Get POS Statistics For Each lang
+class GetPosStatisticsRepository:
+    def __init__(self, db: AsyncSession, user_id: int):
+        self.db = db
+        self.user_id = user_id
 
+    async def get_pos_statistics(self):
+        stmt = (
+            select(
+                Word.language_code.label("language_code"),
+                WordMeaning.pos.label("pos"),
+                func.count(Word.id).label("total_count"),
+                func.count(case((UserWord.is_learned == True, 1))).label("learned_count"),
+                func.count(case((UserWord.is_starred == True, 1))).label("starred_count"),
+            )
+            .join(WordMeaning, Word.id == WordMeaning.word_id)
+            .outerjoin(
+                UserWord,
+                (UserWord.word_id == Word.id) & (UserWord.user_id == self.user_id)
+            )
+            .group_by(Word.language_code, WordMeaning.pos)
+            .order_by(Word.language_code, WordMeaning.pos)
+        )
 
+        result = await self.db.execute(stmt)
+        rows = result.all()
 
+        # Shape into expected format
+        stats = {}
+        for lang_code, pos, total, learned, starred in rows:
+            if lang_code not in stats:
+                stats[lang_code] = {
+                    "language_name": self.get_language_name(lang_code)
+                }
+            stats[lang_code][pos] = total
+            stats[lang_code][f"{pos}_learned"] = learned
+            stats[lang_code][f"{pos}_starred"] = starred
 
+        return list(stats.values())
 
-
-
-
-
-
-# class FetchWordRepository:
-#
-#     def __init__(self, db: AsyncSession, user_id: int):
-#         self.db = db
-#         self.user_id = user_id
-#
-#
-#     async def fetch_words(self):
-#         # 1. Fetch user
-#         user_result = await self.db.execute(
-#             select(UserModel).where(UserModel.id == self.user_id)
-#         )
-#         user = user_result.scalar_one_or_none()
-#         if not user:
-#             return []
-#
-#         native_language = user.native
-#         lang_code_map = {
-#             "Russian": "ru",
-#             "English": "en",
-#             "Turkish": "tr",
-#         }
-#
-#         native_language = lang_code_map.get(native_language)
-#
-#         # 2. Get target languages
-#         lang_result = await self.db.execute(
-#             select(UserLanguage.target_language_code).where(UserLanguage.user_id == self.user_id)
-#         )
-#         target_lang_codes = [row[0] for row in lang_result.fetchall()]
-#         if not target_lang_codes:
-#             return []
-#
-#         # ✅ Correct joins
-#         stmt = (
-#             select(Word, WordMeaning, Translation)
-#             .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
-#             .outerjoin(
-#                 Translation,
-#                 and_(
-#                     Translation.source_word_id == Word.id,
-#                     Translation.target_language_code == native_language
-#                 )
-#             )
-#             .where(Word.language_code.in_(target_lang_codes))
-#             .limit(10)
-#         )
-#
-#         result = await self.db.execute(stmt)
-#         rows = result.all()
-#
-#
-#         # Group words by language
-#         grouped = defaultdict(list)
-#
-#         for word, meaning, translation in rows:
-#
-#             grouped[word.language_code].append({
-#                 "text": word.text,
-#                 "frequency_rank": word.frequency_rank,
-#                 "level": word.level,
-#                 "pos": meaning.pos if meaning else None,
-#                 "translation_to_native": translation.translated_text if translation else None
-#             })
-#
-#         return [{lang: words} for lang, words in grouped.items()]
-
-
-
+    def get_language_name(self, code: str) -> str:
+        language_map = {
+            "en": "English",
+            "ru": "Russian",
+            "tr": "Turkish"
+        }
+        return language_map.get(code, code)
 
 
 
