@@ -6,9 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.token_handler import TokenHandler
 from app.database.setup import get_db
-from app.repositories.word_repository import CreateMainStructureRepository, FetchWordRepository, \
+from app.repositories.word_repository import FetchWordRepository, \
     ChangeWordStatusRepository, DetailWordRepository, GetStatisticsForDashboardRepository, GetPosStatisticsRepository
 from app.schemas.user_schema import ChangeWordStatusSchema
+
+from app.repositories.structure_repository import CreateMainStructureRepository
 
 router = APIRouter()
 
