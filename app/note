@@ -54,3 +54,70 @@ Sentence Word Model
     1               103 -> This id will comes from Words model # "Because there is a 'World'  "
 
 
+
+-------------------------------------------------------------------- Chatgpt -------------------------------------
+
+Super and buper. now l wanna fetch first 2 russian words and generate 5 sentences with yandex_lang_model and save to sentences mode and
+translate the sentences to the english lang. l will share with you my models for this. l think, you already have an inform about
+words and translation models.
+
+Model:
+
+# Define SentenceTranslation BEFORE Sentence
+class SentenceTranslation(Base):
+    __tablename__ = "sentence_translations"
+    id = mapped_column(Integer, primary_key=True)
+    source_sentence_id = mapped_column(Integer, ForeignKey("sentences.id"))
+    language_code = mapped_column(String(2), ForeignKey("languages.code"))
+    translated_text = mapped_column(String(500))
+
+    source_sentence = relationship("Sentence", back_populates="translations")
+
+    # This is old code, and change with below new code
+    # language = relationship("Language")
+
+    language = relationship("Language", lazy="joined")
+
+
+
+class Sentence(Base):
+    __tablename__ = "sentences"
+    id = mapped_column(Integer, primary_key=True)
+    text = mapped_column(String(500))  # "Hello world"
+    language_code = mapped_column(String(2), ForeignKey("languages.code"))
+
+    language = relationship("Language")
+    contains_words = relationship("SentenceWord", back_populates="sentence")
+    translations = relationship("SentenceTranslation", back_populates="source_sentence")
+
+
+class SentenceWord(Base):
+    __tablename__ = "sentence_words"
+    sentence_id = mapped_column(Integer, ForeignKey("sentences.id"), primary_key=True)
+    word_id = mapped_column(Integer, ForeignKey("words.id"), primary_key=True)
+
+    sentence = relationship("Sentence", back_populates="contains_words")
+    word = relationship("Word", back_populates="in_sentences")
+
+
+Repository:
+
+
+class FetchRussianWordsAndGenerateSentenceAndTranslateToEnglish:
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def fetch_russian_words_and_generate_sentences(self):
+
+        # 1 - Fetch russian words from word model
+
+        # 2 - After fetch, generate at least 5 sentences about each word
+
+        # 3 - translate the sentences to english lang.
+
+
+        pass
+
+
+

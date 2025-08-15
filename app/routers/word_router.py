@@ -29,6 +29,7 @@ async def update_words(db: AsyncSession = Depends(get_db)):
         return {"message": result}
     except Exception as ex:
         await db.rollback()
+        print(f'............................. {ex}')
         raise HTTPException(status_code=500, detail=str(ex))
 
 

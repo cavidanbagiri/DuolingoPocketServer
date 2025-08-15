@@ -2,25 +2,34 @@
 
 
 import os
+import csv
+from datetime import datetime
+import aiohttp
+import asyncio
+import pandas as pd
+
 from collections import defaultdict
 from typing import List
 
 
-import aiohttp
-import asyncio
 
 from fastapi import HTTPException
-from sqlalchemy import select, func, and_, update, or_, case
-from datetime import datetime
 
+from sqlalchemy import select, func, and_, update, or_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, outerjoin
+from sqlalchemy.future import select
 
-from app.logging_config import setup_logger
 from app.models.word_model import Word, Sentence, SentenceWord, WordMeaning, Translation, SentenceTranslation, \
     LearnedWord
 from app.models.user_model import Language, UserModel, UserLanguage, UserWord
 from app.schemas.translate_schema import TranslateSchema
+
+
+from app.logging_config import setup_logger
+logger = setup_logger(__name__, "word.log")
+
+
 
 
 
@@ -61,6 +70,16 @@ class HelperFunction:
         await repo.find_others_and_fix_it()
 
 
+    #7 - Insert russian words and translation to words model and translations model
+    async def insert_russian_words_to_table(self):
+        repo = CreateMainStructureForRussianRepository(self.db)
+        await repo.insert_russian_words_to_table()
+
+
+    #7 - Fetch Russian Words, generate sentences and translate to english
+    async def fetch_russian_words_generate_sentence_and_translate_english (self):
+        repo = FetchRussianWordsAndGenerateSentenceAndTranslateToEnglish(self.db)
+        await repo.main_func()
 
 # Main Class Working
 class CreateMainStructureRepository:
@@ -83,7 +102,7 @@ class CreateMainStructureRepository:
         # await self.helper_funcs.update_top_10000_words_english()
 
         # 4 - Create sentence with words in english
-        await self.helper_funcs.generate_five_sentences_about_each_word()
+        # await self.helper_funcs.generate_five_sentences_about_each_word()
 
         # 5 - Translate words from eng to rus
         # await self.helper_funcs.translateentoru()
@@ -91,11 +110,266 @@ class CreateMainStructureRepository:
         # 6 - Fix Others pos
         # await self.helper_funcs.fix_other_pos()
 
+
+        # 7 - Insert Russian words to table
+        # await self.helper_funcs.insert_russian_words_to_table()
+
+        # 8 - Fetch Russian Words and ganerate and translate to english
+        await self.helper_funcs.fetch_russian_words_generate_sentence_and_translate_english()
+
+
         return 'Added'
 
 
 
-# Create Top languages List
+
+
+
+################################################################## This is for russian
+
+class CreateMainStructureForRussianRepository:
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def insert_russian_words_to_table(self):
+        # 1️⃣ Build the correct file path (same folder as this file)
+        file_path = os.path.join(os.path.dirname(__file__), "russian_words.xlsx")
+
+        # 2️⃣ Read Excel file
+        df = pd.read_excel(file_path)
+
+        # Expecting columns: russian, translation, lang_code, frequency_rank, level
+        for _, row in df.iterrows():
+
+
+            ru_word = str(row["russian"]).strip()
+            translation_text = str(row["translation"]).strip()
+            target_lang = "en"
+            frequency_rank = int(row["rank"])
+            level = None
+
+            # 3️⃣ Check if Russian word already exists
+            existing_word = await self.db.scalar(
+                select(Word).where(Word.text == ru_word, Word.language_code == "ru")
+            )
+            if not existing_word:
+                existing_word = Word(
+                    text=ru_word,
+                    language_code="ru",
+                    frequency_rank=frequency_rank,
+                    level=level
+                )
+                self.db.add(existing_word)
+                await self.db.flush()  # gets ID without committing
+
+            # 4️⃣ Check if translation exists
+            existing_translation = await self.db.scalar(
+                select(Translation).where(
+                    Translation.source_word_id == existing_word.id,
+                    Translation.target_language_code == target_lang,
+                    Translation.translated_text == translation_text
+                )
+            )
+            if not existing_translation:
+                translation = Translation(
+                    source_word_id=existing_word.id,
+                    target_language_code=target_lang,
+                    translated_text=translation_text
+                )
+                self.db.add(translation)
+
+        # 5️⃣ Commit after processing all rows
+        await self.db.commit()
+
+
+class FetchRussianWordsAndGenerateSentenceAndTranslateToEnglish:
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.api_key = os.getenv("YANDEX_LANGMODEL_API_SECRET_KEY")
+        self.folder_id = os.getenv("YANDEX_FOLDER_ID")
+        self.api_url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
+        self.semaphore = asyncio.Semaphore(5)  # Limit concurrent API calls
+
+    async def translate_sentence(self, text: str) -> str:
+        """Translate a Russian sentence into English"""
+        headers = {
+            "Authorization": f"Api-Key {os.getenv('YANDEX_TRANSLATE_API_SECRET_KEY')}"
+        }
+        json_data = {
+            "folder_id": self.folder_id,
+            "texts": [text],
+            "sourceLanguageCode": "ru",
+            "targetLanguageCode": "en"
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://translate.api.cloud.yandex.net/translate/v2/translate",
+                headers=headers,
+                json=json_data
+            ) as response:
+                if response.status != 200:
+                    full_response = await response.text()
+                    raise Exception(f"API error {response.status}: {full_response}")
+
+                data = await response.json()
+                return data['translations'][0]['text']
+
+    async def _get_words_batch(self, offset: int, limit: int) -> List[Word]:
+        """Fetch Russian words with consistent ordering"""
+        try:
+
+            result = await self.db.execute(
+                select(Word)
+                .where(Word.id.between(18666, 19166)) # Just call the function.
+                .order_by(Word.id.asc())
+                .limit(limit)
+                .offset(offset)
+            )
+
+            words = result.scalars().all()
+            print(f"DEBUG: Fetched {len(words)} RU words (IDs: {[w.id for w in words]})")
+            return words
+        except Exception as e:
+            print(f"ERROR in _get_words_batch: {str(e)}")
+            return []
+
+    async def _process_word(self, word: Word) -> bool:
+        """Process a single word"""
+        try:
+            print(f"Processing RU word ID {word.id}: {word.text}")
+
+            # Generate sentences in Russian
+            sentences = await self.generate_sentences(word.text)
+            if not sentences:
+                print(f"No sentences generated for {word.text}")
+                return False
+
+            # Save to DB
+            await self._save_sentences(word, sentences)
+            return True
+
+        except Exception as e:
+            print(f"ERROR processing {word.text}: {str(e)}")
+            return False
+
+    async def main_func(self):
+        """Main execution loop"""
+        try:
+            print("Starting processing of Russian words...")
+
+            # Fetch first 2 Russian words
+            words = await self._get_words_batch(0, 100)
+            if not words:
+                print("No Russian words found!")
+                return {"status": "failed", "reason": "no words found"}
+
+            success_count = 0
+            processed_ids = []
+
+            for word in words:
+                success = await self._process_word(word)
+                if success:
+                    success_count += 1
+                    processed_ids.append(word.id)
+                await asyncio.sleep(1)  # avoid rate limit
+
+            return {
+                "status": "completed",
+                "total_words": len(words),
+                "processed": success_count,
+                "failed": len(words) - success_count,
+                "processed_ids": processed_ids
+            }
+
+        except Exception as e:
+            print(f"FATAL ERROR: {str(e)}")
+            return {"status": "failed", "error": str(e)}
+
+    async def _save_sentences(self, word: Word, sentences: List[str]):
+        """Save RU sentences, their EN translations, and link to the word"""
+        for sentence_text in sentences:
+            # Save RU sentence
+            sentence = Sentence(
+                text=sentence_text,
+                language_code="ru"
+            )
+            self.db.add(sentence)
+            await self.db.flush()
+
+            # Link to word
+            self.db.add(SentenceWord(
+                sentence_id=sentence.id,
+                word_id=word.id
+            ))
+
+            # Translate to English
+            try:
+                en_translation = await self.translate_sentence(sentence_text)
+                self.db.add(SentenceTranslation(
+                    source_sentence_id=sentence.id,
+                    language_code="en",
+                    translated_text=en_translation
+                ))
+            except Exception as e:
+                print(f"ERROR translating '{sentence_text}': {e}")
+
+        await self.db.commit()
+
+    async def generate_sentences(self, word: str) -> List[str]:
+        """Generate exactly 5 Russian sentences using Yandex GPT"""
+        async with aiohttp.ClientSession() as session:
+            headers = {
+                "Authorization": f"Api-Key {self.api_key}",
+                "Content-Type": "application/json"
+            }
+
+            prompt = {
+                "modelUri": f"gpt://{self.folder_id}/yandexgpt",
+                "completionOptions": {
+                    "stream": False,
+                    "temperature": 0.6,
+                    "maxTokens": "2000"
+                },
+                "messages": [
+                    {
+                        "role": "system",
+                        "text": "You are a helpful assistant that generates example sentences for Russian words."
+                    },
+                    {
+                        "role": "user",
+                        "text": f"Составь ровно 5 разных предложений на русском языке, используя слово '{word}'. "
+                                f"Каждое предложение должно показывать разное значение/контекст. "
+                                f"Раздели предложения символом '|'. "
+                                f"Верни только предложения, без лишнего текста."
+                    }
+                ]
+            }
+
+            try:
+                async with session.post(self.api_url, json=prompt, headers=headers) as response:
+                    response.raise_for_status()
+                    result = await response.json()
+
+                    sentences_text = result["result"]["alternatives"][0]["message"]["text"]
+                    sentences = [s.strip() for s in sentences_text.split("|") if s.strip()]
+
+                    if len(sentences) != 5:
+                        raise ValueError(f"Expected 5 sentences, got {len(sentences)}")
+
+                    return sentences[:5]
+
+            except Exception as e:
+                print(f"API Error for RU word {word}: {str(e)}")
+                return []
+
+
+
+
+
+################################################################## Create Top languages List
 class CreateMainStructureLanguagesListRepository:
 
     def __init__(self, db):
@@ -121,6 +395,9 @@ class CreateMainStructureLanguagesListRepository:
         return "Top 10 languages created successfully"
 
 
+
+
+################################################################## This is For english structure
 
 # Generate and insert top 10.000 English words in Database
 class CreateMainStructureRepositoryForEnglishLanguage:
@@ -422,6 +699,7 @@ class GenerateEnglishSentencesForEachWord:
 
 
     async def translate_sentence(self, text: str) -> str:
+        print('')
         """Translate an English sentence into Russian"""
         headers = {
             "Authorization": f"Api-Key {os.getenv('YANDEX_TRANSLATE_API_SECRET_KEY')}"
@@ -448,7 +726,7 @@ class GenerateEnglishSentencesForEachWord:
         try:
             result = await self.db.execute(
                 select(Word)
-                .where(Word.id.between(184,200)) # Need to start to generate a sentences from 184 to 200
+                .where(Word.id.between(101,1000)) # Need to start to generate a sentences from 184 to 200
                 .order_by(Word.id.asc())
 
                 .limit(limit)
@@ -486,7 +764,7 @@ class GenerateEnglishSentencesForEachWord:
             print("Starting processing...")
 
             # Get all target words first
-            words = await self._get_words_batch(0, 84)
+            words = await self._get_words_batch(0, 1000)
             if not words:
                 print("No words found!")
                 return {"status": "failed", "reason": "no words found"}
@@ -556,6 +834,7 @@ class GenerateEnglishSentencesForEachWord:
 
             except Exception as e:
                 print(f"ERROR translating sentence '{sentence_text}': {e}")
+                return
 
         await self.db.commit()
 
