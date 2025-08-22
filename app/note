@@ -1,123 +1,55 @@
 
-1 - Need to think about same word can be verb or noun or something else - Big Theme
-2 - Change WOrd schema place from translate to words - Working
-3 - Need to Show starred words in saved words page - Working
 
 
-Language Model
-	1 - en: English
-	2 - es: Spanish
-	3 - tr: Turkish
+-------------------------------------------------------------------- Deepseek -------------------------------------
 
-Words Model - 300
-	1 - en: 100 words
-	2 - es: 100 words
-	3 - tr: 100 words
+Super. Now l wanna fetch the 'es' words from word_model and translate to 'en' language
 
-Translation Model
-	1 - en -> tr : 100 word translation
-	2 - en -> es : 100 word translation
-	3 - es -> en : 100 word translation
-	4 - es -> tr : 100 word translation
-	5 - tr -> en : 100 word translation
-	6 - tr -> es : 100 word translation
+This is my models.
 
-Sentence Model
-	1 - en: "Hello world"
-	2 - en: "Hello How a u?"
-	3 - en: "I am going to ... "
-	4 - es: "Hola Como estas"
-	5 - es: "Como de names"
-	6 - tr: "Ben okula gidiyorum"
-	7 - tr: "Hayat guzeldir"
+    class Word(Base):
+        __tablename__ = "words"
+        id = Column(Integer, primary_key=True)
+        text = Column(String(100), unique=True)  # "book" (shared spelling)
+        language_code = Column(String(2))       # "en"
+        frequency_rank = Column(Integer)
+        level = mapped_column(String(2))  # A1-C2
 
-Sentence Translation Model
-    ID  SS-ID   LCode   Tr. Text
-    1   1       es      Hola mundo
-    2   1       tr      Merhaba Dunya
-    3   2       es      Hola Como estas
-    4   2       tr      Merhaba Nasilsin
-    5   3       es      Voy a
-    6   3       tr      Ben gidiyorum/Hazirlaniyorum
-    7   4       en      Hello How are you
-    8   4       tr      Merhaba Nasilsin
-    9   5       en      What is you name?
-    10  5       tr      Ismin nedir?
-    11  6       en      I am going to school
-    12  6       es      Voy a la escuela
-    13  7       en      Life Is beautiful
-    14  7       es      La Vida es bella
+        meanings = relationship("WordMeaning", back_populates="word")
+        translations = relationship("Translation", back_populates="source_word")  # This was missing
+        in_sentences = relationship("SentenceWord", back_populates="word")  # Also add this for comp
 
-Sentence Word Model
-    Sentence ID     Word ID
-    1               1 -> This id will comes from Words model # "Because there is a 'Hello'  "
-    1               103 -> This id will comes from Words model # "Because there is a 'World'  "
+        def __repr__(self):
+            return f'Word(id:({self.id}), text({self.text}, language_code({self.language_code}, frequency_rank:({self.frequency_rank}, level({self.level})))))'
 
 
 
--------------------------------------------------------------------- Chatgpt -------------------------------------
+    class Translation(Base):
+        __tablename__ = "translations"
+        id = mapped_column(Integer, primary_key=True)
+        source_word_id = mapped_column(Integer, ForeignKey("words.id"))
+        target_language_code = mapped_column(String(2), ForeignKey("languages.code"))
+        translated_text = mapped_column(String(100))  # "hello" → "hola"
 
-Super and buper. now l wanna fetch first 2 russian words and generate 5 sentences with yandex_lang_model and save to sentences mode and
-translate the sentences to the english lang. l will share with you my models for this. l think, you already have an inform about
-words and translation models.
-
-Model:
-
-# Define SentenceTranslation BEFORE Sentence
-class SentenceTranslation(Base):
-    __tablename__ = "sentence_translations"
-    id = mapped_column(Integer, primary_key=True)
-    source_sentence_id = mapped_column(Integer, ForeignKey("sentences.id"))
-    language_code = mapped_column(String(2), ForeignKey("languages.code"))
-    translated_text = mapped_column(String(500))
-
-    source_sentence = relationship("Sentence", back_populates="translations")
-
-    # This is old code, and change with below new code
-    # language = relationship("Language")
-
-    language = relationship("Language", lazy="joined")
+        source_word = relationship("Word", back_populates="translations")
 
 
+        target_language = relationship("Language", lazy="joined")
 
-class Sentence(Base):
-    __tablename__ = "sentences"
-    id = mapped_column(Integer, primary_key=True)
-    text = mapped_column(String(500))  # "Hello world"
-    language_code = mapped_column(String(2), ForeignKey("languages.code"))
+This is my repository for doing it.
 
-    language = relationship("Language")
-    contains_words = relationship("SentenceWord", back_populates="sentence")
-    translations = relationship("SentenceTranslation", back_populates="source_sentence")
+    class TranslateSpanishWordsToEnglish:
 
+        def __init__(self, db: AsyncSession):
+            self.db = db
+            self.api_key = os.getenv("YANDEX_TRANSLATE_API_SECRET_KEY")
+            self.folder_id = os.getenv("YANDEX_FOLDER_ID")
+            self.translate_url = "https://translate.api.cloud.yandex.net/translate/v2/translate"
 
-class SentenceWord(Base):
-    __tablename__ = "sentence_words"
-    sentence_id = mapped_column(Integer, ForeignKey("sentences.id"), primary_key=True)
-    word_id = mapped_column(Integer, ForeignKey("words.id"), primary_key=True)
+        async def translate_spanish_words_to_english(self):
 
-    sentence = relationship("Sentence", back_populates="contains_words")
-    word = relationship("Word", back_populates="in_sentences")
+            print('spanish words is translated to english')
 
-
-Repository:
-
-
-class FetchRussianWordsAndGenerateSentenceAndTranslateToEnglish:
-
-    def __init__(self, db: AsyncSession):
-        self.db = db
-
-    async def fetch_russian_words_and_generate_sentences(self):
-
-        # 1 - Fetch russian words from word model
-
-        # 2 - After fetch, generate at least 5 sentences about each word
-
-        # 3 - translate the sentences to english lang.
-
-
-        pass
-
+            return {'msg':'translate'}
 
 

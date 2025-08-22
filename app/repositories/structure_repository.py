@@ -7,6 +7,7 @@ from datetime import datetime
 import aiohttp
 import asyncio
 import pandas as pd
+import requests
 
 from collections import defaultdict
 from typing import List
@@ -76,10 +77,24 @@ class HelperFunction:
         await repo.insert_russian_words_to_table()
 
 
-    #7 - Fetch Russian Words, generate sentences and translate to english
+    #8 - Fetch Russian Words, generate sentences and translate to english
     async def fetch_russian_words_generate_sentence_and_translate_english (self):
         repo = FetchRussianWordsAndGenerateSentenceAndTranslateToEnglish(self.db)
         await repo.main_func()
+
+
+
+    #9 - Insert Spanish words to database
+    async def insert_spanish_words_to_table (self):
+        repo = CreateMainStructureForSpanishRepository(self.db)
+        await repo.insert_spanish_words_to_table()
+
+
+    #10 - Translate Spanish words
+    async def translate_spanish_words_to_english(self):
+        repo = TranslateSpanishWordsToEnglish(self.db)
+        await repo.translate_spanish_words_to_english()
+
 
 # Main Class Working
 class CreateMainStructureRepository:
@@ -115,14 +130,196 @@ class CreateMainStructureRepository:
         # await self.helper_funcs.insert_russian_words_to_table()
 
         # 8 - Fetch Russian Words and ganerate and translate to english
-        await self.helper_funcs.fetch_russian_words_generate_sentence_and_translate_english()
+        # await self.helper_funcs.fetch_russian_words_generate_sentence_and_translate_english()
 
+
+        # 9 - Create Spanish word model
+        # await self.helper_funcs.insert_spanish_words_to_table()
+
+        # 10 - Translate Spanish words to english
+        await self.helper_funcs.translate_spanish_words_to_english()
 
         return 'Added'
 
 
 
 
+
+################################################################## Create Top languages List
+class CreateMainStructureLanguagesListRepository:
+
+    def __init__(self, db):
+        self.db = db
+
+    async def create_main_languages(self):
+        top_languages = [
+            {"code": "en", "name": "English"},
+            {"code": "es", "name": "Spanish"},
+            {"code": "ru", "name": "Russian"},
+            {"code": "tr", "name": "Turkish"},
+        ]
+
+        for lang in top_languages:
+            # Check if language already exists
+            existing = await self.db.execute(
+                select(Language).where(Language.code == lang["code"])
+            )
+            if not existing.scalar_one_or_none():
+                self.db.add(Language(**lang))
+
+        await self.db.commit()
+        return "Top 10 languages created successfully"
+
+
+
+
+
+
+################################################################## This is for spanish.txt
+
+class CreateMainStructureForSpanishRepository:
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+
+    async def insert_spanish_words_to_table(self):
+
+        # Path to your Excel file
+        excel_file_path = os.path.join(os.path.dirname(__file__), "spanish_top_10000.xlsx")
+
+        try:
+            # Read the Excel file
+            df = pd.read_excel(excel_file_path, engine='openpyxl')
+
+            # Check if the dataframe has the expected columns
+            print("Excel file columns:", df.columns.tolist())
+            print(f"Total words to process: {len(df)}")
+
+            # Process each row and create Word objects
+            words_to_add = []
+            existing_words_count = 0
+
+            for index, row in df.iterrows():
+                # Adjust column names based on your Excel file structure
+                # Assuming your Excel has columns: 'rank', 'word', 'frequency'
+                word_text = str(row['word']).strip()
+                frequency_rank = int(row['rank'])
+                frequency = int(row['frequency'])
+
+                # Check if word already exists in database
+                existing_word = await self.db.execute(
+                    select(Word).where(Word.text == word_text).where(Word.language_code == "es")
+                )
+                existing_word = existing_word.scalar_one_or_none()
+
+                if existing_word:
+                    existing_words_count += 1
+                    continue  # Skip if word already exists
+
+                # Determine level based on frequency rank (you can adjust this logic)
+                level = self._determine_level(frequency_rank)
+
+                # Create new Word object
+                new_word = Word(
+                    text=word_text,
+                    language_code="es",  # Spanish
+                    frequency_rank=frequency_rank,
+                    level=level
+                )
+
+                words_to_add.append(new_word)
+
+                # Batch insert every 100 words to avoid memory issues
+                if len(words_to_add) >= 100:
+                    self.db.add_all(words_to_add)
+                    await self.db.commit()
+                    words_to_add = []
+                    print(f"Processed {index + 1} words...")
+
+            # Insert any remaining words
+            if words_to_add:
+                self.db.add_all(words_to_add)
+                await self.db.commit()
+
+            print(f"Successfully inserted {len(df) - existing_words_count} Spanish words")
+            print(f"Skipped {existing_words_count} existing words")
+
+            return {
+                'msg': 'Spanish words inserted successfully',
+                'inserted_count': len(df) - existing_words_count,
+                'skipped_count': existing_words_count
+            }
+
+        except FileNotFoundError:
+            print(f"Error: Excel file not found at {excel_file_path}")
+            return {'error': 'Excel file not found'}
+        except Exception as e:
+            await self.db.rollback()
+            print(f"Error: {str(e)}")
+            return {'error': str(e)}
+
+    def _determine_level(self, frequency_rank: int) -> str:
+        """Determine CEFR level based on frequency rank"""
+        if frequency_rank <= 1000:
+            return "A1"
+        elif frequency_rank <= 2000:
+            return "A2"
+        elif frequency_rank <= 4000:
+            return "B1"
+        elif frequency_rank <= 6000:
+            return "B2"
+        elif frequency_rank <= 8000:
+            return "C1"
+        else:
+            return "C2"
+
+
+    def fetch_words_from_spanish(self):
+        """Download and process top Spanish words from GitHub"""
+        url = "https://raw.githubusercontent.com/hermitdave/FrequencyWords/master/content/2018/es/es_50k.txt"
+
+        try:
+            response = requests.get(url)
+            lines = response.text.split('\n')
+
+            data = []
+            for i, line in enumerate(lines[:10000]):
+                if line.strip():
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        word = parts[0]
+                        frequency = int(parts[1])
+                        rank = i + 1
+                        data.append([rank, word, frequency])
+
+            df = pd.DataFrame(data, columns=['rank', 'word', 'frequency'])
+
+            # Save to Excel
+            excel_path = os.path.join(os.path.dirname(__file__), "spanish_top_10000.xlsx")
+            df.to_excel(excel_path, index=False, engine='openpyxl')
+
+            print(f"Created Excel with top 10,000 Spanish words at: {excel_path}")
+            return df
+
+        except Exception as e:
+            print(f"Error: {str(e)}")
+            return None
+
+
+class TranslateSpanishWordsToEnglish:
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.api_key = os.getenv("YANDEX_TRANSLATE_API_SECRET_KEY")
+        self.folder_id = os.getenv("YANDEX_FOLDER_ID")
+        self.translate_url = "https://translate.api.cloud.yandex.net/translate/v2/translate"
+
+    async def translate_spanish_words_to_english(self):
+
+        print('spanish words is translated to english')
+
+        return {'msg':'translate'}
 
 
 ################################################################## This is for russian
@@ -366,33 +563,6 @@ class FetchRussianWordsAndGenerateSentenceAndTranslateToEnglish:
                 return []
 
 
-
-
-
-################################################################## Create Top languages List
-class CreateMainStructureLanguagesListRepository:
-
-    def __init__(self, db):
-        self.db = db
-
-    async def create_main_languages(self):
-        top_languages = [
-            {"code": "en", "name": "English"},
-            {"code": "es", "name": "Spanish"},
-            {"code": "ru", "name": "Russian"},
-            {"code": "tr", "name": "Turkish"},
-        ]
-
-        for lang in top_languages:
-            # Check if language already exists
-            existing = await self.db.execute(
-                select(Language).where(Language.code == lang["code"])
-            )
-            if not existing.scalar_one_or_none():
-                self.db.add(Language(**lang))
-
-        await self.db.commit()
-        return "Top 10 languages created successfully"
 
 
 
