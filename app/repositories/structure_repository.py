@@ -9,14 +9,14 @@ import asyncio
 import pandas as pd
 import requests
 
-from collections import defaultdict
-from typing import List
 
+from collections import defaultdict
+from typing import List, Optional
 
 
 from fastapi import HTTPException
 
-from sqlalchemy import select, func, and_, update, or_, case
+from sqlalchemy import select, func, and_, update, or_, case, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, outerjoin
 from sqlalchemy.future import select
@@ -314,12 +314,213 @@ class TranslateSpanishWordsToEnglish:
         self.api_key = os.getenv("YANDEX_TRANSLATE_API_SECRET_KEY")
         self.folder_id = os.getenv("YANDEX_FOLDER_ID")
         self.translate_url = "https://translate.api.cloud.yandex.net/translate/v2/translate"
+        self.batch_size = 100  # Process words in batches
+        self.translate_batch_size = 10  # Yandex API batch limit
 
     async def translate_spanish_words_to_english(self):
+        try:
+            # Fetch Spanish words that don't have English translations yet
+            spanish_words = await self._get_spanish_words_without_translations()
 
-        print('spanish words is translated to english')
+            if not spanish_words:
+                return {'msg': 'No Spanish words need translation'}
 
-        return {'msg':'translate'}
+            print(f"Found {len(spanish_words)} Spanish words to translate")
+
+            # Translate in batches to avoid API rate limits
+            translated_count = 0
+            for i in range(0, len(spanish_words), self.translate_batch_size):
+                batch = spanish_words[i:i + self.translate_batch_size]
+                print(f'............................. batch is {batch}')
+                translations = await self._translate_batch(batch)
+
+                if translations:
+                    await self._save_translations(translations)
+                    translated_count += len(translations)
+
+                print(f"Translated {min(i + self.translate_batch_size, len(spanish_words))}/{len(spanish_words)} words")
+
+                # Add delay to avoid hitting rate limits
+                await asyncio.sleep(0.1)
+
+            return {
+                'msg': 'Translation completed',
+                'translated_count': translated_count,
+                'total_words': len(spanish_words)
+            }
+
+        except Exception as e:
+            print(f"Translation error: {str(e)}")
+            return {'error': str(e)}
+
+    async def _get_spanish_words_without_translations(self) -> List[Word]:
+        """Fetch Spanish words that don't have English translations yet"""
+        query = text("""
+        SELECT w.* FROM words w
+        WHERE w.language_code = 'es'
+        AND NOT EXISTS (
+            SELECT 1 FROM translations t 
+            WHERE t.source_word_id = w.id 
+            AND t.target_language_code = 'en'
+        )
+        ORDER BY w.frequency_rank
+        LIMIT 7000
+        """)
+
+        result = await self.db.execute(query)
+        words = [Word(id=row[0], text=row[1], language_code=row[2], frequency_rank=row[3], level=row[4])
+                 for row in result.fetchall()]
+        return words
+
+    # Alternative method using SQLAlchemy ORM instead of raw SQL
+    async def _get_spanish_words_without_translations_orm(self) -> List[Word]:
+        """Alternative method using ORM queries instead of raw SQL"""
+        # Get all Spanish words
+        spanish_words_query = select(Word).where(Word.language_code == 'es')
+        result = await self.db.execute(spanish_words_query)
+        all_spanish_words = result.scalars().all()
+
+        # Filter words that don't have English translations
+        words_without_translations = []
+        for word in all_spanish_words:
+            # Check if translation exists using ORM
+            translation_query = select(Translation).where(
+                Translation.source_word_id == word.id,
+                Translation.target_language_code == 'en'
+            )
+            translation_result = await self.db.execute(translation_query)
+            existing_translation = translation_result.scalar_one_or_none()
+
+            if not existing_translation:
+                words_without_translations.append(word)
+
+        return words_without_translations
+
+    async def _translate_batch(self, words: List[Word]) -> List[dict]:
+        """Translate a batch of words using Yandex API"""
+        if not self.api_key or not self.folder_id:
+            raise ValueError("Yandex API credentials not configured")
+
+        texts = [word.text for word in words]
+
+        headers = {
+            "Authorization": f"Api-Key {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "folderId": self.folder_id,
+            "texts": texts,
+            "targetLanguageCode": "en",
+            "sourceLanguageCode": "es"
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(self.translate_url, json=payload, headers=headers) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        translations = data.get('translations', [])
+
+                        # Map translations back to words
+                        result = []
+                        for word, translation in zip(words, translations):
+                            result.append({
+                                'source_word': word,
+                                'translated_text': translation.get('text', ''),
+                                'detected_language': translation.get('detectedLanguageCode', 'es')
+                            })
+                        return result
+                    else:
+                        error_text = await response.text()
+                        print(f"Yandex API error {response.status}: {error_text}")
+                        return []
+
+        except Exception as e:
+            print(f"API call error: {str(e)}")
+            return []
+
+    async def _save_translations(self, translations: List[dict]):
+        """Save translations to database"""
+        try:
+            translation_objects = []
+
+            for translation_data in translations:
+                if translation_data['translated_text']:  # Only save valid translations
+                    translation = Translation(
+                        source_word_id=translation_data['source_word'].id,
+                        target_language_code='en',
+                        translated_text=translation_data['translated_text']
+                    )
+                    translation_objects.append(translation)
+
+            if translation_objects:
+                self.db.add_all(translation_objects)
+                await self.db.commit()
+
+        except Exception as e:
+            await self.db.rollback()
+            print(f"Error saving translations: {str(e)}")
+            raise
+
+    # More efficient ORM method using subquery
+    async def _get_spanish_words_without_translations_efficient(self) -> List[Word]:
+        """More efficient method using subquery"""
+        # Create subquery for words that already have translations
+        translated_words_subquery = select(Translation.source_word_id).where(
+            Translation.target_language_code == 'en'
+        ).subquery()
+
+        # Main query to get Spanish words without translations
+        query = select(Word).where(
+            Word.language_code == 'es',
+            ~Word.id.in_(select(translated_words_subquery))
+        ).order_by(Word.frequency_rank).offset(3000)
+
+        result = await self.db.execute(query)
+        words = result.scalars().all()
+        return words
+
+    async def translate_all_spanish_words(self, limit: Optional[int] = None):
+        """Main method to translate all Spanish words"""
+        try:
+            # Use the efficient ORM method
+            spanish_words = await self._get_spanish_words_without_translations_efficient()
+
+            if not spanish_words:
+                return {'msg': 'No Spanish words need translation'}
+
+            if limit:
+                spanish_words = spanish_words[:limit]
+
+            print(f"Translating {len(spanish_words)} Spanish words to English")
+
+            translated_count = 0
+            for i in range(0, len(spanish_words), self.translate_batch_size):
+                batch = spanish_words[i:i + self.translate_batch_size]
+                translations = await self._translate_batch(batch)
+
+                if translations:
+                    await self._save_translations(translations)
+                    translated_count += len(translations)
+
+                progress = min(i + self.translate_batch_size, len(spanish_words))
+                print(f"Progress: {progress}/{len(spanish_words)} words translated")
+
+                await asyncio.sleep(0.1)  # Rate limiting
+
+            return {
+                'msg': 'Translation completed successfully',
+                'words_processed': len(spanish_words),
+                'translations_created': translated_count
+            }
+
+        except Exception as e:
+            print(f"Translation error: {str(e)}")
+            await self.db.rollback()
+            return {'error': str(e)}
+
+
 
 
 ################################################################## This is for russian
