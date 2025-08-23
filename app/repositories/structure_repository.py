@@ -32,7 +32,7 @@ logger = setup_logger(__name__, "word.log")
 
 
 
-
+################################################################## Call function for creating a structure
 
 # Class For executing the functions
 class HelperFunction:
@@ -95,6 +95,11 @@ class HelperFunction:
         repo = TranslateSpanishWordsToEnglish(self.db)
         await repo.translate_spanish_words_to_english()
 
+    #11 - Generate Spanish Sentence
+    async def generate_sentences_for_spanish(self):
+        repo = GenerateSentencesSpanishAndTranslate(self.db)
+        await repo.main_func()
+
 
 # Main Class Working
 class CreateMainStructureRepository:
@@ -137,7 +142,10 @@ class CreateMainStructureRepository:
         # await self.helper_funcs.insert_spanish_words_to_table()
 
         # 10 - Translate Spanish words to english
-        await self.helper_funcs.translate_spanish_words_to_english()
+        # await self.helper_funcs.translate_spanish_words_to_english()
+
+        # 11 - Generate Spanish sentences and translate it
+        # await self.helper_funcs.generate_sentences_for_spanish()
 
         return 'Added'
 
@@ -169,9 +177,6 @@ class CreateMainStructureLanguagesListRepository:
 
         await self.db.commit()
         return "Top 10 languages created successfully"
-
-
-
 
 
 
@@ -521,6 +526,212 @@ class TranslateSpanishWordsToEnglish:
             return {'error': str(e)}
 
 
+class GenerateSentencesSpanishAndTranslate:
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.api_key = os.getenv("YANDEX_LANGMODEL_API_SECRET_KEY")
+        self.folder_id = os.getenv("YANDEX_FOLDER_ID")
+        self.api_url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
+        self.semaphore = asyncio.Semaphore(5)  # Limit concurrent API calls
+
+    async def translate_sentence(self, text: str) -> str:
+        """Translate a Spanish sentence into English"""
+        headers = {
+            "Authorization": f"Api-Key {os.getenv('YANDEX_TRANSLATE_API_SECRET_KEY')}"
+        }
+        json_data = {
+            "folder_id": self.folder_id,
+            "texts": [text],
+            "sourceLanguageCode": "es",
+            "targetLanguageCode": "en"
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                    "https://translate.api.cloud.yandex.net/translate/v2/translate",
+                    headers=headers,
+                    json=json_data
+            ) as response:
+                if response.status != 200:
+                    full_response = await response.text()
+                    raise Exception(f"API error {response.status}: {full_response}")
+
+                data = await response.json()
+                return data['translations'][0]['text']
+
+    async def _get_spanish_words_batch(self, limit: int = 30, offset: int = 0) -> List[Word]:
+        """Fetch Spanish words with consistent ordering"""
+        try:
+            result = await self.db.execute(
+                select(Word)
+                .where(Word.language_code == "es")
+                .order_by(Word.frequency_rank.asc())  # Get most common words first
+                .limit(limit)
+                .offset(offset)
+            )
+
+            words = result.scalars().all()
+            print(f"Fetched {len(words)} Spanish words")
+            return words
+        except Exception as e:
+            print(f"ERROR in _get_spanish_words_batch: {str(e)}")
+            return []
+
+    async def _process_word(self, word: Word) -> bool:
+        """Process a single Spanish word"""
+        try:
+            print(f"Processing Spanish word ID {word.id}: {word.text}")
+
+            # Generate sentences in Spanish
+            sentences = await self.generate_spanish_sentences(word.text)
+            if not sentences:
+                print(f"No sentences generated for {word.text}")
+                return False
+
+            # Save to DB
+            await self._save_sentences(word, sentences)
+            return True
+
+        except Exception as e:
+            print(f"ERROR processing {word.text}: {str(e)}")
+            return False
+
+    async def main_func(self):
+        """Main execution loop - generate sentences for first 30 Spanish words"""
+        try:
+            print("Starting processing of Spanish words...")
+
+            # Fetch first 30 Spanish words
+            words = await self._get_spanish_words_batch(limit=30, offset=0)
+            if not words:
+                print("No Spanish words found!")
+                return {"status": "failed", "reason": "no words found"}
+
+            success_count = 0
+            processed_ids = []
+
+            for word in words:
+                success = await self._process_word(word)
+                if success:
+                    success_count += 1
+                    processed_ids.append(word.id)
+                await asyncio.sleep(1)  # avoid rate limit
+
+            return {
+                "status": "completed",
+                "total_words": len(words),
+                "processed": success_count,
+                "failed": len(words) - success_count,
+                "processed_ids": processed_ids
+            }
+
+        except Exception as e:
+            print(f"FATAL ERROR: {str(e)}")
+            return {"status": "failed", "error": str(e)}
+
+    async def _save_sentences(self, word: Word, sentences: List[str]):
+        """Save Spanish sentences, their English translations, and link to the word"""
+        for sentence_text in sentences:
+            # Save Spanish sentence
+            sentence = Sentence(
+                text=sentence_text,
+                language_code="es"
+            )
+            self.db.add(sentence)
+            await self.db.flush()
+
+            # Link to word
+            self.db.add(SentenceWord(
+                sentence_id=sentence.id,
+                word_id=word.id
+            ))
+
+            # Translate to English
+            try:
+                en_translation = await self.translate_sentence(sentence_text)
+                self.db.add(SentenceTranslation(
+                    source_sentence_id=sentence.id,
+                    language_code="en",
+                    translated_text=en_translation
+                ))
+            except Exception as e:
+                print(f"ERROR translating '{sentence_text}': {e}")
+
+        await self.db.commit()
+
+    async def generate_spanish_sentences(self, word: str) -> List[str]:
+        """Generate exactly 5 Spanish sentences using Yandex GPT"""
+        async with aiohttp.ClientSession() as session:
+            headers = {
+                "Authorization": f"Api-Key {self.api_key}",
+                "Content-Type": "application/json"
+            }
+
+            prompt = {
+                "modelUri": f"gpt://{self.folder_id}/yandexgpt",
+                "completionOptions": {
+                    "stream": False,
+                    "temperature": 0.6,
+                    "maxTokens": "2000"
+                },
+                "messages": [
+                    {
+                        "role": "system",
+                        "text": "Eres un asistente útil que genera oraciones de ejemplo para palabras en español."
+                    },
+                    {
+                        "role": "user",
+                        "text": f"Escribe exactamente 5 oraciones diferentes en español usando la palabra '{word}'. "
+                                f"Cada oración debe mostrar un significado/contexto diferente. "
+                                f"Separa las oraciones con el símbolo '|'. "
+                                f"Devuelve solo las oraciones, sin texto adicional."
+                    }
+                ]
+            }
+
+            try:
+                async with session.post(self.api_url, json=prompt, headers=headers) as response:
+                    response.raise_for_status()
+                    result = await response.json()
+
+                    sentences_text = result["result"]["alternatives"][0]["message"]["text"]
+                    sentences = [s.strip() for s in sentences_text.split("|") if s.strip()]
+
+                    # Ensure we get exactly 5 sentences
+                    if len(sentences) > 5:
+                        sentences = sentences[:5]
+                    elif len(sentences) < 5:
+                        # If we got fewer than 5, pad with empty strings
+                        sentences.extend([""] * (5 - len(sentences)))
+
+                    return sentences
+
+            except Exception as e:
+                print(f"API Error for Spanish word {word}: {str(e)}")
+                return []
+
+    async def generate_for_next_batch(self, batch_size: int = 30, offset: int = 0):
+        """Generate sentences for a specific batch of words"""
+        words = await self._get_spanish_words_batch(limit=batch_size, offset=offset)
+
+        if not words:
+            return {"status": "no_more_words", "offset": offset}
+
+        success_count = 0
+        for word in words:
+            success = await self._process_word(word)
+            if success:
+                success_count += 1
+            await asyncio.sleep(1)
+
+        next_offset = offset + batch_size
+        return {
+            "status": "completed",
+            "processed": success_count,
+            "total": len(words),
+            "next_offset": next_offset
+        }
 
 
 ################################################################## This is for russian
