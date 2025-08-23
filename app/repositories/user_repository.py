@@ -115,6 +115,8 @@ class UserRegisterRepository:
         await self.db.commit()
         await self.db.refresh(user)
 
+        print(f'the user is {user}')
+
         token_data = {
             'sub': str(user.id),
             'username': user.username,
@@ -130,6 +132,7 @@ class UserRegisterRepository:
                 'sub': str(user.id),
                 'email': user.email,
                 'username': user.username,
+                'native': user.native,
             },
             'access_token': access_token,
             'refresh_token': refresh_token

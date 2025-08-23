@@ -823,6 +823,17 @@ class GetStatisticsForDashboardRepository:
         self.user_id = user_id
 
     async def get_statistics(self):
+        # First, get the user's selected languages
+        user_languages_query = select(UserLanguage.target_language_code).where(
+            UserLanguage.user_id == self.user_id
+        )
+        user_languages_result = await self.db.execute(user_languages_query)
+        user_language_codes = [row[0] for row in user_languages_result.all()]
+
+        # If user hasn't selected any languages, return empty array
+        if not user_language_codes:
+            return []
+
         query = (
             select(
                 Word.language_code,
@@ -835,6 +846,7 @@ class GetStatisticsForDashboardRepository:
                 UserWord,
                 (UserWord.word_id == Word.id) & (UserWord.user_id == self.user_id)
             )
+            .where(Word.language_code.in_(user_language_codes))  # ✅ Filter by user's languages
             .group_by(Word.language_code)
             .order_by(Word.language_code)
         )
@@ -843,20 +855,58 @@ class GetStatisticsForDashboardRepository:
         rows = result.mappings().all()
 
         lang_code_map = {
-            "ru":"Russian",
-            "en":"English",
-            "tr":"Turkish",
+            "ru": "Russian",
+            "en": "English",
+            "tr": "Turkish",
+            "es": "Spanish",
         }
 
         return [
             {
-                "language_code": lang_code_map.get(row["language_code"]),
+                "language_code": lang_code_map.get(row["language_code"], row["language_code"]),
                 "total_words": row["total_words"] or 0,
                 "learned_words": row["learned_words"] or 0,
                 "starred_words": row["starred_words"] or 0
             }
             for row in rows
         ]
+
+    # async def get_statistics(self):
+    #     query = (
+    #         select(
+    #             Word.language_code,
+    #             func.count(Word.id).label("total_words"),
+    #             func.count(case((UserWord.is_learned == True, 1))).label("learned_words"),
+    #             func.count(case((UserWord.is_starred == True, 1))).label("starred_words"),
+    #         )
+    #         .select_from(Word)
+    #         .outerjoin(
+    #             UserWord,
+    #             (UserWord.word_id == Word.id) & (UserWord.user_id == self.user_id)
+    #         )
+    #         .group_by(Word.language_code)
+    #         .order_by(Word.language_code)
+    #     )
+    #
+    #     result = await self.db.execute(query)
+    #     rows = result.mappings().all()
+    #
+    #     lang_code_map = {
+    #         "ru":"Russian",
+    #         "en":"English",
+    #         "tr":"Turkish",
+    #         "es":"Spanish",
+    #     }
+    #
+    #     return [
+    #         {
+    #             "language_code": lang_code_map.get(row["language_code"]),
+    #             "total_words": row["total_words"] or 0,
+    #             "learned_words": row["learned_words"] or 0,
+    #             "starred_words": row["starred_words"] or 0
+    #         }
+    #         for row in rows
+    #     ]
 
 
 
