@@ -29,7 +29,6 @@ async def update_words(db: AsyncSession = Depends(get_db)):
         return {"message": result}
     except Exception as ex:
         await db.rollback()
-        print(f'............................. {ex}')
         raise HTTPException(status_code=500, detail=str(ex))
 
 
@@ -48,19 +47,47 @@ async def get_statistics(db: AsyncSession = Depends(get_db),
 
 
 
-@router.get('/fetch_words', status_code=200)
-async def fetch_words(only_starred: bool = False,
-                      only_learned: bool = False,
-                      db: AsyncSession = Depends(get_db),
-                      user_info = Depends(TokenHandler.verify_access_token)):
+# @router.get('/fetch_words', status_code=200)
+# async def fetch_words(only_starred: bool = False,
+#                       only_learned: bool = False,
+#                       db: AsyncSession = Depends(get_db),
+#                       user_info = Depends(TokenHandler.verify_access_token)):
+#
+#     try:
+#         repo = FetchWordRepository(db, user_id=int(user_info.get('sub')),
+#                                    only_starred=only_starred, only_learned=only_learned)
+#         result = await repo.fetch_words()
+#         return result
+#     except Exception as ex:
+#         raise HTTPException(status_code=500, detail=str(ex))
 
-    try:
-        repo = FetchWordRepository(db, user_id=int(user_info.get('sub')),
-                                   only_starred=only_starred, only_learned=only_learned)
-        result = await repo.fetch_words()
-        return result
-    except Exception as ex:
-        raise HTTPException(status_code=500, detail=str(ex))
+
+# endpoints.py
+@router.get("/user/languages")
+async def get_user_languages(
+    user_info: int = Depends(TokenHandler.verify_access_token),
+    db: AsyncSession = Depends(get_db)
+):
+    repo = FetchWordRepository(db, user_id=int(user_info.get('sub')))
+    languages = await repo.get_available_languages()
+    return languages
+
+@router.get("/{language_code}")
+async def get_words_for_language(
+    language_code: str,
+    only_starred: bool = False,
+    only_learned: bool = False,
+    skip: int = 0,
+    limit: int = 50,
+    user_info: int = Depends(TokenHandler.verify_access_token),
+    db: AsyncSession = Depends(get_db)
+):
+    repo = FetchWordRepository(db, user_id=int(user_info.get('sub')))
+    words = await repo.fetch_words_for_language(
+        language_code, only_starred, only_learned, skip, limit
+    )
+    return words
+
 
 
 
