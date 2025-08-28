@@ -109,13 +109,12 @@ class UserRegisterRepository:
         user = UserModel(
             email=register_data.email,
             password=register_data.password,
-            username=register_data.username
+            username=register_data.username,
+            native = register_data.native,
         )
         self.db.add(user)
         await self.db.commit()
         await self.db.refresh(user)
-
-        print(f'the user is {user}')
 
         token_data = {
             'sub': str(user.id),
@@ -173,7 +172,6 @@ class UserLoginRepository:
         try:
             logger.info(f'{login_data.email} try to login')
             user = await self.check_user_available.check_user_exists(login_data)
-            print(f'second user us {user}')
             token_data = {
                 'sub': str(user.id),
                 'username': user.username,

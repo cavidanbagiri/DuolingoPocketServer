@@ -9,6 +9,7 @@ class UserRegisterSchema(BaseModel):
     username: str | None
     email: EmailStr()
     password: str
+    native: str
 
     @field_validator('password')
     @classmethod

@@ -40,6 +40,7 @@ async def register(response: Response, register_data: UserRegisterSchema,
                             secure=True,
                             samesite="none"
                             )
+
         return {
             'user': data.get('user'),
             'access_token': data.get('access_token')
@@ -103,7 +104,6 @@ async def refresh_token(response: Response, request: Request, db: AsyncSession =
         raise
     except Exception as e:
         logger.error(f"Unexpected error refreshing token: {str(e)}", exc_info=True)
-        print(f"An error occurred while refreshing the token {e}")
         raise HTTPException(status_code=500, detail=f"An error occurred while refreshing the token {e}")
 
 
@@ -149,7 +149,6 @@ async def set_native(
         result = await repo.set_native()
         return result
     except Exception as ex:
-        print(f"Exception: {ex}")
         return {'error': str(ex)}
 
 
@@ -166,6 +165,5 @@ async def choose_target_lang(
         result = await repo.choose_lang_target()
         return result
     except Exception as ex:
-        print(f"Exception: {ex}")
         return {'error': str(ex)}
 
