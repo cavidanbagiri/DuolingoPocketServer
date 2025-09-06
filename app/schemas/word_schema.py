@@ -6,3 +6,7 @@ from pydantic import BaseModel, field_validator
 class ChangeWordStatusSchema(BaseModel):
     word_id: int
     w_status: Literal['starred', 'learned', 'delete']
+
+class VoiceSchema(BaseModel):
+    text: str
+    language: str

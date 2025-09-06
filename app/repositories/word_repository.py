@@ -1,9 +1,9 @@
 
 import os
 from collections import defaultdict
-from typing import List
+from typing import List, Dict, Any
 
-
+import httpx
 import aiohttp
 import asyncio
 
@@ -68,9 +68,10 @@ class GetStatisticsForDashboardRepository:
             "es": "Spanish",
         }
 
-        return [
+        return_data = [
             {
-                "language_code": lang_code_map.get(row["language_code"], row["language_code"]),
+                "language_name": lang_code_map.get(row["language_code"], row["language_code"]),
+                "language_code": row["language_code"],
                 "total_words": row["total_words"] or 0,
                 "learned_words": row["learned_words"] or 0,
                 "starred_words": row["starred_words"] or 0
@@ -78,185 +79,25 @@ class GetStatisticsForDashboardRepository:
             for row in rows
         ]
 
-    # async def get_statistics(self):
-    #     query = (
-    #         select(
-    #             Word.language_code,
-    #             func.count(Word.id).label("total_words"),
-    #             func.count(case((UserWord.is_learned == True, 1))).label("learned_words"),
-    #             func.count(case((UserWord.is_starred == True, 1))).label("starred_words"),
-    #         )
-    #         .select_from(Word)
-    #         .outerjoin(
-    #             UserWord,
-    #             (UserWord.word_id == Word.id) & (UserWord.user_id == self.user_id)
-    #         )
-    #         .group_by(Word.language_code)
-    #         .order_by(Word.language_code)
-    #     )
-    #
-    #     result = await self.db.execute(query)
-    #     rows = result.mappings().all()
-    #
-    #     lang_code_map = {
-    #         "ru":"Russian",
-    #         "en":"English",
-    #         "tr":"Turkish",
-    #         "es":"Spanish",
-    #     }
-    #
-    #     return [
-    #         {
-    #             "language_code": lang_code_map.get(row["language_code"]),
-    #             "total_words": row["total_words"] or 0,
-    #             "learned_words": row["learned_words"] or 0,
-    #             "starred_words": row["starred_words"] or 0
-    #         }
-    #         for row in rows
-    #     ]
+        return return_data
 
-
-
-# Fetch words
-# class FetchWordRepository:
-#     def __init__(self, db: AsyncSession, user_id: int, only_starred: bool = False, only_learned: bool = False):
-#         self.db = db
-#         self.user_id = user_id
-#         self.only_starred = only_starred
-#         self.only_learned = only_learned
-#
-#     async def fetch_words(self, skip: int = 0, limit: int = 50):
-#         # 1. Fetch user
-#         user_result = await self.db.execute(
-#             select(UserModel).where(UserModel.id == self.user_id)
-#         )
-#         user = user_result.scalar_one_or_none()
-#         if not user:
-#             return []
-#
-#         native_language = user.native
-#         lang_code_map = {
-#             "Russian": "ru",
-#             "English": "en",
-#             "Spanish": "es",
-#         }
-#         native_language = lang_code_map.get(native_language)
-#
-#         # 2. Get user's target languages
-#         lang_result = await self.db.execute(
-#             select(UserLanguage.target_language_code).where(UserLanguage.user_id == self.user_id)
-#         )
-#         target_lang_codes = [row[0] for row in lang_result.fetchall()]
-#         if not target_lang_codes:
-#             return []
-#
-#
-#
-#         # 3. Build base query
-#         stmt = (
-#             select(Word, WordMeaning, Translation, UserWord.is_starred, UserWord.is_learned)
-#             .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
-#             .outerjoin(
-#                 Translation,
-#                 and_(
-#                     Translation.source_word_id == Word.id,
-#                     Translation.target_language_code == native_language
-#                 )
-#             )
-#             .outerjoin(
-#                 UserWord,
-#                 and_(
-#                     UserWord.word_id == Word.id,
-#                     UserWord.user_id == self.user_id
-#                 )
-#             )
-#             .where(
-#                 Word.language_code.in_(target_lang_codes),
-#             )
-#         )
-#
-#
-#         # 4. Filter by starred or exclude learned/starred
-#         if self.only_starred:
-#             stmt = stmt.where(UserWord.is_starred == True)
-#         elif self.only_learned:
-#             stmt = stmt.where(UserWord.is_learned == True)
-#         else:
-#             subquery = (
-#                 select(UserWord.word_id)
-#                 .where(
-#                     UserWord.user_id == self.user_id,
-#                     or_(UserWord.is_learned == True, UserWord.is_starred == True)
-#                 )
-#                 .subquery()
-#             )
-#             stmt = stmt.where(Word.id.notin_(select(subquery.c.word_id)))
-#
-#         # 5. Pagination
-#         stmt = stmt.offset(skip).limit(limit)
-#
-#         # 6. Execute query
-#         result = await self.db.execute(stmt)
-#         rows = result.all()
-#
-#
-#
-#         # 7. Group results
-#         grouped_by_lang = defaultdict(lambda: {"words": [], "total_words": 0})
-#
-#         for word, meaning, translation, is_starred, is_learned in rows:
-#             lang_code = word.language_code
-#
-#             # Initialize word data if not exists
-#             word_data = {
-#                 "id": word.id,
-#                 "text": word.text,
-#                 "frequency_rank": word.frequency_rank,
-#                 "level": word.level,
-#                 "pos": set(),  # collect unique parts of speech
-#                 "translation_to_native": translation.translated_text if translation else None,
-#                 "language_code": lang_code,
-#                 "is_starred": is_starred or False,
-#                 "is_learned": is_learned or False,
-#             }
-#
-#             if meaning and meaning.pos:
-#                 word_data["pos"].add(meaning.pos)
-#
-#             # Add word to the appropriate language group
-#             grouped_by_lang[lang_code]["words"].append(word_data)
-#
-#         # 8. Get total word counts for each language
-#         for lang_code in target_lang_codes:
-#             count_stmt = select(func.count(Word.id)).where(Word.language_code == lang_code)
-#             count_result = await self.db.execute(count_stmt)
-#             total_count = count_result.scalar_one()
-#             grouped_by_lang[lang_code]["total_words"] = total_count
-#
-#         # 9. Format final result in the desired structure
-#         final_result = []
-#         for lang_code, data in grouped_by_lang.items():
-#             # Convert sets to lists for JSON serialization
-#             for word in data["words"]:
-#                 word["pos"] = list(word["pos"])
-#
-#             final_result.append({
-#                 "lang": lang_code,
-#                 "words": data["words"],
-#                 "total_words": data["total_words"]
-#             })
-#
-#         return final_result
-
-
-
-# Change User Word Status
+        # return [
+        #     {
+        #         "language_code": lang_code_map.get(row["language_code"], row["language_code"]),
+        #         "total_words": row["total_words"] or 0,
+        #         "learned_words": row["learned_words"] or 0,
+        #         "starred_words": row["starred_words"] or 0
+        #     }
+        #     for row in rows
+        # ]
 
 
 class FetchWordRepository:
+
     def __init__(self, db: AsyncSession, user_id: int):
         self.db = db
         self.user_id = user_id
+
 
     async def get_available_languages(self):
         """Return just the available languages with counts"""
@@ -265,17 +106,14 @@ class FetchWordRepository:
             select(UserLanguage.target_language_code).where(UserLanguage.user_id == self.user_id)
         )
         target_lang_codes = [row[0] for row in lang_result.fetchall()]
-
         if not target_lang_codes:
             return []
-
         # Get word counts for each language
         lang_data = []
         for lang_code in target_lang_codes:
             count_stmt = select(func.count(Word.id)).where(Word.language_code == lang_code)
             count_result = await self.db.execute(count_stmt)
             total_count = count_result.scalar_one()
-
             lang_data.append({
                 "lang": lang_code,
                 "total_words": total_count,
@@ -284,10 +122,12 @@ class FetchWordRepository:
 
         return lang_data
 
+
     async def fetch_words_for_language(self, lang_code: str, only_starred: bool = False,
-                                       only_learned: bool = False, skip: int = 0, limit: int = 50):
-        """Fetch words for a specific language"""
-        # 1. Fetch user for native language
+                                       only_learned: bool = False, skip: int = 0, limit: int = 50) -> List[Dict[Any, Any]]:
+        """Fetch words for a specific language — deduplicated by word, with multiple POS merged"""
+
+        # 1. Get user's native language
         user_result = await self.db.execute(
             select(UserModel).where(UserModel.id == self.user_id)
         )
@@ -296,14 +136,13 @@ class FetchWordRepository:
             return []
 
         native_language = user.native
-        lang_code_map = {
-            "Russian": "ru",
-            "English": "en",
-            "Spanish": "es",
-        }
-        native_language = lang_code_map.get(native_language)
+        lang_code_map = {"Russian": "ru", "English": "en", "Spanish": "es"}
+        native_code = lang_code_map.get(native_language)
 
-        # 2. Build query for the specific language
+        if not native_code:
+            raise ValueError("User's native language not supported")
+
+        # 2. Build query
         stmt = (
             select(Word, WordMeaning, Translation, UserWord.is_starred, UserWord.is_learned)
             .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
@@ -311,17 +150,17 @@ class FetchWordRepository:
                 Translation,
                 and_(
                     Translation.source_word_id == Word.id,
-                    Translation.target_language_code == native_language
-                )
+                    Translation.target_language_code == native_code,
+                ),
             )
             .outerjoin(
                 UserWord,
                 and_(
                     UserWord.word_id == Word.id,
-                    UserWord.user_id == self.user_id
-                )
+                    UserWord.user_id == self.user_id,
+                ),
             )
-            .where(Word.language_code == lang_code)  # ✅ Only this language
+            .where(Word.language_code == lang_code)
         )
 
         # 3. Apply filters
@@ -330,46 +169,79 @@ class FetchWordRepository:
         elif only_learned:
             stmt = stmt.where(UserWord.is_learned == True)
         else:
-            subquery = (
+            learned_or_starred_subq = (
                 select(UserWord.word_id)
                 .where(
                     UserWord.user_id == self.user_id,
-                    or_(UserWord.is_learned == True, UserWord.is_starred == True)
+                    or_(UserWord.is_learned == True, UserWord.is_starred == True),
                 )
                 .subquery()
             )
-            stmt = stmt.where(Word.id.notin_(select(subquery.c.word_id)))
+            stmt = stmt.where(Word.id.notin_(select(learned_or_starred_subq.c.word_id)))
 
         # 4. Pagination
         stmt = stmt.offset(skip).limit(limit)
 
-        # 5. Execute and process
+        # 5. Execute
         result = await self.db.execute(stmt)
         rows = result.all()
 
-        # 6. Process words
-        words_list = []
+        # 6. Group by Word.id
+        word_map = defaultdict(lambda: {
+            "id": None,
+            "text": None,
+            "frequency_rank": None,
+            "level": None,
+            "pos": set(),
+            "translations": set(),  # Use set to avoid dupes
+            "language_code": lang_code,
+            "is_starred": False,
+            "is_learned": False,
+        })
+
         for word, meaning, translation, is_starred, is_learned in rows:
-            word_data = {
-                "id": word.id,
-                "text": word.text,
-                "frequency_rank": word.frequency_rank,
-                "level": word.level,
-                "pos": set(),
-                "translation_to_native": translation.translated_text if translation else None,
-                "language_code": lang_code,
-                "is_starred": is_starred or False,
-                "is_learned": is_learned or False,
-            }
+            word_id = word.id
+            if word_id not in word_map:
+                word_map[word_id].update({
+                    "id": word.id,
+                    "text": word.text,
+                    "frequency_rank": word.frequency_rank,
+                    "level": word.level,
+                })
 
+            # Merge POS
             if meaning and meaning.pos:
-                word_data["pos"].add(meaning.pos)
+                word_map[word_id]["pos"].add(meaning.pos)
 
-            words_list.append(word_data)
+            # Merge translations
+            if translation and translation.translated_text:
+                word_map[word_id]["translations"].add(translation.translated_text)
 
-        # Convert sets to lists
-        for word in words_list:
-            word["pos"] = list(word["pos"])
+            # OR: Keep only one translation (first one)
+            # → if you don't want a list
+
+            # Aggregate user flags (if any row is starred/learned, mark it)
+            if is_starred:
+                word_map[word_id]["is_starred"] = True
+            if is_learned:
+                word_map[word_id]["is_learned"] = True
+
+        # 7. Convert to list and clean up
+        words_list = []
+        for data in word_map.values():
+            words_list.append({
+                "id": data["id"],
+                "text": data["text"],
+                "frequency_rank": data["frequency_rank"],
+                "level": data["level"],
+                "pos": sorted(list(data["pos"])) if data["pos"] else [],  # sorted for consistency
+                "translation_to_native": list(data["translations"])[0] if data["translations"] else None,
+                # Or: "translations": list(data["translations"]) if you want multiple
+                "language_code": lang_code,
+                "is_starred": data["is_starred"],
+                "is_learned": data["is_learned"],
+            })
+
 
         return words_list
 
@@ -381,7 +253,6 @@ class FetchWordRepository:
             "tr": "Turkish"
         }
         return lang_map.get(code, code)
-
 
 
 
@@ -417,6 +288,51 @@ class ChangeWordStatusRepository:
             "is_starred": user_word.is_starred,
             "is_learned": user_word.is_learned,
         }
+
+
+
+class VoiceHandleRepository:
+
+    async def generate_speech(self, text: str, lang: str) -> bytes:
+
+        url = "https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize"
+
+        api_key = os.getenv("YANDEX_SPEECHKIT_API_KEY")
+        folder_id = os.getenv("YANDEX_FOLDER_ID")
+
+        data = {
+            "text": text,
+            "lang": lang,
+            "format": "mp3",  # Or 'oggopus'
+            "folderId": folder_id,
+        }
+
+        headers = {
+            "Authorization": f"Api-Key {api_key}",
+        }
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(url, data=data, headers=headers, timeout=30.0)
+
+                response.raise_for_status()
+
+                return response.content
+
+            except httpx.HTTPStatusError as e:
+                error_detail = e.response.text
+                print(f"Yandex API error: {e.response.status_code} - {error_detail}")
+                raise HTTPException(
+                    status_code=e.response.status_code,
+                    detail=f"Yandex TTS service error: {error_detail}"
+                )
+            except httpx.RequestError as e:
+                print(f"Network error requesting Yandex TTS: {str(e)}")
+                raise HTTPException(
+                    status_code=503,
+                    detail="Service temporarily unavailable. Please try again."
+                )
+
 
 
 

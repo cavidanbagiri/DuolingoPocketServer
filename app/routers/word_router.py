@@ -1,14 +1,17 @@
 import asyncio
 
 from fastapi import APIRouter, HTTPException, status, Query
+from fastapi.responses import Response
 from fastapi.params import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.token_handler import TokenHandler
 from app.database.setup import get_db
 from app.repositories.word_repository import FetchWordRepository, \
-    ChangeWordStatusRepository, DetailWordRepository, GetStatisticsForDashboardRepository, GetPosStatisticsRepository
+    ChangeWordStatusRepository, DetailWordRepository, GetStatisticsForDashboardRepository, GetPosStatisticsRepository, \
+    VoiceHandleRepository
 from app.schemas.user_schema import ChangeWordStatusSchema
+from app.schemas.word_schema import VoiceSchema
 
 from app.repositories.structure_repository import CreateMainStructureRepository
 
@@ -44,22 +47,6 @@ async def get_statistics(db: AsyncSession = Depends(get_db),
     except Exception as ex:
         raise HTTPException(status_code=500, detail=str(ex))
 
-
-
-
-# @router.get('/fetch_words', status_code=200)
-# async def fetch_words(only_starred: bool = False,
-#                       only_learned: bool = False,
-#                       db: AsyncSession = Depends(get_db),
-#                       user_info = Depends(TokenHandler.verify_access_token)):
-#
-#     try:
-#         repo = FetchWordRepository(db, user_id=int(user_info.get('sub')),
-#                                    only_starred=only_starred, only_learned=only_learned)
-#         result = await repo.fetch_words()
-#         return result
-#     except Exception as ex:
-#         raise HTTPException(status_code=500, detail=str(ex))
 
 
 # endpoints.py
@@ -106,6 +93,44 @@ async def set_word_status(data: ChangeWordStatusSchema, db:
     except Exception as ex:
         raise HTTPException(status_code=500, detail=str(ex))
 
+
+@router.post('/voice', response_class=Response, status_code=200)
+async def handle_voice(
+        data: VoiceSchema,
+        voice_repo: VoiceHandleRepository = Depends()
+):
+    """
+    Generate speech for given text and return an MP3 audio file.
+    """
+    try:
+        # Get audio bytes from Yandex SpeechKit
+        audio_bytes = await voice_repo.generate_speech(data.text, data.language)
+
+        # Return the audio file directly in the response
+        return Response(
+            content=audio_bytes,
+            media_type="audio/mpeg"  # Use "audio/ogg" for oggopus format
+        )
+
+    except HTTPException:
+        # Re-raise HTTPExceptions from the repository
+        raise
+    except Exception as e:
+        # Handle any other unexpected errors
+        print(f"Unexpected error in /voice: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# @router.post('/voice', status_code=200)
+# async def handle_voice(data: VoiceSchema):
+#
+#     repo = VoiceHandleRepository()
+#
+#     data = await repo.generate_speech(text=data.text, lang=data.language)
+#
+#     print(data)
+#
+#     return data
 
 
 

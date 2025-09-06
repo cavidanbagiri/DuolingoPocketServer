@@ -64,3 +64,4 @@ class ChooseLangSchema(BaseModel):
 class ChangeWordStatusSchema(BaseModel):
     word_id: int
     action: str
+
