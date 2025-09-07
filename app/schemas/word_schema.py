@@ -29,7 +29,6 @@ class AIWordResponse(BaseModel):
     usage_contexts: List[str]
     common_phrases: List[str]
     grammar_tips: List[str]
-    cultural_notes: List[str]
     additional_insights: Optional[Dict[str, Any]] = None
 
     class Config:
@@ -65,11 +64,7 @@ class AIWordResponse(BaseModel):
                     "Usa preposiciones específicas: gehen zu, gehen in, gehen nach",
                     "Se usa con verbos modales: können gehen, müssen gehen"
                 ],
-                "cultural_notes": [
-                    "Es uno de los verbos más comunes en alemán",
-                    "La pregunta 'Wie geht es dir?' es un saludo común, no siempre requiere una respuesta detallada",
-                    "Alemán distingue entre 'gehen' (caminar) y 'fahren' (ir en transporte)"
-                ],
+
                 "additional_insights": {
                     "verb_conjugations": {
                         "presente": "ich gehe, du gehst, er/sie/es geht, wir gehen, ihr geht, sie/Sie gehen",

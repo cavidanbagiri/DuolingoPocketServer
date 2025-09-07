@@ -1,6 +1,7 @@
 
 import os
 from collections import defaultdict
+import re
 from typing import List, Dict, Any, Optional, Dict
 import json
 import httpx
@@ -391,131 +392,232 @@ class GenerateAIWordRepository:
     @lru_cache(maxsize=100)
     def _create_prompt(self, word: str, target_lang: str, native_lang: str) -> str:
         """
-        Create a detailed, structured prompt for comprehensive language learning content
-        with native language translations
+        Create a highly structured prompt for Yandex GPT to get perfect JSON responses
+        for language learning content with native language translations
         """
-        return f"""
-        You are an expert language teacher. Create comprehensive learning material for the word "{word}" in {target_lang} for a {native_lang} speaker.
+        return f"""**ROLE**: You are an expert {target_lang} language teacher creating learning materials for {native_lang} speakers.
 
-        Provide a JSON response with EXACTLY this structure:
-        {{
-            "word": "{word}",
-            "target_language": "{target_lang}",
-            "native_language": "{native_lang}",
-            "definition": "clear definition in {native_lang}",
-            "pronunciation": "phonetic pronunciation guide if helpful",
-            "part_of_speech": "main part of speech in {native_lang}",
-            "examples": [
-                "example 1 in {target_lang} with {native_lang} translation",
-                "example 2 in {target_lang} with {native_lang} translation",
-                "example 3 in {target_lang} with {native_lang} translation",
-                "example 4 in {target_lang} with {native_lang} translation",
-                "example 5 in {target_lang} with {native_lang} translation"
-            ],
-            "usage_contexts": [
-                "context 1 where this word is used (in {native_lang})",
-                "context 2 where this word is used (in {native_lang})",
-                "context 3 where this word is used (in {native_lang})"
-            ],
-            "common_phrases": [
-                "common phrase 1 using this word with translation",
-                "common phrase 2 using this word with translation",
-                "common phrase 3 using this word with translation"
-            ],
-            "grammar_tips": [
-                "grammar tip 1 (in {native_lang})",
-                "grammar tip 2 (in {native_lang})",
-                "grammar tip 3 (in {native_lang})"
-            ],
-            "cultural_notes": [
-                "cultural insight 1 (in {native_lang})",
-                "cultural insight 2 (in {native_lang})",
-                "cultural insight 3 (in {native_lang})"
-            ],
-            "additional_insights": {{
-                "optional_extra_category": "optional extra information"
-            }}
+    **TASK**: Create comprehensive educational content for the word "{word}" in {target_lang}.
+
+    **RESPONSE FORMAT**: You MUST return ONLY valid JSON with EXACTLY this structure:
+    {{
+        "word": "{word}",
+        "target_language": "{target_lang}",         
+        "native_language": "{native_lang}",         
+        "definition": "clear definition in {native_lang}",
+        "pronunciation": "phonetic pronunciation guide",
+        "part_of_speech": "main part of speech in {native_lang}",
+        "examples": [
+            "example 1 in {target_lang} - {native_lang} translation",
+            "example 2 in {target_lang} - {native_lang} translation",
+            "example 3 in {target_lang} - {native_lang} translation",
+            "example 4 in {target_lang} - {native_lang} translation",
+            "example 5 in {target_lang} - {native_lang} translation"
+        ],
+        "usage_contexts": [
+            "context 1 in {native_lang}",
+            "context 2 in {native_lang}",
+            "context 3 in {native_lang}"
+        ],
+        "common_phrases": [
+            "phrase 1 in {target_lang} - {native_lang} translation",
+            "phrase 2 in {target_lang} - {native_lang} translation",
+            "phrase 3 in {target_lang} - {native_lang} translation"
+        ],
+        "grammar_tips": [
+            "tip 1 in {native_lang}",
+            "tip 2 in {native_lang}",
+            "tip 3 in {native_lang}"
+        ],
+        "additional_insights": {{
+            "key": "value"
         }}
+    }}
 
-        CRITICAL REQUIREMENTS:
-        1. Provide EXACTLY 5 diverse examples with translations (format: "Target Language Sentence - Native Language Translation")
-        2. ALL text (definition, tips, contexts, notes) must be in the user's native language ({native_lang})
-        3. Only the example sentences and common phrases should be in the target language ({target_lang})
-        4. Include practical usage contexts and common phrases with translations
-        5. Add helpful grammar tips specific to this word
-        6. Share cultural insights about how natives use this word
-        7. Ensure all content is educational, accurate, and engaging
-        8. Make definitions clear and beginner-friendly
-        9. If the word is a verb, include conjugation details in additional_insights
-        10. For nouns, include gender and plural forms if relevant
+    **CRITICAL INSTRUCTIONS**:
+    1. **NATIVE LANGUAGE FIRST**: All explanations, definitions, tips, and notes MUST be in {native_lang}
+    2. **TRANSLATION FORMAT**: Examples and phrases must use "Target Text - Native Translation" format
+    3. **DIVERSE EXAMPLES**: Provide 5 varied examples showing different:
+       - Tenses (if verb)
+       - Cases (if noun/adjective)  
+       - Sentence structures
+       - Formality levels
+    4. **ACCURATE CONTENT**: Ensure all translations and explanations are 100% accurate
+    5. **CULTURAL CONTEXT**: Include relevant cultural usage notes
+    6. **GRAMMAR FOCUS**: Provide specific grammar tips for this word
+    7. **NO MARKDOWN**: Return ONLY raw JSON, no code blocks or explanations
+    8. **WORD SPECIFIC**: Tailor all content specifically to the word "{word}"
 
-        Remember: You're helping a {native_lang} speaker learn {target_lang}! Provide all explanations in {native_lang}.
+    **WORD-SPECIFIC GUIDANCE**:
+    - If "{word}" is a verb: include conjugation patterns, aspect pairs, government patterns
+    - If "{word}" is a noun: include gender, declension patterns, plural forms
+    - If "{word}" is short/functional: explain nuanced usage and common collocations
+    - If "{word}" is ambiguous: clarify different meanings with examples
+
+    **EXAMPLE FORMATTING**:
+    - "Я читаю книгу. - I am reading a book."
+    - "Он прочитал книгу вчера. - He read the book yesterday."
+    - "Эта книга интересная. - This book is interesting."
+
+    **REMEMBER**: You are helping a {native_lang} speaker master {target_lang}. Quality and accuracy are paramount.
+    """
+
+    def _get_native_language_name(self, language_code: str) -> str:
         """
+        Map language codes to their native names for better fallback responses
+        """
+        language_map = {
+            'en': 'English',
+            'es': 'Spanish',
+            'tr': 'Turkish',
+            'zh': 'Chinese',
+            'ru': 'Russian',
+            'de': 'German',
+            'fr': 'French',
+            'it': 'Italian',
+            'ja': 'Japanese',
+            'ko': 'Korean',
+            'ar': 'Arabic',
+            'pt': 'Portuguese'
+        }
+        return language_map.get(language_code, language_code)
+
+    def _get_fallback_text(self, field_type: str, native_lang: str, target_lang: str, word: str) -> str:
+        """
+        Generate fallback text in the user's native language
+        """
+        target_lang_name = self._get_native_language_name(target_lang)
+        native_lang_name = self._get_native_language_name(native_lang)
+
+        fallback_templates = {
+            'en': {
+                'definition': f"A word in {target_lang_name} that you're learning",
+                'example': f"Example with {word} in {target_lang_name} - Translation in {native_lang_name}",
+                'usage': f"In daily conversations in {target_lang_name}",
+                'phrase': f"Common expression with {word} - Translation",
+                'grammar': "Check a dictionary for complete conjugations",
+                'cultural': f"Important word in {target_lang_name} culture",
+                'part_of_speech': 'word'
+            },
+            'es': {
+                'definition': f"Palabra en {target_lang_name} que estás aprendiendo",
+                'example': f"Ejemplo con {word} en {target_lang_name} - Traducción en {native_lang_name}",
+                'usage': f"En conversaciones diarias en {target_lang_name}",
+                'phrase': f"Expresión común con {word} - Traducción",
+                'grammar': "Consulta un diccionario para conjugaciones completas",
+                'cultural': f"Palabra importante en la cultura {target_lang_name}",
+                'part_of_speech': 'palabra'
+            },
+            'tr': {
+                'definition': f"Öğrendiğiniz {target_lang_name} dilinde bir kelime",
+                'example': f"{target_lang_name} dilinde {word} ile örnek - {native_lang_name} çevirisi",
+                'usage': f"{target_lang_name} dilinde günlük konuşmalarda",
+                'phrase': f"{word} ile ortak ifade - Çeviri",
+                'grammar': "Tam çekimler için bir sözlüğe bakın",
+                'cultural': f"{target_lang_name} kültüründe önemli bir kelime",
+                'part_of_speech': 'kelime'
+            },
+            'zh': {
+                'definition': f"您正在学习的{target_lang_name}单词",
+                'example': f"{target_lang_name}中的{word}示例 - {native_lang_name}翻译",
+                'usage': f"在{target_lang_name}的日常对话中",
+                'phrase': f"常用表达与{word} - 翻译",
+                'grammar': "查看字典以获取完整变位",
+                'cultural': f"{target_lang_name}文化中的重要词汇",
+                'part_of_speech': '单词'
+            }
+        }
+
+        # Default to English if the native language isn't in our map
+        template = fallback_templates.get(native_lang, fallback_templates['en'])
+        return template[field_type]
 
 
     async def generate_ai_for_word(self, data):
-        """
-        Main method to generate AI content for a word
-        """
         print(f'Received request for word: {data.text}, target: {data.language}, native: {data.native}')
 
         # Create the prompt
         prompt = self._create_prompt(data.text, data.language, data.native)
+        print(f"Prompt generated, length: {len(prompt)} chars")
 
         # Call Yandex GPT
         ai_response = await self._call_yandex_gpt(prompt)
+        print(f"Raw AI response type: {type(ai_response)}")
+        print(f"Raw AI response: {ai_response}")  # This should show the JSON you shared
 
         if not ai_response:
-            raise HTTPException(
-                status_code=503,
-                detail="AI service is temporarily unavailable. Please try again later."
-            )
+            print("AI returned empty response")
+            raise HTTPException(status_code=503, detail="AI service unavailable")
 
         try:
-            # Parse the JSON response from GPT
-            parsed_response = json.loads(ai_response)
 
-            # Validate and return structured response
-            return AIWordResponse(**parsed_response)
+            cleaned_response = ai_response.strip()
 
-        except json.JSONDecodeError:
-            # Fallback: GPT didn't return JSON, return the raw text
-            return AIWordResponse(
-                word=data.text,
-                target_language=data.language,
-                native_language=data.native,
-                definition=f"Palabra en {data.language} que estás aprendiendo",
-                pronunciation=None,
-                part_of_speech="palabra",  # FIXED: Simple default value
-                examples=[
-                    f"Ejemplo básico con {data.text} en {data.language} - Ejemplo básico en {data.native}",
-                    f"Otra oración usando {data.text} - Otra oración en {data.native}",
-                    f"Uso común de {data.text} - Uso común en {data.native}",
-                    f"Frase práctica con {data.text} - Frase práctica en {data.native}",
-                    f"Ejemplo contextual con {data.text} - Ejemplo contextual en {data.native}"
-                ],
-                usage_contexts=[
-                    f"En conversaciones diarias en {data.language}",
-                    f"Al escribir en {data.language}",
-                    f"En situaciones formales e informales"
-                ],
-                common_phrases=[
-                    f"Expresión común con {data.text} - Traducción",
-                    f"Frase idiomática con {data.text} - Traducción"
-                ],
-                grammar_tips=[
-                    f"Consulta un diccionario para más información",  # FIXED: Removed is_verb condition
-                    f"Presta atención a la estructura de la oración",
-                    f"Practica con diferentes contextos"
-                ],
-                cultural_notes=[
-                    f"Palabra importante en la cultura {data.language}",
-                    f"Uso frecuente en la literatura {data.language}",
-                    f"Común en conversaciones cotidianas"
-                ],
-                additional_insights=None
-            )
+            cleaned_response = re.sub(r'^```(?:json)?\s*', '', cleaned_response)
+            cleaned_response = re.sub(r'\s*```$', '', cleaned_response)
+            cleaned_response = cleaned_response.strip()
 
+            print(f"Cleaned response: {cleaned_response}")
+
+            # Parse the JSON
+            parsed_response = json.loads(cleaned_response)
+            print("✅ Successfully parsed JSON!")
+            print(f"✅ Successfully parsed JSON: {parsed_response}")  # Add this
+            print(f"Parsed keys: {list(parsed_response.keys())}")
+
+            # Validate and return
+            # return AIWordResponse(**parsed_response)
+
+            try:
+                return AIWordResponse(**parsed_response)
+            except ValidationError as e:
+                print(f"❌ Pydantic validation failed: {e}")
+                print(f"Parsed data: {parsed_response}")
+                return self._create_fallback_response(data)
+
+        except json.JSONDecodeError as e:
+            print(f"❌ JSON decode failed! Error: {str(e)}")
+            print(f"Failed content: {ai_response}")
+            print(f"Cleaned content: {cleaned_response}")  # Add this
+            return self._create_fallback_response(data)
+        except Exception as e:
+            print(f"❌ Other error: {str(e)}")
+            return self._create_fallback_response(data)
+
+    def _create_fallback_response(self, data) -> AIWordResponse:
+        """Create a fallback response in the user's native language"""
+        return AIWordResponse(
+            word=data.text,
+            target_language=data.language,
+            native_language=data.native,
+            definition=self._get_fallback_text('definition', data.native, data.language, data.text),
+            pronunciation=None,
+            part_of_speech=self._get_fallback_text('part_of_speech', data.native, data.language, data.text),
+            examples=[
+                self._get_fallback_text('example', data.native, data.language, data.text),
+                self._get_fallback_text('example', data.native, data.language, data.text),
+                self._get_fallback_text('example', data.native, data.language, data.text),
+                self._get_fallback_text('example', data.native, data.language, data.text),
+                self._get_fallback_text('example', data.native, data.language, data.text)
+            ],
+            usage_contexts=[
+                self._get_fallback_text('usage', data.native, data.language, data.text),
+                self._get_fallback_text('usage', data.native, data.language, data.text),
+                self._get_fallback_text('usage', data.native, data.language, data.text)
+            ],
+            common_phrases=[
+                self._get_fallback_text('phrase', data.native, data.language, data.text),
+                self._get_fallback_text('phrase', data.native, data.language, data.text),
+                self._get_fallback_text('phrase', data.native, data.language, data.text)
+            ],
+            grammar_tips=[
+                self._get_fallback_text('grammar', data.native, data.language, data.text),
+                "Pay attention to sentence structure",
+                "Practice with different contexts"
+            ],
+
+            additional_insights=None
+        )
 
     async def generate_ai_for_word_with_fallback(self, data) -> AIWordResponse:
         """
@@ -528,43 +630,8 @@ class GenerateAIWordRepository:
             except Exception as e:
                 if attempt == max_retries - 1:
                     print(f"All attempts failed for word '{data.text}': {str(e)}")
-                    return AIWordResponse(
-                        word=data.text,
-                        target_language=data.language,
-                        native_language=data.native,
-                        definition=f"Palabra en {data.language} que estás aprendiendo",
-                        pronunciation=None,
-                        part_of_speech="palabra",  # FIXED: Simple default value
-                        examples=[
-                            f"Ejemplo básico con {data.text} en {data.language} - Ejemplo básico en {data.native}",
-                            f"Otra oración usando {data.text} - Otra oración en {data.native}",
-                            f"Uso común de {data.text} - Uso común en {data.native}",
-                            f"Frase práctica con {data.text} - Frase práctica en {data.native}",
-                            f"Ejemplo contextual con {data.text} - Ejemplo contextual en {data.native}"
-                        ],
-                        usage_contexts=[
-                            f"En conversaciones diarias en {data.language}",
-                            f"Al escribir en {data.language}",
-                            f"En situaciones formales e informales"
-                        ],
-                        common_phrases=[
-                            f"Expresión común con {data.text} - Traducción",
-                            f"Frase idiomática con {data.text} - Traducción"
-                        ],
-                        grammar_tips=[
-                            f"Consulta un diccionario para más información",  # FIXED: Removed is_verb condition
-                            f"Presta atención a la estructura de la oración",
-                            f"Practica con diferentes contextos"
-                        ],
-                        cultural_notes=[
-                            f"Palabra importante en la cultura {data.language}",
-                            f"Uso frecuente en la literatura {data.language}",
-                            f"Común en conversaciones cotidianas"
-                        ],
-                        additional_insights=None
-                    )
+                    return self._create_fallback_response(data)
 
-        # This line should never be reached due to the loop logic, but included for safety
         raise Exception("Unexpected error in retry logic")
 
 
