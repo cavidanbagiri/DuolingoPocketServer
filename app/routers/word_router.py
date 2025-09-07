@@ -9,9 +9,9 @@ from app.auth.token_handler import TokenHandler
 from app.database.setup import get_db
 from app.repositories.word_repository import FetchWordRepository, \
     ChangeWordStatusRepository, DetailWordRepository, GetStatisticsForDashboardRepository, GetPosStatisticsRepository, \
-    VoiceHandleRepository
+    VoiceHandleRepository, GenerateAIWordRepository
 from app.schemas.user_schema import ChangeWordStatusSchema
-from app.schemas.word_schema import VoiceSchema
+from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema
 
 from app.repositories.structure_repository import CreateMainStructureRepository
 
@@ -121,16 +121,84 @@ async def handle_voice(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-# @router.post('/voice', status_code=200)
-# async def handle_voice(data: VoiceSchema):
+
+# @router.post('/generateaiword', status_code=200)
+# async def generate_ai_for_word(data: GenerateAIWordSchema):
 #
-#     repo = VoiceHandleRepository()
+#     repo = GenerateAIWordRepository()
+#     return_data = await repo.generate_ai_for_word(data)
 #
-#     data = await repo.generate_speech(text=data.text, lang=data.language)
+#     return {'msg':return_data}
+
+
+# @router.post('/generateaiword',  status_code=200)
+# async def generate_ai_for_word(
+#         data: GenerateAIWordSchema,
+#         repo: GenerateAIWordRepository = Depends()
+# ):
+#     """
+#     Generate AI-powered language learning content for a specific word.
 #
-#     print(data)
+#     - **text**: The word or phrase to analyze
+#     - **language**: Target language code (e.g., 'en', 'tr', 'ru')
+#     - **native**: User's native language code
 #
-#     return data
+#     Returns structured educational content including examples, explanations, and usage tips.
+#     """
+#     try:
+#         # Use the robust version with fallback
+#         result = await repo.generate_ai_for_word_with_fallback(data)
+#         print('the result is', result)
+#         return result
+#
+#     except HTTPException:
+#         # Re-raise HTTP exceptions
+#         raise
+#     except Exception as e:
+#         logger.error(f"Unexpected error in generate_ai_for_word: {str(e)}")
+#         raise HTTPException(
+#             status_code=500,
+#             detail="An unexpected error occurred while processing your request."
+#         )
+
+
+@router.post('/generateaiword',  status_code=200)
+async def generate_ai_for_word(
+        data: GenerateAIWordSchema,
+        repo: GenerateAIWordRepository = Depends()
+):
+    """
+    Generate comprehensive AI-powered language learning content.
+
+    Returns detailed information including:
+    - Definition and pronunciation
+    - 5+ example sentences with translations
+    - Usage contexts and common phrases
+    - Grammar tips and cultural notes
+    - Motivational message
+    - Difficulty level assessment
+    """
+    try:
+        result = await repo.generate_ai_for_word_with_fallback(data)
+
+        # Log successful generation
+        logger.info(f"Successfully generated AI content for word: {data.text}")
+
+        print(f'the coming result is {result}')
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error processing word '{data.text}': {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="We're having trouble generating content right now. Please try again in a moment."
+        )
+
+
+
 
 
 

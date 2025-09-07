@@ -1,11 +1,12 @@
 
 import os
 from collections import defaultdict
-from typing import List, Dict, Any
-
+from typing import List, Dict, Any, Optional, Dict
+import json
 import httpx
 import aiohttp
 import asyncio
+from functools import lru_cache
 
 from fastapi import HTTPException
 from sqlalchemy import select, func, and_, update, or_, case
@@ -22,6 +23,7 @@ from app.schemas.translate_schema import TranslateSchema
 
 logger = setup_logger(__name__, "word.log")
 
+from app.schemas.word_schema import AIWordResponse
 
 # Get Statistics For Dashabord
 class GetStatisticsForDashboardRepository:
@@ -332,6 +334,468 @@ class VoiceHandleRepository:
                     status_code=503,
                     detail="Service temporarily unavailable. Please try again."
                 )
+
+
+class GenerateAIWordRepository:
+
+    def __init__(self):
+        self.headers = {
+            "Authorization": f"Api-Key {os.getenv('YANDEX_LANGMODEL_API_SECRET_KEY')}",
+            "Content-Type": "application/json"
+        }
+        self.model = 'yandexgpt'
+        self.folder_id = os.getenv('YANDEX_FOLDER_ID')
+
+    async def _call_yandex_gpt(self, prompt: str) -> Optional[str]:
+        """
+        Make authenticated request to Yandex GPT API
+        """
+        payload = {
+            "modelUri": f"gpt://{self.folder_id}/{self.model}",
+            "completionOptions": {
+                "stream": False,
+                "temperature": 0.3,  # Lower temperature for more factual responses
+                "maxTokens": 2000
+            },
+            "messages": [
+                {
+                    "role": "system",
+                    "text": "You are a helpful language learning assistant. Provide accurate, educational responses about words and phrases."
+                },
+                {
+                    "role": "user",
+                    "text": prompt
+                }
+            ]
+        }
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                response = await client.post(
+                    "https://llm.api.cloud.yandex.net/foundationModels/v1/completion",
+                    headers=self.headers,
+                    json=payload
+                )
+                response.raise_for_status()
+
+                result = response.json()
+                return result['result']['alternatives'][0]['message']['text']
+
+            except httpx.HTTPStatusError as e:
+                print(f"Yandex API HTTP error: {e.response.status_code} - {e.response.text}")
+                return None
+            except (httpx.RequestError, KeyError, json.JSONDecodeError) as e:
+                print(f"Yandex API request error: {str(e)}")
+                return None
+
+    @lru_cache(maxsize=100)
+    def _create_prompt(self, word: str, target_lang: str, native_lang: str) -> str:
+        """
+        Create a detailed, structured prompt for comprehensive language learning content
+        with native language translations
+        """
+        return f"""
+        You are an expert language teacher. Create comprehensive learning material for the word "{word}" in {target_lang} for a {native_lang} speaker.
+
+        Provide a JSON response with EXACTLY this structure:
+        {{
+            "word": "{word}",
+            "target_language": "{target_lang}",
+            "native_language": "{native_lang}",
+            "definition": "clear definition in {native_lang}",
+            "pronunciation": "phonetic pronunciation guide if helpful",
+            "part_of_speech": "main part of speech in {native_lang}",
+            "examples": [
+                "example 1 in {target_lang} with {native_lang} translation",
+                "example 2 in {target_lang} with {native_lang} translation",
+                "example 3 in {target_lang} with {native_lang} translation",
+                "example 4 in {target_lang} with {native_lang} translation",
+                "example 5 in {target_lang} with {native_lang} translation"
+            ],
+            "usage_contexts": [
+                "context 1 where this word is used (in {native_lang})",
+                "context 2 where this word is used (in {native_lang})",
+                "context 3 where this word is used (in {native_lang})"
+            ],
+            "common_phrases": [
+                "common phrase 1 using this word with translation",
+                "common phrase 2 using this word with translation",
+                "common phrase 3 using this word with translation"
+            ],
+            "grammar_tips": [
+                "grammar tip 1 (in {native_lang})",
+                "grammar tip 2 (in {native_lang})",
+                "grammar tip 3 (in {native_lang})"
+            ],
+            "cultural_notes": [
+                "cultural insight 1 (in {native_lang})",
+                "cultural insight 2 (in {native_lang})",
+                "cultural insight 3 (in {native_lang})"
+            ],
+            "additional_insights": {{
+                "optional_extra_category": "optional extra information"
+            }}
+        }}
+
+        CRITICAL REQUIREMENTS:
+        1. Provide EXACTLY 5 diverse examples with translations (format: "Target Language Sentence - Native Language Translation")
+        2. ALL text (definition, tips, contexts, notes) must be in the user's native language ({native_lang})
+        3. Only the example sentences and common phrases should be in the target language ({target_lang})
+        4. Include practical usage contexts and common phrases with translations
+        5. Add helpful grammar tips specific to this word
+        6. Share cultural insights about how natives use this word
+        7. Ensure all content is educational, accurate, and engaging
+        8. Make definitions clear and beginner-friendly
+        9. If the word is a verb, include conjugation details in additional_insights
+        10. For nouns, include gender and plural forms if relevant
+
+        Remember: You're helping a {native_lang} speaker learn {target_lang}! Provide all explanations in {native_lang}.
+        """
+
+
+    # async def generate_ai_for_word(self, data) :
+    #     """
+    #     Main method to generate AI content for a word
+    #     """
+    #     print(f'Received request for word: {data.text}, target: {data.language}, native: {data.native}')
+    #
+    #     # Create the prompt
+    #     prompt = self._create_prompt(data.text, data.language, data.native)
+    #
+    #     # Call Yandex GPT
+    #     ai_response = await self._call_yandex_gpt(prompt)
+    #
+    #     if not ai_response:
+    #         raise HTTPException(
+    #             status_code=503,
+    #             detail="AI service is temporarily unavailable. Please try again later."
+    #         )
+    #
+    #     try:
+    #         # Parse the JSON response from GPT
+    #         parsed_response = json.loads(ai_response)
+    #
+    #         # Validate and return structured response
+    #         return AIWordResponse(**parsed_response)
+    #
+    #     except json.JSONDecodeError:
+    #         # Fallback: GPT didn't return JSON, return the raw text
+    #         return AIWordResponse(
+    #             word=data.text,
+    #             target_language=data.language,
+    #             native_language=data.native,
+    #             definition=f"Palabra en {data.language} que estás aprendiendo",
+    #             pronunciation=None,
+    #             part_of_speech="verbo" ,
+    #             examples=[
+    #                 f"Ejemplo básico con {data.text} en {data.language} - Ejemplo básico en {data.native}",
+    #                 f"Otra oración usando {data.text} - Otra oración en {data.native}",
+    #                 f"Uso común de {data.text} - Uso común en {data.native}",
+    #                 f"Frase práctica con {data.text} - Frase práctica en {data.native}",
+    #                 f"Ejemplo contextual con {data.text} - Ejemplo contextual en {data.native}"
+    #             ],
+    #             usage_contexts=[
+    #                 f"En conversaciones diarias en {data.language}",
+    #                 f"Al escribir en {data.language}",
+    #                 f"En situaciones formales e informales"
+    #             ],
+    #             common_phrases=[
+    #                 f"Expresión común con {data.text} - Traducción",
+    #                 f"Frase idiomática con {data.text} - Traducción"
+    #             ],
+    #             grammar_tips=[
+    #                 f"Consulta un diccionario para conjugaciones completas" if is_verb else f"Verifica el género y plural",
+    #                 f"Presta atención a la estructura de la oración",
+    #                 f"Practica con diferentes contextos"
+    #             ],
+    #             cultural_notes=[
+    #                 f"Palabra importante en la cultura {data.language}",
+    #                 f"Uso frecuente en la literatura {data.language}",
+    #                 f"Común en conversaciones cotidianas"
+    #             ],
+    #             additional_insights=None
+    #         )
+
+    async def generate_ai_for_word(self, data):
+        """
+        Main method to generate AI content for a word
+        """
+        print(f'Received request for word: {data.text}, target: {data.language}, native: {data.native}')
+
+        # Create the prompt
+        prompt = self._create_prompt(data.text, data.language, data.native)
+
+        # Call Yandex GPT
+        ai_response = await self._call_yandex_gpt(prompt)
+
+        if not ai_response:
+            raise HTTPException(
+                status_code=503,
+                detail="AI service is temporarily unavailable. Please try again later."
+            )
+
+        try:
+            # Parse the JSON response from GPT
+            parsed_response = json.loads(ai_response)
+
+            # Validate and return structured response
+            return AIWordResponse(**parsed_response)
+
+        except json.JSONDecodeError:
+            # Fallback: GPT didn't return JSON, return the raw text
+            return AIWordResponse(
+                word=data.text,
+                target_language=data.language,
+                native_language=data.native,
+                definition=f"Palabra en {data.language} que estás aprendiendo",
+                pronunciation=None,
+                part_of_speech="palabra",  # FIXED: Simple default value
+                examples=[
+                    f"Ejemplo básico con {data.text} en {data.language} - Ejemplo básico en {data.native}",
+                    f"Otra oración usando {data.text} - Otra oración en {data.native}",
+                    f"Uso común de {data.text} - Uso común en {data.native}",
+                    f"Frase práctica con {data.text} - Frase práctica en {data.native}",
+                    f"Ejemplo contextual con {data.text} - Ejemplo contextual en {data.native}"
+                ],
+                usage_contexts=[
+                    f"En conversaciones diarias en {data.language}",
+                    f"Al escribir en {data.language}",
+                    f"En situaciones formales e informales"
+                ],
+                common_phrases=[
+                    f"Expresión común con {data.text} - Traducción",
+                    f"Frase idiomática con {data.text} - Traducción"
+                ],
+                grammar_tips=[
+                    f"Consulta un diccionario para más información",  # FIXED: Removed is_verb condition
+                    f"Presta atención a la estructura de la oración",
+                    f"Practica con diferentes contextos"
+                ],
+                cultural_notes=[
+                    f"Palabra importante en la cultura {data.language}",
+                    f"Uso frecuente en la literatura {data.language}",
+                    f"Común en conversaciones cotidianas"
+                ],
+                additional_insights=None
+            )
+
+    async def generate_ai_for_word(self, data):
+        """
+        Main method to generate AI content for a word
+        """
+        print(f'Received request for word: {data.text}, target: {data.language}, native: {data.native}')
+
+        # Create the prompt
+        prompt = self._create_prompt(data.text, data.language, data.native)
+
+        # Call Yandex GPT
+        ai_response = await self._call_yandex_gpt(prompt)
+
+        if not ai_response:
+            raise HTTPException(
+                status_code=503,
+                detail="AI service is temporarily unavailable. Please try again later."
+            )
+
+        try:
+            # Parse the JSON response from GPT
+            parsed_response = json.loads(ai_response)
+
+            # Validate and return structured response
+            return AIWordResponse(**parsed_response)
+
+        except json.JSONDecodeError:
+            # Fallback: GPT didn't return JSON, return the raw text
+            return AIWordResponse(
+                word=data.text,
+                target_language=data.language,
+                native_language=data.native,
+                definition=f"Palabra en {data.language} que estás aprendiendo",
+                pronunciation=None,
+                part_of_speech="palabra",  # FIXED: Simple default value
+                examples=[
+                    f"Ejemplo básico con {data.text} en {data.language} - Ejemplo básico en {data.native}",
+                    f"Otra oración usando {data.text} - Otra oración en {data.native}",
+                    f"Uso común de {data.text} - Uso común en {data.native}",
+                    f"Frase práctica con {data.text} - Frase práctica en {data.native}",
+                    f"Ejemplo contextual con {data.text} - Ejemplo contextual en {data.native}"
+                ],
+                usage_contexts=[
+                    f"En conversaciones diarias en {data.language}",
+                    f"Al escribir en {data.language}",
+                    f"En situaciones formales e informales"
+                ],
+                common_phrases=[
+                    f"Expresión común con {data.text} - Traducción",
+                    f"Frase idiomática con {data.text} - Traducción"
+                ],
+                grammar_tips=[
+                    f"Consulta un diccionario para más información",  # FIXED: Removed is_verb condition
+                    f"Presta atención a la estructura de la oración",
+                    f"Practica con diferentes contextos"
+                ],
+                cultural_notes=[
+                    f"Palabra importante en la cultura {data.language}",
+                    f"Uso frecuente en la literatura {data.language}",
+                    f"Común en conversaciones cotidianas"
+                ],
+                additional_insights=None
+            )
+
+    async def generate_ai_for_word_with_fallback(self, data) -> AIWordResponse:
+        """
+        Enhanced version with retry logic and comprehensive fallback
+        """
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                return await self.generate_ai_for_word(data)
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    print(f"All attempts failed for word '{data.text}': {str(e)}")
+                    return AIWordResponse(
+                        word=data.text,
+                        target_language=data.language,
+                        native_language=data.native,
+                        definition=f"Palabra en {data.language} que estás aprendiendo",
+                        pronunciation=None,
+                        part_of_speech="palabra",  # FIXED: Simple default value
+                        examples=[
+                            f"Ejemplo básico con {data.text} en {data.language} - Ejemplo básico en {data.native}",
+                            f"Otra oración usando {data.text} - Otra oración en {data.native}",
+                            f"Uso común de {data.text} - Uso común en {data.native}",
+                            f"Frase práctica con {data.text} - Frase práctica en {data.native}",
+                            f"Ejemplo contextual con {data.text} - Ejemplo contextual en {data.native}"
+                        ],
+                        usage_contexts=[
+                            f"En conversaciones diarias en {data.language}",
+                            f"Al escribir en {data.language}",
+                            f"En situaciones formales e informales"
+                        ],
+                        common_phrases=[
+                            f"Expresión común con {data.text} - Traducción",
+                            f"Frase idiomática con {data.text} - Traducción"
+                        ],
+                        grammar_tips=[
+                            f"Consulta un diccionario para más información",  # FIXED: Removed is_verb condition
+                            f"Presta atención a la estructura de la oración",
+                            f"Practica con diferentes contextos"
+                        ],
+                        cultural_notes=[
+                            f"Palabra importante en la cultura {data.language}",
+                            f"Uso frecuente en la literatura {data.language}",
+                            f"Común en conversaciones cotidianas"
+                        ],
+                        additional_insights=None
+                    )
+
+        # This line should never be reached due to the loop logic, but included for safety
+        raise Exception("Unexpected error in retry logic")
+
+    # async def generate_ai_for_word_with_fallback(self, data) -> AIWordResponse:
+    #     """
+    #     Enhanced version with retry logic and comprehensive fallback
+    #     """
+    #     max_retries = 2
+    #     for attempt in range(max_retries):
+    #         try:
+    #             return await self.generate_ai_for_word(data)
+    #         except Exception as e:
+    #             if attempt == max_retries - 1:
+    #                 print(f"All attempts failed for word '{data.text}': {str(e)}")
+    #                 return AIWordResponse(
+    #                     word=data.text,
+    #                     target_language=data.language,
+    #                     native_language=data.native,
+    #                     definition=f"Palabra en {data.language} que estás aprendiendo",
+    #                     pronunciation=None,
+    #                     part_of_speech="palabra",  # FIXED: Simple default value
+    #                     examples=[
+    #                         f"Ejemplo básico con {data.text} en {data.language} - Ejemplo básico en {data.native}",
+    #                         f"Otra oración usando {data.text} - Otra oración en {data.native}",
+    #                         f"Uso común de {data.text} - Uso común en {data.native}",
+    #                         f"Frase práctica con {data.text} - Frase práctica en {data.native}",
+    #                         f"Ejemplo contextual con {data.text} - Ejemplo contextual en {data.native}"
+    #                     ],
+    #                     usage_contexts=[
+    #                         f"En conversaciones diarias en {data.language}",
+    #                         f"Al escribir en {data.language}",
+    #                         f"En situaciones formales e informales"
+    #                     ],
+    #                     common_phrases=[
+    #                         f"Expresión común con {data.text} - Traducción",
+    #                         f"Frase idiomática con {data.text} - Traducción"
+    #                     ],
+    #                     grammar_tips=[
+    #                         f"Consulta un diccionario para más información",  # FIXED: Removed is_verb condition
+    #                         f"Presta atención a la estructura de la oración",
+    #                         f"Practica con diferentes contextos"
+    #                     ],
+    #                     cultural_notes=[
+    #                         f"Palabra importante en la cultura {data.language}",
+    #                         f"Uso frecuente en la literatura {data.language}",
+    #                         f"Común en conversaciones cotidianas"
+    #                     ],
+    #                     additional_insights=None
+    #                 )
+    #
+    #     # This line should never be reached due to the loop logic, but included for safety
+    #     raise Exception("Unexpected error in retry logic")
+    #
+    #
+    # async def generate_ai_for_word_with_fallback(self, data) -> AIWordResponse:
+    #     """
+    #     Enhanced version with retry logic and comprehensive fallback
+    #     """
+    #     max_retries = 2
+    #     for attempt in range(max_retries):
+    #         try:
+    #             return await self.generate_ai_for_word(data)
+    #         except Exception as e:
+    #             if attempt == max_retries - 1:
+    #                 print(f"All attempts failed for word '{data.text}': {str(e)}")
+    #                 return AIWordResponse(
+    #                     word=data.text,
+    #                     target_language=data.language,
+    #                     native_language=data.native,
+    #                     definition=f"Palabra en {data.language} que estás aprendiendo",
+    #                     pronunciation=None,
+    #                     part_of_speech="verbo" ,
+    #                     examples=[
+    #                         f"Ejemplo básico con {data.text} en {data.language} - Ejemplo básico en {data.native}",
+    #                         f"Otra oración usando {data.text} - Otra oración en {data.native}",
+    #                         f"Uso común de {data.text} - Uso común en {data.native}",
+    #                         f"Frase práctica con {data.text} - Frase práctica en {data.native}",
+    #                         f"Ejemplo contextual con {data.text} - Ejemplo contextual en {data.native}"
+    #                     ],
+    #                     usage_contexts=[
+    #                         f"En conversaciones diarias en {data.language}",
+    #                         f"Al escribir en {data.language}",
+    #                         f"En situaciones formales e informales"
+    #                     ],
+    #                     common_phrases=[
+    #                         f"Expresión común con {data.text} - Traducción",
+    #                         f"Frase idiomática con {data.text} - Traducción"
+    #                     ],
+    #                     grammar_tips=[
+    #                         f"Consulta un diccionario para conjugaciones completas" if is_verb else f"Verifica el género y plural",
+    #                         f"Presta atención a la estructura de la oración",
+    #                         f"Practica con diferentes contextos"
+    #                     ],
+    #                     cultural_notes=[
+    #                         f"Palabra importante en la cultura {data.language}",
+    #                         f"Uso frecuente en la literatura {data.language}",
+    #                         f"Común en conversaciones cotidianas"
+    #                     ],
+    #                     additional_insights=None
+    #                 )
+    #
+    #
+    #
+    #     # This line should never be reached due to the loop logic, but included for safety
+    #     raise Exception("Unexpected error in retry logic")
+    #
+    #
 
 
 
