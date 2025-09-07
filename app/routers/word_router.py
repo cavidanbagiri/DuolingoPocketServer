@@ -122,46 +122,6 @@ async def handle_voice(
 
 
 
-# @router.post('/generateaiword', status_code=200)
-# async def generate_ai_for_word(data: GenerateAIWordSchema):
-#
-#     repo = GenerateAIWordRepository()
-#     return_data = await repo.generate_ai_for_word(data)
-#
-#     return {'msg':return_data}
-
-
-# @router.post('/generateaiword',  status_code=200)
-# async def generate_ai_for_word(
-#         data: GenerateAIWordSchema,
-#         repo: GenerateAIWordRepository = Depends()
-# ):
-#     """
-#     Generate AI-powered language learning content for a specific word.
-#
-#     - **text**: The word or phrase to analyze
-#     - **language**: Target language code (e.g., 'en', 'tr', 'ru')
-#     - **native**: User's native language code
-#
-#     Returns structured educational content including examples, explanations, and usage tips.
-#     """
-#     try:
-#         # Use the robust version with fallback
-#         result = await repo.generate_ai_for_word_with_fallback(data)
-#         print('the result is', result)
-#         return result
-#
-#     except HTTPException:
-#         # Re-raise HTTP exceptions
-#         raise
-#     except Exception as e:
-#         logger.error(f"Unexpected error in generate_ai_for_word: {str(e)}")
-#         raise HTTPException(
-#             status_code=500,
-#             detail="An unexpected error occurred while processing your request."
-#         )
-
-
 @router.post('/generateaiword',  status_code=200)
 async def generate_ai_for_word(
         data: GenerateAIWordSchema,
