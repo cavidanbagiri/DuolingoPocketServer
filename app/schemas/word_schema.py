@@ -17,6 +17,13 @@ class GenerateAIWordSchema(BaseModel):
     native: str
 
 
+class GenerateAIChatSchema(BaseModel):
+    word: str  # The word being discussed
+    message: str  # The user's question/message
+    language: str  # Target language (e.g., 'en')
+    native: str    # User's native language (e.g., 'tr')
+
+
 
 class AIWordResponse(BaseModel):
     word: str
@@ -76,3 +83,5 @@ class AIWordResponse(BaseModel):
                 }
             }
         }
+
+

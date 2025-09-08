@@ -9,9 +9,9 @@ from app.auth.token_handler import TokenHandler
 from app.database.setup import get_db
 from app.repositories.word_repository import FetchWordRepository, \
     ChangeWordStatusRepository, DetailWordRepository, GetStatisticsForDashboardRepository, GetPosStatisticsRepository, \
-    VoiceHandleRepository, GenerateAIWordRepository
+    VoiceHandleRepository, GenerateAIWordRepository, GenerateAIQuestionRepository
 from app.schemas.user_schema import ChangeWordStatusSchema
-from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema
+from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, GenerateAIChatSchema
 
 from app.repositories.structure_repository import CreateMainStructureRepository
 
@@ -159,6 +159,24 @@ async def generate_ai_for_word(
 
 
 
+@router.post('/aichat', status_code=200)
+async def generate_ai_chat(data: GenerateAIChatSchema, repo: GenerateAIQuestionRepository = Depends()):
+    try:
+        # The repo method now needs to handle a conversational prompt
+        result = await repo.generate_ai_chat(data)
+
+        print('coming result is {}........................'.format(result))
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in AI chat for word '{data.word}': {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="We're having trouble processing your question. Please try again in a moment."
+        )
 
 
 
