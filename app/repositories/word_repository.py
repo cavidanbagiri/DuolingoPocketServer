@@ -740,21 +740,89 @@ class GenerateAIQuestionRepository:
 
 
 
-# class GenerateAIQuestionRepository:
-#
-#     def __init__(self):
-#         self.headers = {
-#             "Authorization": f"Api-Key {os.getenv('YANDEX_LANGMODEL_API_SECRET_KEY')}",
-#             "Content-Type": "application/json"
-#         }
-#         self.model = 'yandexgpt'
-#         self.folder_id = os.getenv('YANDEX_FOLDER_ID')
-#
-#     async def generate_ai_chat(self, data):
-#
-#         print(f'Coming question is {data}')
-#
-#         return data
+class SearchRepository:
+
+    def __init__(self, db: AsyncSession, user_id: int):
+        self.db = db
+        self.user_id = user_id
+
+    async def search(self, native_language: str, target_language: str, query: str):
+        print(f'Searching for: "{query}" in target_lang: {target_language}, native_lang: {native_language}')
+
+        if not query or len(query.strip()) < 1:
+            return {"results": []}
+
+        search_query = f"%{query.strip().lower()}%"
+
+        # Base query - search in words and their translations
+        stmt = (
+            select(Word)
+            .join(Translation, Translation.source_word_id == Word.id)
+            .where(
+                # Filter by target language if not 'all'
+                (Translation.target_language_code == native_language) if target_language != 'all' else True,
+                # Filter by source language if target is specific language
+                (Word.language_code == target_language) if target_language != 'all' else True,
+                # Search in both source word and translated text
+                or_(
+                    func.lower(Word.text).ilike(search_query),
+                    func.lower(Translation.translated_text).ilike(search_query)
+                )
+            )
+            .options(
+                selectinload(Word.user_words),  # Load user progress
+                selectinload(Word.translations)  # Load all translations
+            )
+            .distinct()  # Avoid duplicates
+            .limit(50)  # Limit results for performance
+        )
+
+        print(f'/////////////{stmt}////////////////////')
+
+        try:
+            result = await self.db.execute(stmt)
+            words = result.scalars().all()
+
+            formatted_results = []
+            for word in words:
+                # Check user's learning status
+                is_learned = False
+                is_starred = False
+
+                # Find user-specific data if it exists
+                for user_word in word.user_words:
+                    if user_word.user_id == self.user_id:
+                        is_learned = user_word.is_learned
+                        is_starred = user_word.is_starred
+                        break
+
+                # Find the translation for the user's native language
+                native_translation = None
+                for translation in word.translations:
+                    if translation.target_language_code == native_language:
+                        native_translation = translation.translated_text
+                        break
+
+                # If no specific translation found, use any available translation
+                if not native_translation and word.translations:
+                    native_translation = word.translations[0].translated_text
+
+                formatted_results.append({
+                    "id": word.id,
+                    "text": word.text,
+                    "language_code": word.language_code,
+                    "translation_to_native": native_translation,
+                    "is_learned": is_learned,
+                    "is_starred": is_starred
+                })
+
+            return {"results": formatted_results}
+
+        except Exception as e:
+            print(f"Database error during search: {str(e)}")
+            # Return empty results instead of crashing
+            return {"results": []}
+
 
 
 # Get Detail Word with sentences

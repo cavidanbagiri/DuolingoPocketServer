@@ -71,4 +71,4 @@ class UserWord(Base):
 
     # Relationships
     # user = relationship("UserModel", back_populates="user_words")
-    # word = relationship("Word", back_populates="user_words")
+    word = relationship("Word", back_populates="user_words")

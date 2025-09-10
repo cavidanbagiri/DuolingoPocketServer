@@ -9,7 +9,7 @@ from app.auth.token_handler import TokenHandler
 from app.database.setup import get_db
 from app.repositories.word_repository import FetchWordRepository, \
     ChangeWordStatusRepository, DetailWordRepository, GetStatisticsForDashboardRepository, GetPosStatisticsRepository, \
-    VoiceHandleRepository, GenerateAIWordRepository, GenerateAIQuestionRepository
+    VoiceHandleRepository, GenerateAIWordRepository, GenerateAIQuestionRepository, SearchRepository
 from app.schemas.user_schema import ChangeWordStatusSchema
 from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, GenerateAIChatSchema
 
@@ -19,6 +19,8 @@ router = APIRouter()
 
 from app.logging_config import setup_logger
 logger = setup_logger(__name__, "word.log")
+
+
 
 
 
@@ -59,6 +61,33 @@ async def get_user_languages(
     languages = await repo.get_available_languages()
     return languages
 
+
+
+@router.get('/search-test', status_code=201)
+async def search_word(
+    native_language: str,
+    target_language: str,
+    query: str,
+    db: AsyncSession = Depends(get_db),
+    user_info = Depends(TokenHandler.verify_access_token)
+):
+    try:
+        repo = SearchRepository(db=db, user_id=int(user_info.get('sub')))
+        result = await repo.search(native_language=native_language, target_language=target_language, query=query,)  # Fixed: pass actual query and language
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Unexpected error in search for query '{query}': {str(e)}")  # Fixed error message
+        logger.error(f"Unexpected error in search for query '{query}': {str(e)}")  # Fixed error message
+        raise HTTPException(
+            status_code=500,
+            detail="We're having trouble processing your search. Please try again in a moment."
+        )
+
+
+
+
 @router.get("/{language_code}")
 async def get_words_for_language(
     language_code: str,
@@ -74,8 +103,6 @@ async def get_words_for_language(
         language_code, only_starred, only_learned, skip, limit
     )
     return words
-
-
 
 
 
@@ -159,13 +186,13 @@ async def generate_ai_for_word(
 
 
 
+
+
 @router.post('/aichat', status_code=200)
 async def generate_ai_chat(data: GenerateAIChatSchema, repo: GenerateAIQuestionRepository = Depends()):
     try:
         # The repo method now needs to handle a conversational prompt
         result = await repo.generate_ai_chat(data)
-
-        print('coming result is {}........................'.format(result))
 
         return result
 
@@ -206,9 +233,6 @@ async def get_pos_statistics(db: AsyncSession = Depends(get_db),
 
     except Exception as ex:
         raise HTTPException(status_code=500, detail=str(ex))
-
-
-
 
 
 

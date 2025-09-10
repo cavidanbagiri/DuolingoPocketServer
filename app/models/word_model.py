@@ -34,6 +34,9 @@ class Word(Base):
     translations = relationship("Translation", back_populates="source_word")  # This was missing
     in_sentences = relationship("SentenceWord", back_populates="word")  # Also add this for comp
 
+    #New added
+    user_words = relationship("UserWord", back_populates="word")
+
     def __repr__(self):
         return f'Word(id:({self.id}), text({self.text}, language_code({self.language_code}, frequency_rank:({self.frequency_rank}, level({self.level})))))'
 
