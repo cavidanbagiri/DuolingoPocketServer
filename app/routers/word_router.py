@@ -9,9 +9,10 @@ from app.auth.token_handler import TokenHandler
 from app.database.setup import get_db
 from app.repositories.word_repository import FetchWordRepository, \
     ChangeWordStatusRepository, DetailWordRepository, GetStatisticsForDashboardRepository, GetPosStatisticsRepository, \
-    VoiceHandleRepository, GenerateAIWordRepository, GenerateAIQuestionRepository, SearchRepository
+    VoiceHandleRepository, GenerateAIWordRepository, GenerateAIQuestionRepository, SearchRepository, \
+    TranslateRepository
 from app.schemas.user_schema import ChangeWordStatusSchema
-from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, GenerateAIChatSchema
+from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, GenerateAIChatSchema, TranslateSchema
 
 from app.repositories.structure_repository import CreateMainStructureRepository
 
@@ -84,6 +85,26 @@ async def search_word(
             status_code=500,
             detail="We're having trouble processing your search. Please try again in a moment."
         )
+
+
+@router.post('/translate', status_code=201)
+async def translate(data: TranslateSchema,
+                    repo: TranslateRepository = Depends(TranslateRepository),):
+
+    try:
+        # repo = TranslateRepository()
+        result = await repo.translate(data = data)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Unexpected error in translate : {str(e)}")  # Fixed error message
+        logger.error(f"Unexpected error in translate for query : {str(e)}")  # Fixed error message
+        raise HTTPException(
+            status_code=500,
+            detail="We're having trouble processing your translate. Please try again in a moment."
+        )
+
 
 
 

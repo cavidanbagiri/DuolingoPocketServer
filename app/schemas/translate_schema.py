@@ -5,9 +5,9 @@ from pydantic import BaseModel, field_validator
 
 
 class TranslateSchema(BaseModel):
-    q: str
-    source: str = "auto"
-    target: str
+    text: str
+    from_lang: str = "auto"
+    to_lang: str
     alternatives: int = 3
 
 

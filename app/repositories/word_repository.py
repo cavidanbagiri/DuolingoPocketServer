@@ -20,8 +20,7 @@ from app.logging_config import setup_logger
 from app.models.word_model import Word, Sentence, SentenceWord, WordMeaning, Translation, SentenceTranslation, \
     LearnedWord
 from app.models.user_model import Language, UserModel, UserLanguage, UserWord
-from app.schemas.translate_schema import TranslateSchema
-from app.schemas.word_schema import GenerateAIChatSchema, GenerateAIWordSchema
+from app.schemas.word_schema import GenerateAIChatSchema, GenerateAIWordSchema, TranslateSchema
 
 logger = setup_logger(__name__, "word.log")
 
@@ -638,7 +637,7 @@ class GenerateAIWordRepository:
 
 
 
-
+# Generate AI Answer
 class GenerateAIQuestionRepository:
 
     def __init__(self):
@@ -739,7 +738,7 @@ class GenerateAIQuestionRepository:
         return {"reply": ai_response_text.strip()}
 
 
-
+# Search Words
 class SearchRepository:
 
     def __init__(self, db: AsyncSession, user_id: int):
@@ -776,8 +775,6 @@ class SearchRepository:
             .distinct()  # Avoid duplicates
             .limit(50)  # Limit results for performance
         )
-
-        print(f'/////////////{stmt}////////////////////')
 
         try:
             result = await self.db.execute(stmt)
@@ -986,8 +983,91 @@ class GetPosStatisticsRepository:
 
 
 
+class TranslateRepository:
+    def __init__(self):
+        self.api_key = os.getenv("YANDEX_TRANSLATE_API_SECRET_KEY")
+        self.folder_id = os.getenv("YANDEX_FOLDER_ID")
+        self.translate_url = "https://translate.api.cloud.yandex.net/translate/v2/translate"
+        self.detect_url = "https://translate.api.cloud.yandex.net/translate/v2/detect"
+
+    def _preprocess_text(self, text: str) -> str:
+        """Clean and validate input text before sending to API"""
+        if not text or not text.strip():
+            raise ValueError("Empty text provided for translation")
+
+        # Remove excessive whitespace but ensure at least one space if empty after trim
+        text = ' '.join(text.strip().split())
+        return text or " "  # Return single space if empty after processing
+
+    async def translate(self, data: TranslateSchema):
+        processed_text = data.text
+        # Early return for empty text after preprocessing
+        if not processed_text or len(processed_text) < 1:
+            return {
+                "translation": processed_text,
+                "detected_lang": data.from_lang if data.from_lang != "auto" else None
+            }
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Api-Key {self.api_key}"
+        }
+
+        payload = {
+            "targetLanguageCode": data.to_lang,
+            "texts": [processed_text],
+            "folderId": self.folder_id,
+        }
+
+        if data.from_lang and data.from_lang.strip().lower() != "auto":
+            payload["sourceLanguageCode"] = data.from_lang
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    self.translate_url,
+                    json=payload,
+                    headers=headers
+                )
+
+                # Add detailed error logging
+                if response.status_code != 200:
+                    error_detail = response.json().get('message', 'Unknown API error')
+                    logger.error(f"Yandex API Error: {error_detail}")
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=f"Translation API error: {error_detail}"
+                    )
+
+                print(f'1 after translation coming resuilt is {response.json()}')
+                result = response.json()["translations"][0]
+                print(f'after translation coming resuilt is {result}')
+                return {
+                    "translation": result["text"],
+                    "detected_lang": result.get("detectedLanguageCode")
+                }
+
+        except httpx.RequestError as e:
+            # This covers network errors, timeouts, etc.
+            logger.error(f"Network error contacting Yandex API: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail="Translation service temporarily unavailable"
+            )
+
+        except httpx.HTTPStatusError as e:
+            # Already handled well, but be more specific
+            if e.response.status_code == 401:
+                logger.error("Yandex API authentication failed")
+                raise HTTPException(status_code=500, detail="Service configuration error")
 
 
+        except Exception as ex:
+            logger.exception(f"Unexpected error during translation: {ex}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal Server Error"
+            )
 
 
 

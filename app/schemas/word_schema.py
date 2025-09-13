@@ -24,6 +24,13 @@ class GenerateAIChatSchema(BaseModel):
     native: str    # User's native language (e.g., 'tr')
 
 
+class TranslateSchema(BaseModel):
+    text: str
+    from_lang: str = "auto"
+    to_lang: str
+    alternatives: int = 3
+
+
 
 class AIWordResponse(BaseModel):
     word: str
