@@ -10,11 +10,13 @@ from app.database.setup import get_db
 from app.repositories.word_repository import FetchWordRepository, \
     ChangeWordStatusRepository, DetailWordRepository, GetStatisticsForDashboardRepository, GetPosStatisticsRepository, \
     VoiceHandleRepository, GenerateAIWordRepository, GenerateAIQuestionRepository, SearchRepository, \
-    TranslateRepository
+    TranslateRepository, AddFavoritesRepository
 from app.schemas.user_schema import ChangeWordStatusSchema
 from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, GenerateAIChatSchema, TranslateSchema
+from app.schemas.favorite_schemas import FavoriteWordBase, FavoriteWordResponse
 
 from app.repositories.structure_repository import CreateMainStructureRepository
+
 
 router = APIRouter()
 
@@ -259,9 +261,26 @@ async def get_pos_statistics(db: AsyncSession = Depends(get_db),
 
 
 
+@router.post('/add_favorites', status_code=200, response_model=FavoriteWordResponse)
+async def add_favorites(
+    data: FavoriteWordBase,
+    db: AsyncSession = Depends(get_db),
+    user_info = Depends(TokenHandler.verify_access_token)
+):
+    try:
+        print(f'/////////////////////////////////////////////// coming data is {data}')
+        repo = AddFavoritesRepository(data=data, db=db, user_id=int(user_info.get('sub')))
+        result = await repo.add_favorites()
+        return result
 
-
-
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error adding word to favorites: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="We're having trouble adding words right now"
+        )
 
 
 

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import String, Boolean, DateTime, ForeignKey, func, Integer
+from sqlalchemy import String, Boolean, DateTime, ForeignKey, func, Integer, Column
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 
 
@@ -24,6 +24,9 @@ class UserModel(Base):
     native: Mapped[str] = mapped_column(String, nullable=True)
 
     language_preferences = relationship("UserLanguage", back_populates="user", cascade="all, delete-orphan")
+
+    favorite_categories = relationship("FavoriteCategory", back_populates="user")
+    favorite_words = relationship("FavoriteWord", back_populates="user")
 
     def __repr__(self):
         return f'UserModel(id:{self.id}, username:{self.username}, email: {self.email}, native: {self.native})'
@@ -72,3 +75,46 @@ class UserWord(Base):
     # Relationships
     # user = relationship("UserModel", back_populates="user_words")
     word = relationship("Word", back_populates="user_words")
+
+
+# Stores user-created categories
+class FavoriteCategory(Base):
+    __tablename__ = "favorite_categories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # Assuming you have users table
+    name = Column(String, nullable=False)  # e.g., "Russian Nouns", "Russian Verbs"
+
+    # Relationships
+    user = relationship("UserModel", back_populates="favorite_categories")
+    favorite_words = relationship("FavoriteWord", back_populates="category")
+
+
+# Stores the actual favorite translations
+class FavoriteWord(Base):
+    __tablename__ = "favorite_words"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    category_id = Column(Integer, ForeignKey("favorite_categories.id"), nullable=True)  # Optional category
+
+    # Translation data
+    from_lang = Column(String(10), nullable=False)  # e.g., 'en'
+    to_lang = Column(String(10), nullable=False)  # e.g., 'ru'
+    original_text = Column(String, nullable=False)  # e.g., 'hello'
+    translated_text = Column(String, nullable=False)  # e.g., 'привет'
+
+    # Relationships
+    user = relationship("UserModel", back_populates="favorite_words")
+    category = relationship("FavoriteCategory", back_populates="favorite_words")
+
+
+class DefaultCategory(Base):
+    __tablename__ = "default_categories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)  # name will be -> Default
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    description = Column(String, nullable=True)
+
+    # Users can copy these to their personal categories

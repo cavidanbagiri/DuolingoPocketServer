@@ -11,6 +11,7 @@ from functools import lru_cache
 
 from fastapi import HTTPException
 from sqlalchemy import select, func, and_, update, or_, case
+from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +22,9 @@ from app.models.word_model import Word, Sentence, SentenceWord, WordMeaning, Tra
     LearnedWord
 from app.models.user_model import Language, UserModel, UserLanguage, UserWord
 from app.schemas.word_schema import GenerateAIChatSchema, GenerateAIWordSchema, TranslateSchema
+from app.schemas.favorite_schemas import FavoriteWordBase
+
+from app.models.user_model import FavoriteCategory, FavoriteWord, DefaultCategory
 
 logger = setup_logger(__name__, "word.log")
 
@@ -979,10 +983,6 @@ class GetPosStatisticsRepository:
 
 
 
-
-
-
-
 class TranslateRepository:
     def __init__(self):
         self.api_key = os.getenv("YANDEX_TRANSLATE_API_SECRET_KEY")
@@ -1070,8 +1070,185 @@ class TranslateRepository:
             )
 
 
+# class AddFavoritesRepository:
+#
+#     def __init__(self, data: FavoriteWordBase, db: AsyncSession, user_id: int):
+#         self.data = data
+#         self.db = db
+#         self.user_id = user_id
+#
+#     async def add_favorites(self):
+#         # 1. Check if word already exists for this user
+#         print('...........................................1')
+#         existing_word = await self.db.execute(
+#             select(FavoriteWord).where(
+#                 FavoriteWord.user_id == self.user_id,
+#                 FavoriteWord.original_text == self.data.original_text,
+#                 FavoriteWord.from_lang == self.data.from_lang,
+#                 FavoriteWord.to_lang == self.data.to_lang
+#             )
+#         )
+#         existing_word = existing_word.scalar_one_or_none()
+#
+#         if existing_word:
+#             return {"status": "exists", "message": "Word already in favorites"}
+#
+#         print('...........................................2')
+#         # 2. Get or create default category
+#         default_category = await self.db.execute(
+#             select(FavoriteCategory).where(
+#                 FavoriteCategory.user_id == self.user_id,
+#                 FavoriteCategory.name == "Default Category"
+#             )
+#         )
+#         default_category = default_category.scalar_one_or_none()
+#
+#         print('...........................................3')
+#         if not default_category:
+#             # Create default category
+#             default_category = FavoriteCategory(
+#                 user_id=self.user_id,
+#                 name="Default Category",
+#                 description="Default Category Description"
+#             )
+#             self.db.add(default_category)
+#             await self.db.commit()
+#             await self.db.refresh(default_category)
+#
+#         print('...........................................4')
+#         # 3. Add word to default category
+#         new_favorite = FavoriteWord(
+#             user_id=self.user_id,
+#             category_id=default_category.id,
+#             from_lang=self.data.from_lang,
+#             to_lang=self.data.to_lang,
+#             original_text=self.data.original_text,
+#             translated_text=self.data.translated_text
+#         )
+#
+#         print('...........................................5z')
+#         self.db.add(new_favorite)
+#         await self.db.commit()
+#
+#         return {"status": "success", "message": "Word added to favorites"}
 
 
+class AddFavoritesRepository:
+    def __init__(self, data: FavoriteWordBase, db: AsyncSession, user_id: int):
+        self.data = data
+        self.db = db
+        self.user_id = user_id
+
+    async def _get_or_create_default_category(self) -> int:
+        """Get or create a default 'Uncategorized' category for the user"""
+        try:
+            # Check if default category already exists
+            stmt = select(FavoriteCategory).where(
+                FavoriteCategory.user_id == self.user_id,
+                FavoriteCategory.name == "Default"
+            )
+            result = await self.db.execute(stmt)
+            category = result.scalar_one_or_none()
+
+            if category:
+                return category.id
+
+            # Create new default category
+            new_category = FavoriteCategory(
+                user_id=self.user_id,
+                name="Default"
+            )
+            self.db.add(new_category)
+            await self.db.commit()
+            await self.db.refresh(new_category)
+
+            return new_category.id
+
+        except SQLAlchemyError as e:
+            await self.db.rollback()
+            logger.error(f"Error creating default category: {str(e)}")
+            print(f"2Error creating default category: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Could not create default category"
+            )
+
+    async def _check_existing_favorite(self) -> bool:
+        """Check if this word already exists in user's favorites"""
+        try:
+            stmt = select(FavoriteWord).where(
+                FavoriteWord.user_id == self.user_id,
+                FavoriteWord.from_lang == self.data.from_lang,
+                FavoriteWord.to_lang == self.data.to_lang,
+                FavoriteWord.original_text == self.data.original_text
+            )
+            result = await self.db.execute(stmt)
+            existing_word = result.scalar_one_or_none()
+
+            return existing_word is not None
+
+        except SQLAlchemyError as e:
+            logger.error(f"Error checking existing favorite: {str(e)}")
+            print(f'error happen 1 - {e}')
+            return False
+
+    async def add_favorites(self) -> dict:
+        try:
+            # 1. Check if word already exists
+            exists = await self._check_existing_favorite()
+            if exists:
+                return {
+                    "status": "success",
+                    "message": "Word already in favorites",
+                    "action": "existing"
+                }
+
+            # 2. Handle category
+            category_id = self.data.category_id
+
+            # If no category provided, use default "Uncategorized"
+            if not category_id:
+                category_id = await self._get_or_create_default_category()
+
+            # 3. Add new favorite word
+            new_favorite = FavoriteWord(
+                user_id=self.user_id,
+                category_id=category_id,
+                from_lang=self.data.from_lang,
+                to_lang=self.data.to_lang,
+                original_text=self.data.original_text,
+                translated_text=self.data.translated_text
+            )
+
+            self.db.add(new_favorite)
+            await self.db.commit()
+            await self.db.refresh(new_favorite)
+
+            return {
+                "status": "success",
+                "message": "Word added to favorites",
+                "action": "created",
+                "favorite_id": new_favorite.id
+            }
+
+        except SQLAlchemyError as e:
+            await self.db.rollback()
+            logger.error(f"Database error adding favorite: {str(e)}")
+            print(f"Database error adding favorite: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database error while adding favorite"
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Unexpected error adding favorite: {str(e)}")
+            print(f"Unexpected error adding favorite: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Unexpected error occurred"
+            )
 
 
 
