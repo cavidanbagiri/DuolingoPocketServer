@@ -9,9 +9,9 @@ import aiohttp
 import asyncio
 from functools import lru_cache
 
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 from sqlalchemy import select, func, and_, update, or_, case
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +22,7 @@ from app.models.word_model import Word, Sentence, SentenceWord, WordMeaning, Tra
     LearnedWord
 from app.models.user_model import Language, UserModel, UserLanguage, UserWord
 from app.schemas.word_schema import GenerateAIChatSchema, GenerateAIWordSchema, TranslateSchema
-from app.schemas.favorite_schemas import FavoriteWordBase
+from app.schemas.favorite_schemas import FavoriteWordBase, FavoriteCategoryBase, FavoriteCategoryResponse
 
 from app.models.user_model import FavoriteCategory, FavoriteWord, DefaultCategory
 
@@ -1040,6 +1040,7 @@ class TranslateRepository:
                     )
 
                 print(f'1 after translation coming resuilt is {response.json()}')
+
                 result = response.json()["translations"][0]
                 print(f'after translation coming resuilt is {result}')
                 return {
@@ -1069,68 +1070,6 @@ class TranslateRepository:
                 detail="Internal Server Error"
             )
 
-
-# class AddFavoritesRepository:
-#
-#     def __init__(self, data: FavoriteWordBase, db: AsyncSession, user_id: int):
-#         self.data = data
-#         self.db = db
-#         self.user_id = user_id
-#
-#     async def add_favorites(self):
-#         # 1. Check if word already exists for this user
-#         print('...........................................1')
-#         existing_word = await self.db.execute(
-#             select(FavoriteWord).where(
-#                 FavoriteWord.user_id == self.user_id,
-#                 FavoriteWord.original_text == self.data.original_text,
-#                 FavoriteWord.from_lang == self.data.from_lang,
-#                 FavoriteWord.to_lang == self.data.to_lang
-#             )
-#         )
-#         existing_word = existing_word.scalar_one_or_none()
-#
-#         if existing_word:
-#             return {"status": "exists", "message": "Word already in favorites"}
-#
-#         print('...........................................2')
-#         # 2. Get or create default category
-#         default_category = await self.db.execute(
-#             select(FavoriteCategory).where(
-#                 FavoriteCategory.user_id == self.user_id,
-#                 FavoriteCategory.name == "Default Category"
-#             )
-#         )
-#         default_category = default_category.scalar_one_or_none()
-#
-#         print('...........................................3')
-#         if not default_category:
-#             # Create default category
-#             default_category = FavoriteCategory(
-#                 user_id=self.user_id,
-#                 name="Default Category",
-#                 description="Default Category Description"
-#             )
-#             self.db.add(default_category)
-#             await self.db.commit()
-#             await self.db.refresh(default_category)
-#
-#         print('...........................................4')
-#         # 3. Add word to default category
-#         new_favorite = FavoriteWord(
-#             user_id=self.user_id,
-#             category_id=default_category.id,
-#             from_lang=self.data.from_lang,
-#             to_lang=self.data.to_lang,
-#             original_text=self.data.original_text,
-#             translated_text=self.data.translated_text
-#         )
-#
-#         print('...........................................5z')
-#         self.db.add(new_favorite)
-#         await self.db.commit()
-#
-#         return {"status": "success", "message": "Word added to favorites"}
 
 
 class AddFavoritesRepository:
@@ -1249,6 +1188,132 @@ class AddFavoritesRepository:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Unexpected error occurred"
             )
+
+
+
+
+class CreateNewFavoriteCategoryRepository:
+    def __init__(self, db: AsyncSession, data: FavoriteCategoryBase, user_id: int):
+        self.db = db
+        self.data = data
+        self.user_id = user_id
+
+    async def _check_duplicate_category(self) -> bool:
+        """Check if category with same name already exists for this user"""
+        try:
+            stmt = select(FavoriteCategory).where(
+                FavoriteCategory.user_id == self.user_id,
+                FavoriteCategory.name.ilike(self.data.name.strip())
+            )
+            result = await self.db.execute(stmt)
+            existing_category = result.scalar_one_or_none()
+            return existing_category is not None
+        except SQLAlchemyError as e:
+            logger.error(f"Error checking duplicate category: {str(e)}")
+            return False
+
+    async def create_new_category(self) -> dict:
+        try:
+            # Check for duplicate category name
+            if await self._check_duplicate_category():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Category '{self.data.name}' already exists"
+                )
+
+            # Create new category
+            new_category = FavoriteCategory(
+                user_id=self.user_id,
+                name=self.data.name.strip(),
+            )
+
+            self.db.add(new_category)
+            await self.db.commit()
+            await self.db.refresh(new_category)
+
+            return {
+                "status": "success",
+                "message": "Category created successfully",
+                "category": {
+                    "id": new_category.id,
+                    "name": new_category.name,
+                }
+            }
+
+        except IntegrityError as e:
+            await self.db.rollback()
+            logger.error(f"Integrity error creating category: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid category data"
+            )
+        except SQLAlchemyError as e:
+            await self.db.rollback()
+            logger.error(f"Database error creating category: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database error while creating category"
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Unexpected error creating category: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Unexpected error occurred"
+            )
+
+
+class FavoriteCategoryRepository:
+    def __init__(self, db: AsyncSession, user_id: int):
+        self.db = db
+        self.user_id = user_id
+
+    async def get_user_categories(self) -> List[FavoriteCategoryResponse]:
+        try:
+            # Get categories with word counts using a join
+            stmt = select(
+                FavoriteCategory,
+                func.count(FavoriteWord.id).label('word_count')
+            ).outerjoin(
+                FavoriteWord, FavoriteWord.category_id == FavoriteCategory.id
+            ).where(
+                FavoriteCategory.user_id == self.user_id
+            ).group_by(FavoriteCategory.id)
+
+            result = await self.db.execute(stmt)
+            categories_with_counts = result.all()
+
+            # Convert to response format
+            categories_response = []
+            for category, word_count in categories_with_counts:
+                categories_response.append({
+                    "id": category.id,
+                    "name": category.name,
+                    "user_id": category.user_id,
+                    "word_count": word_count,
+                })
+
+            return categories_response
+
+        except SQLAlchemyError as e:
+            logger.error(f"Database error fetching categories: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail="Database error while fetching categories"
+            )
+
+
+
+
+
+
+
+
+
+
+
 
 
 

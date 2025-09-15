@@ -1,4 +1,5 @@
 import asyncio
+from typing import List
 
 from fastapi import APIRouter, HTTPException, status, Query
 from fastapi.responses import Response
@@ -10,10 +11,10 @@ from app.database.setup import get_db
 from app.repositories.word_repository import FetchWordRepository, \
     ChangeWordStatusRepository, DetailWordRepository, GetStatisticsForDashboardRepository, GetPosStatisticsRepository, \
     VoiceHandleRepository, GenerateAIWordRepository, GenerateAIQuestionRepository, SearchRepository, \
-    TranslateRepository, AddFavoritesRepository
+    TranslateRepository, AddFavoritesRepository, CreateNewFavoriteCategoryRepository, FavoriteCategoryRepository
 from app.schemas.user_schema import ChangeWordStatusSchema
 from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, GenerateAIChatSchema, TranslateSchema
-from app.schemas.favorite_schemas import FavoriteWordBase, FavoriteWordResponse
+from app.schemas.favorite_schemas import FavoriteWordBase, FavoriteWordResponse, FavoriteCategoryBase, FavoriteCategoryResponse
 
 from app.repositories.structure_repository import CreateMainStructureRepository
 
@@ -268,7 +269,6 @@ async def add_favorites(
     user_info = Depends(TokenHandler.verify_access_token)
 ):
     try:
-        print(f'/////////////////////////////////////////////// coming data is {data}')
         repo = AddFavoritesRepository(data=data, db=db, user_id=int(user_info.get('sub')))
         result = await repo.add_favorites()
         return result
@@ -283,6 +283,59 @@ async def add_favorites(
         )
 
 
+@router.post('/favorites/categories', status_code=201, response_model=dict)
+async def create_new_category(
+        data: FavoriteCategoryBase,
+        db: AsyncSession = Depends(get_db),
+        user_info: dict = Depends(TokenHandler.verify_access_token)
+):
+    """
+    Create a new favorite category for the authenticated user.
+
+    - **name**: Category name (required, unique per user)
+    """
+    try:
+        repo = CreateNewFavoriteCategoryRepository(
+            data=data,
+            db=db,
+            user_id=int(user_info.get('sub'))
+        )
+        result = await repo.create_new_category()
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error creating new category: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="We're having trouble creating new categories"
+        )
+
+
+
+@router.get('/favorites/categories', response_model=List[FavoriteCategoryResponse])
+async def get_user_categories(
+    db: AsyncSession = Depends(get_db),
+    user_info: dict = Depends(TokenHandler.verify_access_token)
+):
+    """
+    Get all favorite categories for the authenticated user.
+    Returns categories with word counts.
+    """
+    try:
+        repo = FavoriteCategoryRepository(db=db, user_id=int(user_info.get('sub')))
+        categories = await repo.get_user_categories()
+        return categories
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error fetching categories: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="We're having trouble fetching your categories"
+        )
 
 
 
