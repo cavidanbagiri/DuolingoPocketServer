@@ -22,7 +22,7 @@ from app.models.word_model import Word, Sentence, SentenceWord, WordMeaning, Tra
     LearnedWord
 from app.models.user_model import Language, UserModel, UserLanguage, UserWord
 from app.schemas.word_schema import GenerateAIChatSchema, GenerateAIWordSchema, TranslateSchema
-from app.schemas.favorite_schemas import FavoriteWordBase, FavoriteCategoryBase, FavoriteCategoryResponse
+from app.schemas.favorite_schemas import FavoriteWordBase, FavoriteCategoryBase, FavoriteCategoryResponse, FavoriteFetchWordResponse
 
 from app.models.user_model import FavoriteCategory, FavoriteWord, DefaultCategory
 
@@ -1265,6 +1265,7 @@ class CreateNewFavoriteCategoryRepository:
             )
 
 
+
 class FavoriteCategoryRepository:
     def __init__(self, db: AsyncSession, user_id: int):
         self.db = db
@@ -1295,6 +1296,8 @@ class FavoriteCategoryRepository:
                     "word_count": word_count,
                 })
 
+            print(f'.............. category response : {categories_response}')
+
             return categories_response
 
         except SQLAlchemyError as e:
@@ -1305,6 +1308,65 @@ class FavoriteCategoryRepository:
             )
 
 
+# repository.py
+class CategoryWordsRepository:
+    def __init__(self, db: AsyncSession, user_id: int, category_id: int):
+        self.db = db
+        self.user_id = user_id
+        self.category_id = category_id
+
+    async def get_category_words(self) -> dict:
+        try:
+            # First, verify the category belongs to the user and get its name
+            category_stmt = select(FavoriteCategory).where(
+                FavoriteCategory.id == self.category_id,
+                FavoriteCategory.user_id == self.user_id
+            )
+            category_result = await self.db.execute(category_stmt)
+            category = category_result.scalar_one_or_none()
+
+            if not category:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Category not found"
+                )
+
+            # Get all words in this category
+            words_stmt = select(FavoriteWord).where(
+                FavoriteWord.category_id == self.category_id,
+                FavoriteWord.user_id == self.user_id
+            )
+
+            words_result = await self.db.execute(words_stmt)
+            words = words_result.scalars().all()
+
+            # Convert to response format
+            words_response = []
+            for word in words:
+                words_response.append({
+                    "id": word.id,
+                    "original_text": word.original_text,
+                    "translated_text": word.translated_text,
+                    "from_lang": word.from_lang,
+                    "to_lang": word.to_lang,
+                    "category_id": word.category_id,
+                })
+
+            return_data = {
+                "category_id": category.id,
+                "category_name": category.name,
+                "word_count": len(words),
+                "words": words_response
+            }
+
+            return return_data
+
+        except SQLAlchemyError as e:
+            logger.error(f"Database error fetching category words: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database error while fetching category words"
+            )
 
 
 

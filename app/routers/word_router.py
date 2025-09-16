@@ -11,10 +11,11 @@ from app.database.setup import get_db
 from app.repositories.word_repository import FetchWordRepository, \
     ChangeWordStatusRepository, DetailWordRepository, GetStatisticsForDashboardRepository, GetPosStatisticsRepository, \
     VoiceHandleRepository, GenerateAIWordRepository, GenerateAIQuestionRepository, SearchRepository, \
-    TranslateRepository, AddFavoritesRepository, CreateNewFavoriteCategoryRepository, FavoriteCategoryRepository
+    TranslateRepository, AddFavoritesRepository, CreateNewFavoriteCategoryRepository, FavoriteCategoryRepository, CategoryWordsRepository
 from app.schemas.user_schema import ChangeWordStatusSchema
 from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, GenerateAIChatSchema, TranslateSchema
-from app.schemas.favorite_schemas import FavoriteWordBase, FavoriteWordResponse, FavoriteCategoryBase, FavoriteCategoryResponse
+from app.schemas.favorite_schemas import (FavoriteWordBase, FavoriteWordResponse, FavoriteCategoryBase, FavoriteCategoryResponse,
+                                          FavoriteFetchWordResponse, CategoryWordsResponse)
 
 from app.repositories.structure_repository import CreateMainStructureRepository
 
@@ -323,6 +324,7 @@ async def get_user_categories(
     Get all favorite categories for the authenticated user.
     Returns categories with word counts.
     """
+    print('here work')
     try:
         repo = FavoriteCategoryRepository(db=db, user_id=int(user_info.get('sub')))
         categories = await repo.get_user_categories()
@@ -336,6 +338,38 @@ async def get_user_categories(
             status_code=500,
             detail="We're having trouble fetching your categories"
         )
+
+
+# router.py
+@router.get('/favorites/categories/{category_id}/words')
+async def get_category_words(
+        category_id: int,
+        db: AsyncSession = Depends(get_db),
+        user_info: dict = Depends(TokenHandler.verify_access_token)
+):
+    """
+    Get all words in a specific category for the authenticated user.
+
+    - **category_id**: ID of the category to fetch words from
+    """
+    try:
+        repo = CategoryWordsRepository(
+            db=db,
+            user_id=int(user_info.get('sub')),
+            category_id=category_id
+        )
+        result = await repo.get_category_words()
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error fetching category words: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="We're having trouble fetching category words"
+        )
+
 
 
 

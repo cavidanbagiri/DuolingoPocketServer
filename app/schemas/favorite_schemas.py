@@ -87,3 +87,26 @@ class UserFavoritesResponse(BaseModel):
     categories: List[FavoriteCategoryResponse]
     uncategorized_words: List[FavoriteWordResponse]
     default_categories: List[DefaultCategoryResponse]
+
+
+
+# schemas.py
+class FavoriteFetchWordResponse(BaseModel):
+    id: int
+    original_text: str
+    translated_text: str
+    from_lang: str
+    to_lang: str
+    category_id: Optional[int]
+
+    class Config:
+        from_attributes = True
+
+class CategoryWordsResponse(BaseModel):
+    category_id: int
+    category_name: str
+    word_count: int
+    words: List[FavoriteWordResponse]
+
+    class Config:
+        from_attributes = True
