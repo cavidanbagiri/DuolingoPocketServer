@@ -12,11 +12,11 @@ from app.repositories.word_repository import FetchWordRepository, \
     ChangeWordStatusRepository, DetailWordRepository, GetStatisticsForDashboardRepository, GetPosStatisticsRepository, \
     VoiceHandleRepository, GenerateAIWordRepository, GenerateAIQuestionRepository, SearchRepository, \
     TranslateRepository, AddFavoritesRepository, CreateNewFavoriteCategoryRepository, FavoriteCategoryRepository, \
-    CategoryWordsRepository, DeleteFavoriteWordRepository
+    CategoryWordsRepository, DeleteFavoriteWordRepository, MoveFavoriteWordRepository
 from app.schemas.user_schema import ChangeWordStatusSchema
 from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, GenerateAIChatSchema, TranslateSchema
 from app.schemas.favorite_schemas import (FavoriteWordBase, FavoriteWordResponse, FavoriteCategoryBase, FavoriteCategoryResponse,
-                                          FavoriteFetchWordResponse, CategoryWordsResponse)
+                                          FavoriteFetchWordResponse, CategoryWordsResponse, MoveWordResponse, MoveWordRequest)
 
 from app.repositories.structure_repository import CreateMainStructureRepository
 
@@ -401,6 +401,45 @@ async def delete_favorite_word(
             status_code=500,
             detail="We're having trouble deleting the word"
         )
+
+
+
+
+@router.put('/favorites/words/{word_id}/move', response_model=MoveWordResponse)
+async def move_word_to_category(
+    word_id: int,
+    move_data: MoveWordRequest,
+    db: AsyncSession = Depends(get_db),
+    user_info: dict = Depends(TokenHandler.verify_access_token)
+):
+    """
+    Move a word to a different category.
+    """
+    try:
+        repo = MoveFavoriteWordRepository(
+            db=db,
+            user_id=int(user_info.get('sub')),
+            word_id=word_id
+        )
+        result = await repo.move_word(move_data.target_category_id)
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error moving word: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="We're having trouble moving the word"
+        )
+
+
+
+
+
+
+
+
 
 
 

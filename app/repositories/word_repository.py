@@ -1415,7 +1415,75 @@ class DeleteFavoriteWordRepository:
             )
 
 
+class MoveFavoriteWordRepository:
 
+    def __init__(self, db: AsyncSession, user_id: int, word_id: int):
+        self.db = db
+        self.user_id = user_id
+        self.word_id = word_id
+
+    # repository.py - Add to FavoriteWordRepository class
+    async def move_word(self, target_category_id: int) -> dict:
+        try:
+            # Verify the word exists and belongs to the user
+            stmt = select(FavoriteWord).where(
+                FavoriteWord.id == self.word_id,
+                FavoriteWord.user_id == self.user_id
+            )
+            result = await self.db.execute(stmt)
+            word = result.scalar_one_or_none()
+
+            if not word:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Word not found in your favorites"
+                )
+            if word.category_id == target_category_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Word is already in this category"
+                )
+
+            # Verify target category exists and belongs to the user
+            category_stmt = select(FavoriteCategory).where(
+                FavoriteCategory.id == target_category_id,
+                FavoriteCategory.user_id == self.user_id
+            )
+            category_result = await self.db.execute(category_stmt)
+            target_category = category_result.scalar_one_or_none()
+
+            if not target_category:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Target category not found"
+                )
+
+            # Store old category ID for response
+            old_category_id = word.category_id
+
+            # Update the word's category
+            word.category_id = target_category_id
+            word.added_at = datetime.utcnow()  # Update timestamp
+
+            self.db.add(word)
+            await self.db.commit()
+            await self.db.refresh(word)
+
+            return {
+                "status": "success",
+                "message": "Word moved successfully",
+                "word_id": self.word_id,
+                "old_category_id": old_category_id,
+                "new_category_id": target_category_id
+            }
+
+        except SQLAlchemyError as e:
+            await self.db.rollback()
+            logger.error(f"Database error moving word: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database error while moving word"
+            )
 
 
 

@@ -110,3 +110,26 @@ class CategoryWordsResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+
+class MoveWordRequest(BaseModel):
+    target_category_id: int = Field(..., gt=0, description="ID of the target category")
+
+class MoveWordResponse(BaseModel):
+    status: str
+    message: str
+    word_id: int
+    old_category_id: int
+    new_category_id: int
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": "success",
+                "message": "Word moved successfully",
+                "word_id": 123,
+                "old_category_id": 1,
+                "new_category_id": 2
+            }
+        }
