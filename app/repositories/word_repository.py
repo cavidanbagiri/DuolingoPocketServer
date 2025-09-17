@@ -10,7 +10,7 @@ import asyncio
 from functools import lru_cache
 
 from fastapi import HTTPException, status
-from sqlalchemy import select, func, and_, update, or_, case
+from sqlalchemy import select, func, and_, update, or_, case, delete
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from datetime import datetime
 
@@ -29,6 +29,7 @@ from app.models.user_model import FavoriteCategory, FavoriteWord, DefaultCategor
 logger = setup_logger(__name__, "word.log")
 
 from app.schemas.word_schema import AIWordResponse
+
 
 # Get Statistics For Dashabord
 class GetStatisticsForDashboardRepository:
@@ -1191,7 +1192,6 @@ class AddFavoritesRepository:
 
 
 
-
 class CreateNewFavoriteCategoryRepository:
     def __init__(self, db: AsyncSession, data: FavoriteCategoryBase, user_id: int):
         self.db = db
@@ -1370,6 +1370,49 @@ class CategoryWordsRepository:
 
 
 
+class DeleteFavoriteWordRepository:
+    def __init__(self, db: AsyncSession, user_id: int, word_id: int):
+        self.db = db
+        self.user_id = user_id
+        self.word_id = word_id
+
+    async def delete_word(self) -> dict:
+        try:
+            # First verify the word belongs to the user
+            stmt = select(FavoriteWord).where(
+                FavoriteWord.id == self.word_id,
+                FavoriteWord.user_id == self.user_id
+            )
+            result = await self.db.execute(stmt)
+            word = result.scalar_one_or_none()
+
+            if not word:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Word not found in your favorites"
+                )
+
+            # Delete the word
+            delete_stmt = delete(FavoriteWord).where(
+                FavoriteWord.id == self.word_id,
+                FavoriteWord.user_id == self.user_id
+            )
+            await self.db.execute(delete_stmt)
+            await self.db.commit()
+
+            return {
+                "status": "success",
+                "message": "Word removed from favorites",
+                "deleted_word_id": self.word_id
+            }
+
+        except SQLAlchemyError as e:
+            await self.db.rollback()
+            logger.error(f"Database error deleting word: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database error while deleting word"
+            )
 
 
 

@@ -11,7 +11,8 @@ from app.database.setup import get_db
 from app.repositories.word_repository import FetchWordRepository, \
     ChangeWordStatusRepository, DetailWordRepository, GetStatisticsForDashboardRepository, GetPosStatisticsRepository, \
     VoiceHandleRepository, GenerateAIWordRepository, GenerateAIQuestionRepository, SearchRepository, \
-    TranslateRepository, AddFavoritesRepository, CreateNewFavoriteCategoryRepository, FavoriteCategoryRepository, CategoryWordsRepository
+    TranslateRepository, AddFavoritesRepository, CreateNewFavoriteCategoryRepository, FavoriteCategoryRepository, \
+    CategoryWordsRepository, DeleteFavoriteWordRepository
 from app.schemas.user_schema import ChangeWordStatusSchema
 from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, GenerateAIChatSchema, TranslateSchema
 from app.schemas.favorite_schemas import (FavoriteWordBase, FavoriteWordResponse, FavoriteCategoryBase, FavoriteCategoryResponse,
@@ -371,6 +372,35 @@ async def get_category_words(
         )
 
 
+
+
+
+@router.delete('/favorites/words/{word_id}', status_code=200)
+async def delete_favorite_word(
+    word_id: int,
+    db: AsyncSession = Depends(get_db),
+    user_info: dict = Depends(TokenHandler.verify_access_token)
+):
+    """
+    Delete a word from user's favorites.
+    """
+    try:
+        repo = DeleteFavoriteWordRepository(
+            db=db,
+            user_id=int(user_info.get('sub')),
+            word_id=word_id
+        )
+        result = await repo.delete_word()
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error deleting word: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="We're having trouble deleting the word"
+        )
 
 
 
