@@ -12,7 +12,7 @@ from app.repositories.word_repository import FetchWordRepository, \
     ChangeWordStatusRepository, DetailWordRepository, GetStatisticsForDashboardRepository, GetPosStatisticsRepository, \
     VoiceHandleRepository, GenerateAIWordRepository, GenerateAIQuestionRepository, SearchRepository, \
     TranslateRepository, AddFavoritesRepository, CreateNewFavoriteCategoryRepository, FavoriteCategoryRepository, \
-    CategoryWordsRepository, DeleteFavoriteWordRepository, MoveFavoriteWordRepository
+    CategoryWordsRepository, DeleteFavoriteWordRepository, MoveFavoriteWordRepository, DeleteCategoryRepository
 from app.schemas.user_schema import ChangeWordStatusSchema
 from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, GenerateAIChatSchema, TranslateSchema
 from app.schemas.favorite_schemas import (FavoriteWordBase, FavoriteWordResponse, FavoriteCategoryBase, FavoriteCategoryResponse,
@@ -434,7 +434,32 @@ async def move_word_to_category(
         )
 
 
+@router.delete('/favorites/categories/delete/{category_id}', status_code=200)
+async def delete_category(
+    category_id: int,
+    db: AsyncSession = Depends(get_db),
+    user_info: dict = Depends(TokenHandler.verify_access_token)
+):
+    """
+    Delete a category and handle its words (move to default or delete).
+    """
+    try:
+        repo = DeleteCategoryRepository(
+            db=db,
+            user_id=int(user_info.get('sub')),
+            category_id=category_id
+        )
+        result = await repo.delete_category()
+        return result
 
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error deleting category: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="We're having trouble deleting the category"
+        )
 
 
 

@@ -1486,6 +1486,96 @@ class MoveFavoriteWordRepository:
             )
 
 
+# repository.py
+class DeleteCategoryRepository:
+    def __init__(self, db: AsyncSession, user_id: int, category_id: int):
+        self.db = db
+        self.user_id = user_id
+        self.category_id = category_id
+
+    async def _get_default_category_id(self) -> int:
+        """Get or create default category for the user"""
+        stmt = select(FavoriteCategory).where(
+            FavoriteCategory.user_id == self.user_id,
+            FavoriteCategory.name == "Default"
+        )
+        result = await self.db.execute(stmt)
+        category = result.scalar_one_or_none()
+
+        if category:
+            return category.id
+
+        # Create default category if it doesn't exist
+        new_category = FavoriteCategory(
+            user_id=self.user_id,
+            name="Default",
+            description="Default category for words"
+        )
+        self.db.add(new_category)
+        await self.db.commit()
+        await self.db.refresh(new_category)
+        return new_category.id
+
+    async def delete_category(self) -> dict:
+        try:
+            # Verify category exists and belongs to the user
+            stmt = select(FavoriteCategory).where(
+                FavoriteCategory.id == self.category_id,
+                FavoriteCategory.user_id == self.user_id
+            )
+            result = await self.db.execute(stmt)
+            category = result.scalar_one_or_none()
+
+            if not category:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Category not found"
+                )
+
+            # Prevent deletion of default category
+            if category.name == "Default":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot delete the default category"
+                )
+
+            # # Get default category for moving words
+            # default_category_id = await self._get_default_category_id()
+            #
+            # # Move all words to default category
+            # update_stmt = update(FavoriteWord).where(
+            #     FavoriteWord.category_id == self.category_id,
+            #     FavoriteWord.user_id == self.user_id
+            # ).values(category_id=default_category_id)
+            #
+            # await self.db.execute(update_stmt)
+
+            # Delete the category
+            delete_stmt = delete(FavoriteCategory).where(
+                FavoriteCategory.id == self.category_id,
+                FavoriteCategory.user_id == self.user_id
+            )
+            await self.db.execute(delete_stmt)
+
+            await self.db.commit()
+
+            return {
+                "status": "success",
+                "message": "Category deleted successfully",
+                "deleted_category_id": self.category_id,
+            }
+
+        except SQLAlchemyError as e:
+            await self.db.rollback()
+            logger.error(f"Database error deleting category: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database error while deleting category"
+            )
+
+
+
+
 
 
 
