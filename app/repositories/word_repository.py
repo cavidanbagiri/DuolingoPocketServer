@@ -1157,7 +1157,8 @@ class AddFavoritesRepository:
                 from_lang=self.data.from_lang,
                 to_lang=self.data.to_lang,
                 original_text=self.data.original_text,
-                translated_text=self.data.translated_text
+                translated_text=self.data.translated_text,
+                added_at=datetime.utcnow()
             )
 
             self.db.add(new_favorite)
@@ -1274,14 +1275,15 @@ class FavoriteCategoryRepository:
     async def get_user_categories(self) -> List[FavoriteCategoryResponse]:
         try:
             # Get categories with word counts using a join
-            stmt = select(
+            stmt = (select(
                 FavoriteCategory,
                 func.count(FavoriteWord.id).label('word_count')
             ).outerjoin(
                 FavoriteWord, FavoriteWord.category_id == FavoriteCategory.id
             ).where(
                 FavoriteCategory.user_id == self.user_id
-            ).group_by(FavoriteCategory.id)
+            )
+            .group_by(FavoriteCategory.id))
 
             result = await self.db.execute(stmt)
             categories_with_counts = result.all()
@@ -1322,6 +1324,7 @@ class CategoryWordsRepository:
                 FavoriteCategory.id == self.category_id,
                 FavoriteCategory.user_id == self.user_id
             )
+
             category_result = await self.db.execute(category_stmt)
             category = category_result.scalar_one_or_none()
 
@@ -1335,7 +1338,7 @@ class CategoryWordsRepository:
             words_stmt = select(FavoriteWord).where(
                 FavoriteWord.category_id == self.category_id,
                 FavoriteWord.user_id == self.user_id
-            )
+            ).order_by(FavoriteWord.added_at.desc())
 
             words_result = await self.db.execute(words_stmt)
             words = words_result.scalars().all()
@@ -1350,6 +1353,7 @@ class CategoryWordsRepository:
                     "from_lang": word.from_lang,
                     "to_lang": word.to_lang,
                     "category_id": word.category_id,
+                    "added_at": word.added_at,
                 })
 
             return_data = {

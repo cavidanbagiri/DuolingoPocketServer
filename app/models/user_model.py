@@ -104,6 +104,9 @@ class FavoriteWord(Base):
     original_text = Column(String, nullable=False)  # e.g., 'hello'
     translated_text = Column(String, nullable=False)  # e.g., 'привет'
 
+    # Timestamp - MAKE SURE THIS EXISTS
+    added_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
     # Relationships
     user = relationship("UserModel", back_populates="favorite_words")
     category = relationship("FavoriteCategory", back_populates="favorite_words")
