@@ -1580,7 +1580,43 @@ class DeleteCategoryRepository:
 
 
 
+class SearchFavoriteRepository:
 
+    def __init__(self, db: AsyncSession, user_id: int, query: str, category_id: Optional[int] = None):
+        self.db = db
+        self.user_id = user_id
+        self.query = query
+        self.category_id = category_id
+
+    async def search_words(self) -> List[FavoriteWord]:
+        try:
+            # Base query
+            stmt = select(FavoriteWord).where(
+                FavoriteWord.user_id == self.user_id,
+                or_(
+                    FavoriteWord.original_text.ilike(f"%{self.query}%"),
+                    FavoriteWord.translated_text.ilike(f"%{self.query}%")
+                )
+            ).order_by(FavoriteWord.added_at.desc())
+
+            # Add category filter if provided
+            if self.category_id:
+                stmt = stmt.where(FavoriteWord.category_id == self.category_id)
+
+            # Execute query
+            result = await self.db.execute(stmt)
+
+
+            words = result.scalars().all()
+
+            return words
+
+        except SQLAlchemyError as e:
+            logger.error(f"Database search error: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database error during search"
+            )
 
 
 
