@@ -1630,7 +1630,6 @@ class DeleteCategoryRepository:
 
 
 
-
 class SearchFavoriteRepository:
 
     def __init__(self, db: AsyncSession, user_id: int, query: str, category_id: Optional[int] = None):
@@ -1639,10 +1638,17 @@ class SearchFavoriteRepository:
         self.query = query
         self.category_id = category_id
 
-    async def search_words(self) -> List[FavoriteWord]:
+    async def search_words(self) -> List[dict]:
         try:
-            # Base query
-            stmt = select(FavoriteWord).where(
+            # Base query with JOIN to get category name
+            stmt = select(
+                FavoriteWord,
+                FavoriteCategory.name.label("category_name")  # Select category name
+            ).join(
+                FavoriteCategory,  # Join with categories table
+                FavoriteWord.category_id == FavoriteCategory.id,
+                isouter=True  # Use left outer join in case category is null
+            ).where(
                 FavoriteWord.user_id == self.user_id,
                 or_(
                     FavoriteWord.original_text.ilike(f"%{self.query}%"),
@@ -1656,11 +1662,25 @@ class SearchFavoriteRepository:
 
             # Execute query
             result = await self.db.execute(stmt)
+            rows = result.all()
 
+            # Transform results to include category name
+            words_with_category = []
+            for word, category_name in rows:
+                word_dict = {
+                    "id": word.id,
+                    "user_id": word.user_id,
+                    "category_id": word.category_id,
+                    "from_lang": word.from_lang,
+                    "to_lang": word.to_lang,
+                    "original_text": word.original_text,
+                    "translated_text": word.translated_text,
+                    "added_at": word.added_at,
+                    "category_name": category_name  # Add category name here
+                }
+                words_with_category.append(word_dict)
 
-            words = result.scalars().all()
-
-            return words
+            return words_with_category
 
         except SQLAlchemyError as e:
             logger.error(f"Database search error: {str(e)}")
