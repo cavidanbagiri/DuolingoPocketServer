@@ -21,6 +21,9 @@ class FavoriteCategoryResponse(FavoriteCategoryBase):
     id: int
     user_id: int
     word_count: Optional[int] = 0  # Will be computed
+    name: str | None
+    color: str | None
+    icon: str | None
 
     class Config:
         from_attributes = True

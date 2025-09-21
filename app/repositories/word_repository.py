@@ -8,6 +8,7 @@ import httpx
 import aiohttp
 import asyncio
 from functools import lru_cache
+import random
 
 from fastapi import HTTPException, status
 from sqlalchemy import select, func, and_, update, or_, case, delete
@@ -29,6 +30,44 @@ from app.models.user_model import FavoriteCategory, FavoriteWord, DefaultCategor
 logger = setup_logger(__name__, "word.log")
 
 from app.schemas.word_schema import AIWordResponse
+
+
+
+class RandomIconColor:
+
+    def __init__(self):
+
+        self.CATEGORY_ICONS = [
+            {'icon': 'book', 'color': '#6366F1'},
+            {'icon': 'play', 'color': '#10B981'},
+            {'icon': 'cube', 'color': '#F59E0B'},
+            {'icon': 'chatbubbles', 'color': '#EF4444'},
+            {'icon': 'school', 'color': '#8B5CF6'},
+            {'icon': 'heart', 'color': '#EC4899'},
+            {'icon': 'earth', 'color': '#06B6D4'},
+            {'icon': 'time', 'color': '#F97316'},
+            {'icon': 'star', 'color': '#EAB308'},
+            {'icon': 'list', 'color': '#64748B'}
+        ]
+
+    def default_icon(self):
+        return self.CATEGORY_ICONS[0]
+
+    def get_random_icon(self):
+        icons = [
+            {'icon': 'book', 'color': '#6366F1'},
+            {'icon': 'play', 'color': '#10B981'},
+            {'icon': 'cube', 'color': '#F59E0B'},
+            {'icon': 'chatbubbles', 'color': '#EF4444'},
+            {'icon': 'school', 'color': '#8B5CF6'},
+            {'icon': 'heart', 'color': '#EC4899'},
+            {'icon': 'earth', 'color': '#06B6D4'},
+            {'icon': 'time', 'color': '#F97316'},
+            {'icon': 'star', 'color': '#EAB308'},
+            {'icon': 'list', 'color': '#64748B'}
+        ]
+        return random.choice(icons)
+
 
 
 # Get Statistics For Dashabord
@@ -1072,12 +1111,14 @@ class TranslateRepository:
             )
 
 
-
 class AddFavoritesRepository:
+
     def __init__(self, data: FavoriteWordBase, db: AsyncSession, user_id: int):
         self.data = data
         self.db = db
         self.user_id = user_id
+        self.random_item_color = RandomIconColor()
+
 
     async def _get_or_create_default_category(self) -> int:
         """Get or create a default 'Uncategorized' category for the user"""
@@ -1093,10 +1134,14 @@ class AddFavoritesRepository:
             if category:
                 return category.id
 
+            icon_data = self.random_item_color.default_icon()
+
             # Create new default category
             new_category = FavoriteCategory(
                 user_id=self.user_id,
-                name="Default"
+                name="Default",
+                icon=icon_data['icon'],
+                color=icon_data['color']
             )
             self.db.add(new_category)
             await self.db.commit()
@@ -1134,6 +1179,7 @@ class AddFavoritesRepository:
 
     async def add_favorites(self) -> dict:
         try:
+
             # 1. Check if word already exists
             exists = await self._check_existing_favorite()
             if exists:
@@ -1198,6 +1244,7 @@ class CreateNewFavoriteCategoryRepository:
         self.db = db
         self.data = data
         self.user_id = user_id
+        self.random_item_color = RandomIconColor()
 
     async def _check_duplicate_category(self) -> bool:
         """Check if category with same name already exists for this user"""
@@ -1222,10 +1269,14 @@ class CreateNewFavoriteCategoryRepository:
                     detail=f"Category '{self.data.name}' already exists"
                 )
 
+            icon_data = self.random_item_color.get_random_icon()
+
             # Create new category
             new_category = FavoriteCategory(
                 user_id=self.user_id,
                 name=self.data.name.strip(),
+                icon=icon_data['icon'],
+                color=icon_data['color']
             )
 
             self.db.add(new_category)
@@ -1295,10 +1346,10 @@ class FavoriteCategoryRepository:
                     "id": category.id,
                     "name": category.name,
                     "user_id": category.user_id,
+                    "color": category.color,
+                    "icon": category.icon,
                     "word_count": word_count,
                 })
-
-            print(f'.............. category response : {categories_response}')
 
             return categories_response
 

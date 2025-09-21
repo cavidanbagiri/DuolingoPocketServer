@@ -84,6 +84,8 @@ class FavoriteCategory(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # Assuming you have users table
     name = Column(String, nullable=False)  # e.g., "Russian Nouns", "Russian Verbs"
+    icon = Column(String, nullable=True)  # Book
+    color = Column(String, nullable=True)  #F23ABF6
 
     # Relationships
     user = relationship("UserModel", back_populates="favorite_categories")
