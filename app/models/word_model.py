@@ -1,5 +1,5 @@
 
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Boolean, Table
 from sqlalchemy.orm import relationship, mapped_column
 from enum import Enum
 from datetime import datetime
@@ -22,6 +22,27 @@ class CEFRLevel(str, Enum):
     C2 = "C2"
 
 
+word_category_association = Table(
+    'word_categories',
+    Base.metadata,
+    Column('word_id', Integer, ForeignKey('words.id'), primary_key=True),
+    Column('category_id', Integer, ForeignKey('categories.id'), primary_key=True)
+)
+
+
+class Category(Base):
+    __tablename__ = "categories"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(50), unique=True, nullable=False)
+    description = Column(String(200), nullable=True)
+
+    words = relationship("Word", secondary=word_category_association, back_populates="categories")
+
+    def __repr__(self):
+        return f"Category(id={self.id}, name='{self.name}')"
+
+
+
 class Word(Base):
     __tablename__ = "words"
     id = Column(Integer, primary_key=True)
@@ -37,6 +58,9 @@ class Word(Base):
     #New added
     user_words = relationship("UserWord", back_populates="word")
 
+    #NewNew added
+    categories = relationship("Category", secondary=word_category_association, back_populates="words")
+
     def __repr__(self):
         return f'Word(id:({self.id}), text({self.text}, language_code({self.language_code}, frequency_rank:({self.frequency_rank}, level({self.level})))))'
 
@@ -45,8 +69,8 @@ class WordMeaning(Base):
     id = Column(Integer, primary_key=True)
     word_id = Column(Integer, ForeignKey("words.id"))
     pos = Column(String(50))     # "noun"/"verb"
-    # definition = Column(String(500))        # "a written work"
-    example = Column(String(500))           # "I'm reading a book"
+    definition = Column(String(1000))        # "a written work"
+    # example = Column(String(500))           # "I'm reading a book"
 
     word = relationship("Word", back_populates="meanings")
     sentences = relationship("Sentence", secondary="meaning_sentence_links")
