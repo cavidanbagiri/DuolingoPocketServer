@@ -123,3 +123,5 @@ class DefaultCategory(Base):
     description = Column(String, nullable=True)
 
     # Users can copy these to their personal categories
+
+

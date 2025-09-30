@@ -8,10 +8,16 @@ import aiohttp
 import asyncio
 import pandas as pd
 import requests
-
-
+from enum import Enum
+from pathlib import Path
 from collections import defaultdict
-from typing import List, Optional
+
+import httpx
+import json
+import re
+from typing import List, Dict, Any, Optional
+
+from app.models.ai_models import WordAnalysisResponse
 
 
 from fastapi import HTTPException
@@ -22,10 +28,11 @@ from sqlalchemy.orm import selectinload, outerjoin
 from sqlalchemy.future import select
 
 from app.models.word_model import Word, Sentence, SentenceWord, WordMeaning, Translation, SentenceTranslation, \
-    LearnedWord
+    LearnedWord, Category
 from app.models.user_model import Language, UserModel, UserLanguage, UserWord
 from app.schemas.translate_schema import TranslateSchema
 
+from app.services.ai_service import AIService
 
 from app.logging_config import setup_logger
 logger = setup_logger(__name__, "word.log")
@@ -37,7 +44,7 @@ logger = setup_logger(__name__, "word.log")
 # Class For executing the functions
 class HelperFunction:
 
-    def __init__(self, db):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
     # 1 - Create language model
@@ -45,115 +52,171 @@ class HelperFunction:
         lang_repo = CreateMainStructureLanguagesListRepository(self.db)
         await lang_repo.create_main_languages()
 
-    #2 - Generate Top 10.000 words in english and add to words to word model
-    async def create_top_10000_words_english(self):
-        eng_rep = CreateMainStructureRepositoryForEnglishLanguage(self.db)
-        await eng_rep.create_top_10000_words_in_english()
+    async def save_words_to_database(self) -> str:
+        save_words_repo = SaveEnglishWordsToDatabaseRepository(self.db)
+        success = await save_words_repo.save_words_to_database()
+        return "Words saved successfully" if success else "Failed to save words"
 
-    #3 - Update top 10.000 words and add meanings if work ))
-    async def update_top_10000_words_english(self):
-        eng_rep = UpdateMainStructureRepositoryForEnglishLanguage(self.db)
-        await eng_rep.update_top_10000_words_in_english_add_meanings()
+    async def generate_english_words_with_ai(self) -> str:
+        """Generate AI content for English words"""
+        repo = FetchEnglishWordsGenerateWithAIToPOSDefCat(self.db)
+        result = await repo.generate_words_with_ai(limit=1)
 
-    #4 - Generate sentences about the 5 words
-    async def generate_five_sentences_about_each_word(self):
-        eng_rep = GenerateEnglishSentencesForEachWord(self.db)
-        await eng_rep.main_func()
-
-    #5 - Translate Words for eng to ru
-    async def translateentoru(self):
-        tr_repo = TranslateAllENWordsToRU(self.db)
-        await tr_repo.main_func()
-
-    #6 - Fix others pos to true pos
-    async def fix_other_pos(self):
-        repo = FixPosFunctionality(self.db)
-        await repo.find_others_and_fix_it()
+        if result["success"]:
+            return f"Success: {result['message']}"
+        else:
+            return f"Failed: {result.get('error', 'Unknown error')}"
 
 
-    #7 - Insert russian words and translation to words model and translations model
-    async def insert_russian_words_to_table(self):
-        repo = CreateMainStructureForRussianRepository(self.db)
-        await repo.insert_russian_words_to_table()
+    async def test_batch_processing(self, start_id: int, end_id: int) -> Dict[str, Any]:
+        """Test batch processing"""
+        repo = CreateMainStructureRepository(self.db)
+        return await repo.process_word_batch(start_id, end_id)
 
-
-    #8 - Fetch Russian Words, generate sentences and translate to english
-    async def fetch_russian_words_generate_sentence_and_translate_english (self):
-        repo = FetchRussianWordsAndGenerateSentenceAndTranslateToEnglish(self.db)
-        await repo.main_func()
-
-
-
-    #9 - Insert Spanish words to database
-    async def insert_spanish_words_to_table (self):
-        repo = CreateMainStructureForSpanishRepository(self.db)
-        await repo.insert_spanish_words_to_table()
-
-
-    #10 - Translate Spanish words
-    async def translate_spanish_words_to_english(self):
-        repo = TranslateSpanishWordsToEnglish(self.db)
-        await repo.translate_spanish_words_to_english()
-
-    #11 - Generate Spanish Sentence
-    async def generate_sentences_for_spanish(self):
-        repo = GenerateSentencesSpanishAndTranslate(self.db)
-        await repo.main_func()
 
 
 # Main Class Working
 class CreateMainStructureRepository:
-
     def __init__(self, db):
         self.db = db
         self.helper_funcs = HelperFunction(db)
 
     async def create_main_structure(self):
+        """Main method to orchestrate the word generation process"""
+        logger.info("🏗️ Starting main structure creation process")
 
-        # 1 - Create Language List [en, ru, es, tr]
+        # 1 - Create Language List [en, ru, es] - Uncomment if needed
         # await self.helper_funcs.create_language_list()
 
+        # 2 - Create Word List For English lang - Uncomment if needed
+        # await self.helper_funcs.save_words_to_database()
 
-        # 3 - Create Word List For English lang
-        # await self.helper_funcs.create_top_10000_words_english()
+        # 3 - Generate English Words with AI (start with 1 word)
+        # await self.helper_funcs.generate_english_words_with_ai()
+        pass
+
+    # This is for adding words to database For english
+    async def process_word_batch(self, start_id: int, end_id: int, batch_size: int = 10):
+        """Process words in specific ID range with controlled batch size"""
+        print('////////////////here is workinf')
+        logger.info(f"🔬 Testing batch processing: IDs {start_id} to {end_id}")
+
+        repo = FetchEnglishWordsGenerateWithAIToPOSDefCat(self.db)
+
+        # Process in smaller batches to avoid timeouts
+        processed_count = 0
+        errors = []
+
+        for word_id in range(start_id, end_id + 1):
+            try:
+                # Check if word exists and needs processing
+                word = await self._get_word_by_id(word_id)
+                if not word:
+                    logger.info(f"⏭️ Word ID {word_id} not found, skipping")
+                    continue
+
+                # Check if already processed
+                if await self._word_already_processed(word_id):
+                    logger.info(f"⏭️ Word '{word.text}' (ID: {word_id}) already processed, skipping")
+                    continue
+
+                logger.info(f"🔍 Processing word {processed_count + 1}: '{word.text}' (ID: {word_id})")
+
+                # Process single word
+                result = await repo.generate_single_word(word)
+
+                if result["success"]:
+                    processed_count += 1
+                    logger.info(f"✅ Successfully processed: {word.text}")
+                else:
+                    errors.append(f"Word ID {word_id}: {result.get('error', 'Unknown error')}")
+
+                # Small delay between words to avoid rate limiting
+                await asyncio.sleep(1)
+
+                # Log progress every 10 words
+                if processed_count % 10 == 0:
+                    logger.info(f"📊 Progress: {processed_count} words processed, {len(errors)} errors")
+
+            except Exception as e:
+                error_msg = f"Error processing word ID {word_id}: {str(e)}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+
+        logger.info(f"🎉 Batch processing complete: {processed_count} words processed, {len(errors)} errors")
+        return {"processed": processed_count, "errors": errors}
+
+    async def process_all_words(self, batch_size: int = 50):
+        """Process all unprocessed words in batches"""
+        logger.info("🚀 Starting full processing of all words")
+
+        repo = FetchEnglishWordsGenerateWithAIToPOSDefCat(self.db)
+        total_processed = 0
+        total_errors = []
+
+        while True:
+            # Process words in batches
+            result = await repo.generate_words_with_ai(limit=batch_size)
+
+            if result["success"]:
+                batch_processed = len(result["processed"])
+                total_processed += batch_processed
+                total_errors.extend(result["errors"])
+
+                logger.info(f"📦 Processed batch: {batch_processed} words")
+                logger.info(f"📈 Total progress: {total_processed} words")
+
+                # If no words were processed in this batch, we're done
+                if batch_processed == 0:
+                    break
+
+                # Longer delay between batches
+                await asyncio.sleep(5)
+            else:
+                logger.error(f"❌ Batch processing failed: {result.get('error')}")
+                total_errors.append(result.get('error', 'Batch processing failed'))
+                break
+
+        logger.info(f"🎉 Full processing complete: {total_processed} words processed, {len(total_errors)} errors")
+        return {"total_processed": total_processed, "errors": total_errors}
+
+    async def _get_word_by_id(self, word_id: int):
+        """Get word by ID"""
+        # from sqlalchemy import select
+        # from models import Word
+
+        result = await self.db.execute(select(Word).where(Word.id == word_id))
+        return result.scalar_one_or_none()
+
+    async def _word_already_processed(self, word_id: int) -> bool:
+        """Check if word already has meanings"""
+        # from sqlalchemy import select
+        # from models import WordMeaning
+
+        result = await self.db.execute(
+            select(WordMeaning).where(WordMeaning.word_id == word_id)
+        )
+        return result.first() is not None
 
 
-        # 3 - Update Top 10.000 words in English
-        # await self.helper_funcs.update_top_10000_words_english()
-
-        # 4 - Create sentence with words in english
-        # await self.helper_funcs.generate_five_sentences_about_each_word()
-
-        # 5 - Translate words from eng to rus
-        # await self.helper_funcs.translateentoru()
-
-        # 6 - Fix Others pos
-        # await self.helper_funcs.fix_other_pos()
-
-
-        # 7 - Insert Russian words to table
-        # await self.helper_funcs.insert_russian_words_to_table()
-
-        # 8 - Fetch Russian Words and ganerate and translate to english
-        # await self.helper_funcs.fetch_russian_words_generate_sentence_and_translate_english()
-
-
-        # 9 - Create Spanish word model
-        # await self.helper_funcs.insert_spanish_words_to_table()
-
-        # 10 - Translate Spanish words to english
-        # await self.helper_funcs.translate_spanish_words_to_english()
-
-        # 11 - Generate Spanish sentences and translate it
-        # await self.helper_funcs.generate_sentences_for_spanish()
-
-        return 'Added'
 
 
 
-
-
+################################################################################################################ Production Updates
 ################################################################## Create Top languages List
+
+
+class CEFRLevel(str, Enum):
+    A1 = "A1"
+    A2 = "A2"
+    B1 = "B1"
+    B2 = "B2"
+    C1 = "C1"
+    C2 = "C2"
+
+
+
+
 class CreateMainStructureLanguagesListRepository:
 
     def __init__(self, db):
@@ -164,7 +227,7 @@ class CreateMainStructureLanguagesListRepository:
             {"code": "en", "name": "English"},
             {"code": "es", "name": "Spanish"},
             {"code": "ru", "name": "Russian"},
-            {"code": "tr", "name": "Turkish"},
+            # {"code": "tr", "name": "Turkish"},
         ]
 
         for lang in top_languages:
@@ -177,6 +240,977 @@ class CreateMainStructureLanguagesListRepository:
 
         await self.db.commit()
         return "Top 10 languages created successfully"
+
+
+################################################################## For English languages section
+
+############################################ Save English words to WordModel
+class SaveEnglishWordsToDatabaseRepository:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.base_dir = Path(__file__).parent
+
+    async def read_words_from_file(self, file_path: str = "english_words.txt") -> list[str]:
+        """Read words from text file and return as list"""
+        # try:
+        #     with open(file_path, 'r', encoding='utf-8') as file:
+        #         words = [line.strip() for line in file if line.strip()]
+        #     logger.info(f"Read {len(words)} words from {file_path}")
+        #     return words
+        # except FileNotFoundError:
+        #     logger.error(f"File {file_path} not found")
+        #     return []
+        # except Exception as e:
+        #     logger.error(f"Error reading file: {e}")
+        #     return []
+
+        try:
+            # Create absolute path to the file
+            absolute_path = self.base_dir / file_path
+
+            logger.info(f"Looking for file at: {absolute_path}")
+
+            if not absolute_path.exists():
+                logger.error(f"File not found at: {absolute_path}")
+                # List files in directory for debugging
+                files_in_dir = list(self.base_dir.glob("*.txt"))
+                logger.info(f"Text files in directory: {[f.name for f in files_in_dir]}")
+                return []
+
+            with open(absolute_path, 'r', encoding='utf-8') as file:
+                words = [line.strip() for line in file if line.strip()]
+
+            logger.info(f"Successfully read {len(words)} words from {absolute_path}")
+            return words
+
+        except Exception as e:
+            logger.error(f"Error reading file: {e}")
+            return []
+
+
+    async def ensure_english_language_exists(self) -> Language:
+        """Ensure English language exists in database"""
+        # Check if English exists
+        result = await self.db.execute(
+            select(Language).where(Language.code == "en")
+        )
+        english_lang = result.scalar_one_or_none()
+
+        if not english_lang:
+            english_lang = Language(code="en", name="English")
+            self.db.add(english_lang)
+            await self.db.commit()
+            await self.db.refresh(english_lang)
+            logger.info("Created English language in database")
+
+        return english_lang
+
+    async def assign_frequency_ranks(self, words: list[str]) -> dict[str, int]:
+        """Assign frequency ranks based on position in list (1-based index)"""
+        return {word: rank + 1 for rank, word in enumerate(words)}
+
+    async def estimate_cefr_level(self, frequency_rank: int, word: str) -> CEFRLevel:
+        """Estimate CEFR level based on frequency rank and word characteristics"""
+        # Simple heuristic - you can refine this later with AI
+        if frequency_rank <= 1000:
+            return CEFRLevel.A1
+        elif frequency_rank <= 2500:
+            return CEFRLevel.A2
+        elif frequency_rank <= 5000:
+            return CEFRLevel.B1
+        elif frequency_rank <= 7500:
+            return CEFRLevel.B2
+        elif frequency_rank <= 9000:
+            return CEFRLevel.C1
+        else:
+            return CEFRLevel.C2
+
+    async def word_exists(self, word_text: str, language_code: str = "en") -> bool:
+        """Check if word already exists in database"""
+        result = await self.db.execute(
+            select(Word).where(
+                Word.text == word_text,
+                Word.language_code == language_code
+            )
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def save_words_to_database(self, batch_size: int = 100):
+        """Main method to read words and save to database"""
+        try:
+            # Read words from file
+            words = await self.read_words_from_file()
+            if not words:
+                logger.error("No words found to process")
+                return False
+
+            # Ensure English language exists
+            english_lang = await self.ensure_english_language_exists()
+
+            # Assign frequency ranks
+            frequency_map = await self.assign_frequency_ranks(words)
+
+            saved_count = 0
+            skipped_count = 0
+
+            # Process words in batches for better performance
+            for i in range(0, len(words), batch_size):
+                batch_words = words[i:i + batch_size]
+                batch_saved = 0
+
+                for word_text in batch_words:
+                    # Skip if word already exists
+                    if await self.word_exists(word_text):
+                        skipped_count += 1
+                        continue
+
+                    # Estimate CEFR level
+                    frequency_rank = frequency_map[word_text]
+                    cefr_level = await self.estimate_cefr_level(frequency_rank, word_text)
+
+                    # Create word object
+                    word = Word(
+                        text=word_text.lower().strip(),
+                        language_code="en",
+                        frequency_rank=frequency_rank,
+                        level=cefr_level.value
+                    )
+
+                    self.db.add(word)
+                    batch_saved += 1
+
+                # Commit batch
+                await self.db.commit()
+                saved_count += batch_saved
+                logger.info(f"Saved batch {i // batch_size + 1}: {batch_saved} words")
+
+                # Small delay to avoid overwhelming the database
+                await asyncio.sleep(0.1)
+
+            logger.info(f"Successfully saved {saved_count} words to database")
+            logger.info(f"Skipped {skipped_count} duplicate words")
+            return True
+
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error saving words to database: {e}")
+            return False
+
+    async def get_word_count(self) -> int:
+        """Get total word count in database"""
+        result = await self.db.execute(select(Word))
+        words = result.scalars().all()
+        return len(words)
+
+
+########################################## Generate for each Words, examples, translates, pos, definitions, semantic categories etc
+class WordRepository:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def get_unprocessed_word(self) -> Optional[Word]:
+        """Get a word that hasn't been processed with AI yet (no meanings)"""
+        try:
+            # Fix: Use outerjoin to find words without meanings
+            stmt = (
+                select(Word)
+                .outerjoin(WordMeaning, Word.id == WordMeaning.word_id)
+                .where(WordMeaning.id.is_(None))
+                .order_by(Word.id.asc())
+                .limit(1)
+            )
+
+            logger.info(f"🔍 Executing query for unprocessed words")
+            result = await self.db.execute(stmt)
+            word = result.scalar_one_or_none()
+
+            if word:
+                logger.info(f"📝 Found unprocessed word: {word.text} (ID: {word.id})")
+            else:
+                logger.info("✅ No unprocessed words found")
+
+            return word
+
+        except Exception as e:
+            logger.error(f"❌ Error fetching unprocessed word: {str(e)}", exc_info=True)
+            return None
+
+    async def get_or_create_category(self, category_name: str) -> Category:
+        """Get existing category or create new one"""
+        try:
+            stmt = select(Category).where(Category.name == category_name)
+            result = await self.db.execute(stmt)
+            category = result.scalar_one_or_none()
+
+            if not category:
+                category = Category(name=category_name)
+                self.db.add(category)
+                await self.db.flush()
+                # logger.info(f"📁 Created new category: {category_name}")
+            else:
+                pass
+                # logger.info(f"📁 Using existing category: {category_name}")
+
+            return category
+        except Exception as e:
+            logger.error(f"❌ Error in get_or_create_category: {str(e)}")
+            raise
+
+    async def save_word_analysis(self, word: Word, ai_response: WordAnalysisResponse) -> bool:
+        """Save AI analysis results to database"""
+        try:
+            # logger.info(f"💾 Saving analysis for word: {word.text}")
+
+            # Ensure we have the latest word object with relationships
+            await self.db.refresh(word, ['categories'])
+
+            # 1. Add categories to word
+            for category_name in ai_response.categories:
+                category = await self.get_or_create_category(category_name)
+                if category not in word.categories:
+                    word.categories.append(category)
+                    logger.info(f"📂 Added category '{category_name}' to word '{word.text}'")
+
+            # 2. Create word meanings with POS and definitions
+            definitions_count = 0
+            for pos_def in ai_response.pos_definitions:
+                for definition in pos_def.definitions:
+                    word_meaning = WordMeaning(
+                        word_id=word.id,
+                        pos=pos_def.pos,
+                        definition=definition
+                    )
+                    self.db.add(word_meaning)
+                    definitions_count += 1
+
+            logger.info(f"📚 Added {definitions_count} definitions for {word.text}")
+
+            # 3. Update word level based on frequency
+            if word.frequency_rank <= 1000:
+                word.level = "A1"
+            elif word.frequency_rank <= 2500:
+                word.level = "A2"
+            elif word.frequency_rank <= 5000:
+                word.level = "B1"
+            elif word.frequency_rank <= 7500:
+                word.level = "B2"
+            else: word.level = "C1"
+
+
+            logger.info(f"🎯 Set level '{word.level}' for word '{word.text}'")
+
+            await self.db.commit()
+            logger.info(f"✅ Successfully saved word analysis for: {word.text}")
+            return True
+
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"❌ Error saving word analysis for {word.text}: {str(e)}", exc_info=True)
+            return False
+
+    async def word_needs_processing(self, word_id: int) -> bool:
+        """Check if word already has meanings (already processed)"""
+        try:
+            stmt = (
+                select(Word)
+                .where(Word.id == word_id)
+                .options(selectinload(Word.meanings))
+            )
+            result = await self.db.execute(stmt)
+            word = result.scalar_one_or_none()
+            return word is not None and len(word.meanings) == 0
+        except Exception as e:
+            logger.error(f"❌ Error checking word processing status: {str(e)}")
+            return False
+
+
+class FetchEnglishWordsGenerateWithAIToPOSDefCat:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.word_repo = WordRepository(db)
+        self.ai_service = AIService()
+
+    async def generate_words_with_ai(self, limit: int = 1) -> Dict[str, Any]:
+        """Generate AI content for words with better error handling"""
+        try:
+            processed_words = []
+            errors = []
+
+            for i in range(limit):
+                word = await self.word_repo.get_unprocessed_word()
+                if not word:
+                    logger.info("✅ No more unprocessed words found")
+                    return {
+                        "success": True,
+                        "message": "No unprocessed words found",
+                        "processed": processed_words
+                    }
+
+                logger.info(f"🔍 [{i + 1}/{limit}] Processing word: {word.text} (ID: {word.id})")
+
+                # Add delay to avoid rate limiting
+                if i > 0:
+                    await asyncio.sleep(1)  # 1 second delay between requests
+
+                # Analyze word with AI
+                ai_response = await self.ai_service.analyze_word(word.text)
+
+                if not ai_response:
+                    error_msg = f"AI analysis failed for: {word.text}"
+                    logger.error(f"❌ {error_msg}")
+                    errors.append(error_msg)
+                    continue
+
+                # Save analysis to database
+                success = await self.word_repo.save_word_analysis(word, ai_response)
+
+                if success:
+                    processed_info = {
+                        "word": word.text,
+                        "word_id": word.id,
+                        "categories": ai_response.categories,
+                        "pos_count": len(ai_response.pos_definitions),
+                        "definitions_count": sum(len(pos_def.definitions) for pos_def in ai_response.pos_definitions)
+                    }
+                    processed_words.append(processed_info)
+                    logger.info(f"✅ Successfully processed: {word.text}")
+                    logger.info(f"📊 Results: {processed_info}")
+                else:
+                    error_msg = f"Database save failed for: {word.text}"
+                    logger.error(f"❌ {error_msg}")
+                    errors.append(error_msg)
+
+            summary = f"Processed {len(processed_words)} words, {len(errors)} errors"
+            logger.info(f"📈 {summary}")
+
+            return {
+                "success": len(errors) == 0,
+                "message": summary,
+                "processed": processed_words,
+                "errors": errors
+            }
+
+        except Exception as e:
+            logger.error(f"💥 Critical error in generate_words_with_ai: {str(e)}", exc_info=True)
+            return {
+                "success": False,
+                "error": str(e),
+                "processed": [],
+                "errors": [str(e)]
+            }
+
+    async def close(self):
+        await self.ai_service.close()
+
+    # New added
+    async def generate_single_word(self, word) -> Dict[str, Any]:
+        """Generate AI content for a single word"""
+        try:
+            # logger.info(f"🔍 Processing single word: {word.text} (ID: {word.id})")
+
+            # Analyze word with AI
+            ai_response = await self.ai_service.analyze_word(word.text)
+
+            if not ai_response:
+                return {
+                    "success": False,
+                    "error": f"AI analysis failed for: {word.text}",
+                    "word": word.text,
+                    "word_id": word.id
+                }
+
+            # Save analysis to database
+            success = await self.word_repo.save_word_analysis(word, ai_response)
+
+            if success:
+                result = {
+                    "success": True,
+                    "word": word.text,
+                    "word_id": word.id,
+                    "categories": ai_response.categories,
+                    "pos_count": len(ai_response.pos_definitions),
+                    "definitions_count": sum(len(pos_def.definitions) for pos_def in ai_response.pos_definitions)
+                }
+                # logger.info(f"✅ Successfully processed: {word.text}")
+                return result
+            else:
+                return {
+                    "success": False,
+                    "error": f"Database save failed for: {word.text}",
+                    "word": word.text,
+                    "word_id": word.id
+                }
+
+        except Exception as e:
+            logger.error(f"💥 Error processing single word {word.text}: {str(e)}", exc_info=True)
+            return {
+                "success": False,
+                "error": str(e),
+                "word": word.text,
+                "word_id": word.id
+            }
+
+
+########################################## Gnerate english sentence and translate it
+class GenerateEnglishSentence:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not self.api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY is not set.")
+
+        self.client = httpx.AsyncClient(timeout=30.0)
+        self.deepseek_url = "https://api.deepseek.com/v1/chat/completions"
+        self.auth_headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    async def generate_sentences_for_words(self, batch_limit: int = 10):
+        """
+                Hardcoded: Load words with id 1, 2, 3
+                Generate 5 sentences for each
+                Save to Sentence + SentenceWord
+                """
+        # Step 1: Get words by ID
+        result = await self.db.execute(
+            select(Word).where(Word.id.between(5546, 7000)).order_by(Word.id)
+        )
+        words = result.scalars().all()
+
+        if len(words) == 0:
+            raise RuntimeError("No words found with IDs 1, 2, or 3")
+
+        # logger.info(f"🎯 Loaded {len(words)} words: {[w.text for w in words]}")
+
+        processed_count = 0
+        async with httpx.AsyncClient() as client:
+            for word in words:
+                try:
+                    # logger.info(f"📌 Generating 5 sentences for word '{word.text}' (ID: {word.id})")
+
+                    # Generate exactly 5 good sentences
+                    sentences = await self._generate_five_natural_sentences(client, word.text)
+                    # if len(sentences) < 5:
+                    #     logger.warning(f"⚠️ Only generated {len(sentences)} sentences for '{word.text}'")
+                    #     # Still proceed with what we have
+                    # else:
+                    #     logger.debug(f"📝 Sentences: {sentences}")
+
+                    # Save all sentences and links
+                    for sent_text in sentences:
+                        await self._save_sentence_and_link(sent_text, word)
+
+                    processed_count += 1
+                    # logger.info(f"✅ Successfully processed '{word.text}'")
+
+                    await self.db.commit()
+
+                except Exception as e:
+                    logger.error(f"💥 Failed processing word '{word.text}': {str(e)}", exc_info=True)
+                    continue  # Don't stop on one failure
+
+        await self.db.commit()
+        # logger.info(f"🎉 Finished! Processed {processed_count}/{len(words)} words.")
+
+        return {
+            "status": "success",
+            "words_processed": processed_count,
+            "total_target": len(words),
+            "target_ids": [1, 2, 3],
+            "message": f"Attempted sentence generation for words ID 1, 2, 3."
+        }
+
+    async def _generate_five_natural_sentences(self, client: httpx.AsyncClient, word: str) -> List[str]:
+        """
+        Call DeepSeek to generate 5 diverse, realistic sentences.
+        """
+        prompt = f"""
+                Generate exactly 5 diverse, grammatically correct example sentences in English using the word "{word}".
+
+                Rules:
+                - Each must naturally include "{word}"
+                - Use different contexts: question, command, emotional, daily life
+                - Avoid robotic phrases like "use you every day"
+                - Do NOT say "the word {word}"
+                - Return ONLY a JSON object:
+                  {{ "sentences": ["Sentence 1", "Sentence 2", ...] }}
+                - NO explanations, NO markdown
+                """
+
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [{"role": "user", "content": prompt}],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.7,
+            "max_tokens": 600
+        }
+
+        try:
+            response = await client.post(self.deepseek_url, headers=self.auth_headers, json=payload)
+            if response.status_code != 200:
+                logger.warning(f"📡 DeepSeek error {response.status_code}: {response.text}")
+                return self._fallback_sentences(word)
+
+            content = response.json()["choices"][0]["message"]["content"].strip()
+            # logger.debug(f"📥 Raw AI response for '{word}': {content[:200]}...")
+
+            # Clean code block
+            content = re.sub(r"^```json|```$", "", content).strip()
+            parsed = json.loads(content)
+
+            raw_sents = parsed.get("sentences")
+            if not isinstance(raw_sents, list):
+                raise ValueError("Not a list")
+
+            cleaned = []
+            forbidden = [
+                rf"\buse\s+{re.escape(word)}\b",
+                rf"\babout\s+{re.escape(word)}\b",
+                rf"\bthe\s+word\s+{re.escape(word)}\b"
+            ]
+
+            for s in raw_sents:
+                if isinstance(s, str):
+                    s_clean = s.strip('". ')
+                    if (len(s_clean) > 5 and
+                            word.lower() in s_clean.lower() and
+                            not any(re.search(pat, s_clean.lower()) for pat in forbidden) and
+                            s_clean not in cleaned):
+                        cleaned.append(s_clean)
+
+            # Fallback padding
+            while len(cleaned) < 5:
+                for fb in self._fallback_sentences(word):
+                    if fb not in cleaned:
+                        cleaned.append(fb)
+                        break
+
+            return cleaned[:5]
+
+        except Exception as e:
+            logger.error(f"🔥 Parse failed for '{word}': {str(e)}")
+            return self._fallback_sentences(word)
+
+    def _fallback_sentences(self, word: str) -> List[str]:
+        return {
+            "you": [
+                "Can you help me?",
+                "I believe in you.",
+                "Are you okay?",
+                "You made my day!",
+                "Could you please repeat that?"
+            ],
+            "the": [
+                "The sun is shining.",
+                "I left the book on the table.",
+                "The movie was amazing.",
+                "He is the best player.",
+                "Don't forget the keys!"
+            ],
+            "be": [
+                "I want to be a doctor.",
+                "Let's be honest.",
+                "They will be here soon.",
+                "To be or not to be?",
+                "We should be careful."
+            ]
+        }.get(word.lower(), [
+            f"One day, {word} will change everything.",
+            f"I’ve never seen such a {word}.",
+            f"This isn’t just any {word}.",
+            f"Do you have a {word}?",
+            f"The story of {word} began long ago."
+        ])
+
+    async def _save_sentence_and_link(self, text: str, word: Word):
+        """
+        Save sentence and link to word (avoid duplicates)
+        """
+        # Check if sentence already exists (case-insensitive + trim)
+        result = await self.db.execute(
+            select(Sentence).where(
+                Sentence.text.icontains(text.strip()),
+                Sentence.language_code == "en"
+            )
+        )
+        sentence = result.scalars().first()
+
+        if not sentence:
+            sentence = Sentence(
+                text=text.strip(),
+                language_code="en",
+                # created_at=datetime.utcnow()
+            )
+            self.db.add(sentence)
+            await self.db.flush()
+            # logger.debug(f"<saved> New sentence ID {sentence.id}: '{text}'")
+        else:
+            logger.debug(f"<exists> Reusing sentence ID {sentence.id}")
+
+        # Check if link already exists
+        result = await self.db.execute(
+            select(SentenceWord).where(
+                SentenceWord.sentence_id == sentence.id,
+                SentenceWord.word_id == word.id
+            )
+        )
+        if not result.scalars().first():
+            link = SentenceWord(sentence_id=sentence.id, word_id=word.id)
+            self.db.add(link)
+            # logger.debug(f"<linked> Word '{word.text}' → Sentence '{text}'")
+        else:
+            pass
+            # logger.debug(f"<skip> Link already exists for '{word.text}' ↔ '{text}'")
+
+
+########################################## Translate English Sentences to ru, en, tr
+class TranslateEnglishSentencesRepository:
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.api_key = os.getenv("YANDEX_TRANSLATE_API_SECRET_KEY")
+        self.folder_id = os.getenv("YANDEX_FOLDER_ID")
+        self.translate_url = "https://translate.api.cloud.yandex.net/translate/v2/translate"
+
+        if not self.api_key:
+            raise RuntimeError("YANDEX_TRANSLATE_API_SECRET_KEY is not set")
+        if not self.folder_id:
+            raise RuntimeError("YANDEX_FOLDER_ID is not set")
+
+        # Target languages
+        self.target_langs = ["ru", "es", "tr"]
+        self.headers = {
+            "Authorization": f"Api-Key {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+    async def translate_english_sentences(self, min_id: int = None, max_id: int = None) -> Dict[str, any]:
+        """
+        Translate ALL English sentences in [min_id, max_id] that are missing translations.
+        Processes up to 1000 sentences in a batch.
+        Commits after each sentence (resilient).
+        """
+        # Step 1: Load required languages
+        lang_map = await self._load_languages(["en"] + self.target_langs)
+        if not lang_map.get("en"):
+            raise RuntimeError("English language (en) not found in DB")
+
+        # Step 2: Query all eligible sentences in range
+        query = select(Sentence).where(Sentence.language_code == "en")
+
+        if min_id is not None:
+            query = query.where(Sentence.id >= min_id)
+        if max_id is not None:
+            query = query.where(Sentence.id <= max_id)
+
+        # Exclude fully translated sentences
+        subquery = (
+            select(SentenceTranslation.source_sentence_id)
+            .where(SentenceTranslation.language_code.in_(self.target_langs))
+            .group_by(SentenceTranslation.source_sentence_id)
+            .having(func.count(SentenceTranslation.language_code) >= len(self.target_langs))
+        ).subquery()
+
+        query = query.where(Sentence.id.not_in(select(subquery.c.source_sentence_id)))
+        query = query.order_by(Sentence.id)  # Process from low to high
+
+        result = await self.db.execute(query)
+        sentences = result.scalars().all()
+
+        if not sentences:
+            # logger.info(f"✅ No untranslated sentences found in range {min_id}–{max_id}")
+            return {
+                "status": "complete",
+                "total_found": 0,
+                "translated": 0,
+                "range": {"min_id": min_id, "max_id": max_id},
+                "message": "No pending translations in range."
+            }
+
+        # logger.info(f"🎯 Found {len(sentences)} sentences to translate in range {min_id}–{max_id}")
+
+        processed_count = 0
+        failed_count = 0
+
+        # Process each sentence one by one (safe & resilient)
+        for sentence in sentences:
+            try:
+                # logger.info(f"📌 Processing sentence ID {sentence.id}: '{sentence.text}'")
+
+                # Check existing translations
+                result_trans = await self.db.execute(
+                    select(SentenceTranslation.language_code)
+                    .where(SentenceTranslation.source_sentence_id == sentence.id)
+                )
+                existing_langs = {row[0] for row in result_trans.fetchall()}
+                missing_langs = [lang for lang in self.target_langs if lang not in existing_langs]
+
+                if not missing_langs:
+                    logger.debug(f"⏭️ All translations exist for ID {sentence.id}")
+                    continue
+
+                # logger.info(f"🌐 Translating to: {missing_langs}")
+
+                # Call Yandex API (one request per target language)
+                translations = await self._translate_text_batch(sentence.text, missing_langs)
+                saved_count = 0
+
+                for lang_code, translated_text in translations.items():
+                    if not translated_text:
+                        continue
+
+                    trans_model = SentenceTranslation(
+                        source_sentence_id=sentence.id,
+                        language_code=lang_code,
+                        translated_text=translated_text.strip(),
+                    )
+                    self.db.add(trans_model)
+                    # logger.debug(f"<saved> [{lang_code}] {translated_text}")
+                    saved_count += 1
+
+                # ✅ Commit after each sentence
+                await self.db.commit()
+                processed_count += 1
+                # logger.info(f"✅ Translated ID {sentence.id} → {saved_count} languages")
+
+            except Exception as e:
+                await self.db.rollback()
+                logger.error(f"💥 Failed processing sentence ID {sentence.id}: {str(e)}", exc_info=True)
+                failed_count += 1
+                continue  # Keep going
+
+        # logger.info(f"🎉 Batch translation completed: {processed_count} success, {failed_count} failed")
+        return {
+            "status": "completed",
+            "range": {"min_id": min_id, "max_id": max_id},
+            "total_in_range": len(sentences),
+            "translated": processed_count,
+            "failed": failed_count,
+            "message": f"Batch translation finished for IDs {min_id} to {max_id}"
+        }
+
+
+    # async def translate_english_sentences(self, min_id: int = None, max_id: int = None) -> Dict[str, any]:
+    #     """
+    #     Translate ONE English sentence that is missing ru/es/tr translations.
+    #     Optionally filter by Sentence.id BETWEEN min_id and max_id.
+    #
+    #     Ideal for step-by-step processing and testing.
+    #     """
+    #     # Step 1: Load required languages
+    #     lang_map = await self._load_languages(["en"] + self.target_langs)
+    #     en_lang = lang_map.get("en")
+    #     if not en_lang:
+    #         raise RuntimeError("English language (en) not found in DB")
+    #
+    #     # Step 2: Build query with optional ID bounds
+    #     query = select(Sentence).where(Sentence.language_code == "en")
+    #
+    #     if min_id is not None:
+    #         query = query.where(Sentence.id >= min_id)
+    #     if max_id is not None:
+    #         query = query.where(Sentence.id <= max_id)
+    #
+    #     # Order by ID and get only the first one
+    #     query = query.order_by(Sentence.id).limit(5)
+    #     print(f'................................query is {query}')
+    #
+    #     # result = await self.db.execute(query)
+    #     # sentence = result.scalar_one_or_none()
+    #     result = await self.db.execute(query.limit(1))  # ← Critical: ensure limit
+    #     sentence = result.scalar_one_or_none()
+    #
+    #     if not sentence:
+    #         logger.info(f"✅ No eligible English sentence found in range {min_id}–{max_id}.")
+    #         return {"status": "not_found", "range": [min_id, max_id]}
+    #
+    #     logger.info(f"🔍 Processing single sentence ID {sentence.id}: '{sentence.text}'")
+    #
+    #     try:
+    #         # Check existing translations
+    #         existing_translations = await self._get_existing_translations(sentence.id)
+    #         missing_langs = [lang for lang in self.target_langs if lang not in existing_translations]
+    #
+    #         if not missing_langs:
+    #             logger.info(f"⏭️ All translations already exist for sentence ID {sentence.id}")
+    #             return {
+    #                 "status": "already_translated",
+    #                 "sentence_id": sentence.id,
+    #                 "text": sentence.text
+    #             }
+    #
+    #         logger.info(f"🌐 Translating sentence ID {sentence.id} to: {missing_langs}")
+    #
+    #         # Call Yandex API
+    #         translations = await self._translate_text_batch(sentence.text, missing_langs)
+    #         if not translations:
+    #             logger.error(f"❌ Translation failed for sentence ID {sentence.id}")
+    #             return {
+    #                 "status": "translation_failed",
+    #                 "sentence_id": sentence.id,
+    #                 "text": sentence.text
+    #             }
+    #
+    #         # Save each translation
+    #         for lang_code, translated_text in translations.items():
+    #             if not translated_text.strip():
+    #                 continue
+    #
+    #             trans_model = SentenceTranslation(
+    #                 source_sentence_id=sentence.id,
+    #                 language_code=lang_code,
+    #                 translated_text=translated_text.strip(),
+    #             )
+    #             self.db.add(trans_model)
+    #             logger.debug(f"<saved> [{lang_code}] {translated_text}")
+    #
+    #         # ✅ Commit immediately
+    #         await self.db.commit()
+    #         logger.info(f"✅ Successfully translated sentence ID {sentence.id}")
+    #
+    #         return {
+    #             "status": "success",
+    #             "sentence_id": sentence.id,
+    #             "text": sentence.text,
+    #             "translated_into": list(translations.keys())
+    #         }
+    #
+    #     except Exception as e:
+    #         await self.db.rollback()
+    #         logger.error(f"💥 Failed to process sentence ID {sentence.id}: {str(e)}", exc_info=True)
+    #         return {
+    #             "status": "error",
+    #             "sentence_id": sentence.id,
+    #             "error": str(e)
+    #         }
+
+
+    async def _load_languages(self, codes: List[str]) -> Dict[str, Language]:
+        """Load languages from DB, auto-create if missing."""
+        result = await self.db.execute(select(Language).where(Language.code.in_(codes)))
+        lang_map = {lang.code: lang for lang in result.scalars().all()}
+
+        # Auto-create missing ones
+        for code in codes:
+            if code not in lang_map:
+                name = {
+                    "en": "English",
+                    "ru": "Russian",
+                    "es": "Spanish",
+                    "tr": "Turkish"
+                }.get(code, code.capitalize())
+                new_lang = Language(code=code, name=name)
+                self.db.add(new_lang)
+                lang_map[code] = new_lang
+                # logger.info(f"🔧 Auto-added language: {code} ({name})")
+
+        if lang_map:
+            await self.db.flush()
+
+        return lang_map
+
+    async def _get_existing_translations(self, sentence_id: int) -> Dict[str, str]:
+        """Get already translated texts by lang_code."""
+        result = await self.db.execute(
+            select(SentenceTranslation)
+            .where(SentenceTranslation.source_sentence_id == sentence_id)
+        )
+        translations = result.scalars().all()
+        return {t.language_code: t.translated_text for t in translations}
+
+    async def _translate_text_batch(self, text: str, targets: List[str]) -> Dict[str, str]:
+        """
+        Translate one sentence into multiple languages.
+        Since Yandex v2 doesn't support multiple targetLanguageCode in one call,
+        we make separate requests per language.
+        """
+        results = {}
+
+        async with aiohttp.ClientSession() as session:
+            for lang_code in targets:
+                try:
+                    payload = {
+                        "folderId": self.folder_id,
+                        "texts": [text],  # Must be list
+                        "targetLanguageCode": lang_code,  # ← SINGULAR! Not 'Codes'
+                        "format": "PLAIN_TEXT"
+                    }
+
+                    async with session.post(self.translate_url, json=payload, headers=self.headers) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            translated = data["translations"][0]["text"].strip()
+                            results[lang_code] = translated
+                            # logger.debug(f"<translation OK> [{lang_code}] {translated}")
+                        else:
+                            error_text = await resp.text()
+                            # logger.warning(f"📡 Failed to translate to '{lang_code}' (HTTP {resp.status}): {error_text}")
+                            results[lang_code] = None
+
+                except Exception as e:
+                    logger.error(f"🚨 Translation failed for '{lang_code}': {str(e)}", exc_info=True)
+                    results[lang_code] = None
+
+                # Optional: small delay to avoid rate limits
+                await asyncio.sleep(0.1)
+
+        return results
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

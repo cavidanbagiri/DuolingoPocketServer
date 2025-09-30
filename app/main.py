@@ -16,6 +16,7 @@ from app.routers import user_router, word_router
 # logger = setup_logger(__name__, "main.log")
 
 
+
 load_dotenv()
 
 app = FastAPI()
