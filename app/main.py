@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # from src.logging_config import setup_logger
 
 # from app.routers import user_router, translate_router, word_router
-from app.routers import user_router, word_router
+from app.routers import user_router, word_router, structure_router
 
 # logger = setup_logger(__name__, "main.log")
 
@@ -42,6 +42,7 @@ app.add_middleware(
 # Include Routers
 app.include_router(router=user_router.router, prefix='/api/auth', tags=['User'])
 app.include_router(router=word_router.router, prefix='/api/words', tags=['Word'])
+app.include_router(router=structure_router.router, prefix='/api/structure', tags=['Structure'])
 
 # app.include_router(router=translate_router.router, prefix='/api/translate', tags=['Translate'])
 
