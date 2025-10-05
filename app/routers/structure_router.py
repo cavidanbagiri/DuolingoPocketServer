@@ -24,7 +24,7 @@ from app.schemas.favorite_schemas import (FavoriteWordBase, FavoriteWordResponse
 from app.repositories.structure_repository import (CreateMainStructureRepository,
                                                    GenerateEnglishSentence, TranslateEnglishSentencesRepository,
                                                    CreateMainStructureForRussianRepository, GenerateRussianSentences, TranslateRussianSentences,
-                                                    CreateMainStructureForSpanishRepository, GenerateSpanishSentences
+                                                    CreateMainStructureForSpanishRepository, GenerateSpanishSentences, TranslateSpanishSentences
                                                    )
 
 from app.services.ai_service import AIService
@@ -70,6 +70,27 @@ async def generate_spanish_sentences(
         logger.error(f"💥 Spanish sentence generation failed: {str(ex)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
 
+
+
+@router.post('/spanish/translate_sentence', status_code=200)
+async def translate_spanish_sentences(
+    min_id: int = None,
+    max_id: int = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Translate Spanish sentences into en, ru, tr.
+    Processes ALL eligible sentences in the given ID range.
+    Commits after each sentence (resilient).
+    """
+    try:
+        translator = TranslateSpanishSentences(db)
+        result = await translator.translate_sentence(min_id=min_id, max_id=max_id)
+        return {"success": True, "data": result}
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"💥 Spanish sentence translation failed: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
 
 
 

@@ -597,7 +597,190 @@ class GenerateSpanishSentences:
             logger.debug(f"<skip> Duplicate link for '{word.text}'")
 
 
+class TranslateSpanishSentences:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.api_key = os.getenv("YANDEX_TRANSLATE_API_SECRET_KEY")
+        self.folder_id = os.getenv("YANDEX_FOLDER_ID")
+        self.translate_url = "https://translate.api.cloud.yandex.net/translate/v2/translate"
 
+        if not self.api_key:
+            raise RuntimeError("YANDEX_TRANSLATE_API_SECRET_KEY is not set")
+        if not self.folder_id:
+            raise RuntimeError("YANDEX_FOLDER_ID is not set")
+
+        # Target languages to translate INTO
+        self.target_langs = ["en", "ru", "tr"]
+        self.headers = {
+            "Authorization": f"Api-Key {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+    async def translate_sentence(self, min_id: int = None, max_id: int = None) -> Dict[str, any]:
+        """
+        Translate Spanish sentences (language_code='es') into en, ru, tr.
+        Only translates those missing at least one of the target translations.
+        Processes all eligible sentences in [min_id, max_id], one by one.
+        Commits after each sentence.
+        """
+        # Step 1: Ensure required languages exist
+        lang_map = await self._load_languages(["es"] + self.target_langs)
+        es_lang = lang_map.get("es")
+        if not es_lang:
+            raise RuntimeError("Spanish language (es) not found in DB")
+
+        # Step 2: Query Spanish sentences in range
+        query = select(Sentence).where(Sentence.language_code == "es")
+
+        if min_id is not None:
+            query = query.where(Sentence.id >= min_id)
+        if max_id is not None:
+            query = query.where(Sentence.id <= max_id)
+
+        # Exclude already fully translated
+        subquery = (
+            select(SentenceTranslation.source_sentence_id)
+            .where(SentenceTranslation.language_code.in_(self.target_langs))
+            .group_by(SentenceTranslation.source_sentence_id)
+            .having(func.count(SentenceTranslation.language_code) >= len(self.target_langs))
+        ).subquery()
+
+        query = query.where(Sentence.id.not_in(select(subquery.c.source_sentence_id)))
+        query = query.order_by(Sentence.id)
+
+        result = await self.db.execute(query)
+        sentences = result.scalars().all()
+
+        if not sentences:
+            logger.info(f"✅ No untranslated Spanish sentences found in range {min_id}–{max_id}")
+            return {
+                "status": "no_pending",
+                "range": {"min_id": min_id, "max_id": max_id},
+                "message": "No Spanish sentences need translation."
+            }
+
+        logger.info(f"🔍 Found {len(sentences)} Spanish sentences to translate in range {min_id}–{max_id}")
+
+        processed_count = 0
+        failed_count = 0
+
+        # Process one sentence at a time
+        async with aiohttp.ClientSession() as session:
+            for sentence in sentences:
+                try:
+                    logger.info(f"📌 Translating Spanish sentence ID {sentence.id}: '{sentence.text}'")
+
+                    # Get existing translations
+                    result_trans = await self.db.execute(
+                        select(SentenceTranslation.language_code)
+                        .where(SentenceTranslation.source_sentence_id == sentence.id)
+                    )
+                    existing_langs = {row[0] for row in result_trans.fetchall()}
+                    missing_langs = [lang for lang in self.target_langs if lang not in existing_langs]
+
+                    if not missing_langs:
+                        logger.debug(f"⏭️ All translations exist for ID {sentence.id}")
+                        continue
+
+                    logger.info(f"🌐 Translating to: {missing_langs}")
+
+                    # Translate all missing languages
+                    translations = await self._translate_text_batch(session, sentence.text, missing_langs)
+                    saved_count = 0
+
+                    for lang_code, translated_text in translations.items():
+                        if not translated_text:
+                            continue
+
+                        trans_model = SentenceTranslation(
+                            source_sentence_id=sentence.id,
+                            language_code=lang_code,
+                            translated_text=translated_text.strip(),
+                        )
+                        self.db.add(trans_model)
+                        logger.debug(f"<saved> [{lang_code}] {translated_text}")
+                        saved_count += 1
+
+                    # ✅ Commit after each sentence
+                    await self.db.commit()
+                    processed_count += 1
+                    logger.info(f"✅ Translated ID {sentence.id} → {saved_count} languages")
+
+                except Exception as e:
+                    await self.db.rollback()
+                    logger.error(f"💥 Failed to process sentence ID {sentence.id}: {str(e)}", exc_info=True)
+                    failed_count += 1
+                    continue  # Keep going
+
+        logger.info(f"🎉 Translation batch completed: {processed_count} done, {failed_count} failed")
+        return {
+            "status": "completed",
+            "range": {"min_id": min_id, "max_id": max_id},
+            "total_found": len(sentences),
+            "translated": processed_count,
+            "failed": failed_count,
+            "message": f"Translated {processed_count}/{len(sentences)} Spanish sentences"
+        }
+
+    async def _load_languages(self, codes: List[str]) -> Dict[str, Language]:
+        """Load languages from DB, auto-create if missing."""
+        result = await self.db.execute(select(Language).where(Language.code.in_(codes)))
+        lang_map = {lang.code: lang for lang in result.scalars().all()}
+
+        names = {
+            "es": "Spanish",
+            "en": "English",
+            "ru": "Russian",
+            "tr": "Turkish"
+        }
+
+        for code in codes:
+            if code not in lang_map:
+                new_lang = Language(code=code, name=names.get(code, code.capitalize()))
+                self.db.add(new_lang)
+                lang_map[code] = new_lang
+                logger.info(f"🔧 Auto-added language: {code} ({new_lang.name})")
+
+        if lang_map:
+            await self.db.flush()
+
+        return lang_map
+
+    async def _translate_text_batch(self, session: aiohttp.ClientSession, text: str, targets: List[str]) -> Dict[str, str]:
+        """
+        Translate one Spanish sentence into multiple languages.
+        Makes separate request per language.
+        """
+        results = {}
+
+        for lang_code in targets:
+            try:
+                payload = {
+                    "folderId": self.folder_id,
+                    "texts": [text],
+                    "targetLanguageCode": lang_code,  # ← SINGULAR!
+                    "format": "PLAIN_TEXT"
+                }
+
+                async with session.post(self.translate_url, json=payload, headers=self.headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        translated = data["translations"][0]["text"].strip()
+                        results[lang_code] = translated
+                        logger.debug(f"<translation_OK> [{lang_code}] {translated}")
+                    else:
+                        error_text = await resp.text()
+                        logger.warning(f"📡 Failed to translate to '{lang_code}': {error_text}")
+                        results[lang_code] = None
+
+            except Exception as e:
+                logger.error(f"🚨 Translation failed for '{lang_code}': {str(e)}", exc_info=True)
+                results[lang_code] = None
+
+            # Optional delay to avoid rate limits
+            await asyncio.sleep(0.1)
+
+        return results
 
 ############################################################################################################################################# For Russian languages section
 
