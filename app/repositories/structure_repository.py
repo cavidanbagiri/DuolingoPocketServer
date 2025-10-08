@@ -28,11 +28,13 @@ from sqlalchemy.orm import selectinload, outerjoin
 from sqlalchemy.future import select
 
 from app.models.word_model import Word, Sentence, SentenceWord, WordMeaning, Translation, SentenceTranslation, \
-    LearnedWord, Category
+    LearnedWord, Category, word_category_association
 from app.models.user_model import Language, UserModel, UserLanguage, UserWord
 from app.schemas.translate_schema import TranslateSchema
 
 from app.services.ai_service import AIService
+
+from app.constants.category import CORE_CATEGORIES
 
 from app.logging_config import setup_logger
 logger = setup_logger(__name__, "word.log")
@@ -217,6 +219,8 @@ class CEFRLevel(str, Enum):
 
 
 
+############################################################################################ Common Tables
+
 class CreateMainStructureLanguagesListRepository:
 
     def __init__(self, db):
@@ -242,11 +246,54 @@ class CreateMainStructureLanguagesListRepository:
         return "Top 10 languages created successfully"
 
 
+class DefineCommonCategories:
+    def __init__(self, db: AsyncSession):
+        self.db = db
 
+    async def define_common_categories(self) -> Dict[str, any]:
+        """
+        Step 1: Create all 15 core categories (if not exist)
+        No word assignment or POS setting yet.
+        """
+        created_count = 0
+        skipped_count = 0
+
+        for cat_data in CORE_CATEGORIES:
+            # Check if category already exists by name
+            result = await self.db.execute(
+                select(Category).where(Category.name == cat_data["name"])
+            )
+            existing = result.scalars().first()
+
+            if existing:
+                logger.debug(f"⏭️ Category exists: {cat_data['name']}")
+                skipped_count += 1
+                continue
+
+            # Create new category
+            new_category = Category(
+                name=cat_data["name"],
+                description=cat_data["description"]
+            )
+            self.db.add(new_category)
+            logger.info(f"✅ Created category: {cat_data['name']}")
+
+            created_count += 1
+
+        # Commit all at once
+        await self.db.commit()
+        logger.info(f"🎉 Category seeding complete: {created_count} created, {skipped_count} skipped.")
+
+        return {
+            "status": "completed",
+            "total_categories": len(CORE_CATEGORIES),
+            "created": created_count,
+            "existing": skipped_count,
+            "message": f"Seeded {created_count} new categories into database."
+        }
 
 
 ############################################################################################################################################# For Spanish languages section
-
 class CreateMainStructureForSpanishRepository:
 
     def __init__(self, db: AsyncSession):
@@ -375,7 +422,6 @@ class CreateMainStructureForSpanishRepository:
         except Exception as e:
             print(f"Error: {str(e)}")
             return None
-
 
 
 class GenerateSpanishSentences:
@@ -782,9 +828,441 @@ class TranslateSpanishSentences:
 
         return results
 
-############################################################################################################################################# For Russian languages section
 
-############################################ Save Russian words to WordModel
+class TranslateSpanishWord:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.api_key = os.getenv("YANDEX_TRANSLATE_API_SECRET_KEY")
+        self.folder_id = os.getenv("YANDEX_FOLDER_ID")
+        self.translate_url = "https://translate.api.cloud.yandex.net/translate/v2/translate"
+
+        if not self.api_key:
+            raise RuntimeError("YANDEX_TRANSLATE_API_SECRET_KEY is not set")
+        if not self.folder_id:
+            raise RuntimeError("YANDEX_FOLDER_ID is not set")
+
+        # Target languages to translate INTO
+        self.target_langs = ["en", "ru", "tr"]
+        self.headers = {
+            "Authorization": f"Api-Key {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    async def translate_spanish_word(self, min_id: int = None, max_id: int = None) -> Dict[str, any]:
+        """
+        Translate Spanish words (es) into en, ru, tr.
+        Only translates words missing one or more of the target translations.
+        Processes all eligible words in [min_id, max_id], one by one.
+        Commits after each word.
+        """
+        # Step 1: Ensure required languages exist
+        lang_map = await self._load_languages(["es"] + self.target_langs)
+        es_lang = lang_map.get("es")
+        if not es_lang:
+            raise RuntimeError("Spanish language (es) not found in DB")
+
+        # Step 2: Query Spanish words in range
+        query = select(Word).where(Word.language_code == "es")
+
+        if min_id is not None:
+            query = query.where(Word.id >= min_id)
+        if max_id is not None:
+            query = query.where(Word.id <= max_id)
+
+        # Exclude words already fully translated
+        subquery = (
+            select(Translation.source_word_id)
+            .where(Translation.target_language_code.in_(self.target_langs))
+            .group_by(Translation.source_word_id)
+            .having(func.count(Translation.target_language_code) >= len(self.target_langs))
+        ).subquery()
+
+        query = query.where(Word.id.not_in(select(subquery.c.source_word_id)))
+        query = query.order_by(Word.id)
+
+        result = await self.db.execute(query)
+        words = result.scalars().all()
+
+        if not words:
+            logger.info(f"✅ No untranslated Spanish words found in range {min_id}–{max_id}")
+            return {
+                "status": "no_pending",
+                "range": {"min_id": min_id, "max_id": max_id},
+                "message": "No Spanish words need translation."
+            }
+
+        logger.info(f"🔍 Found {len(words)} Spanish words to translate in range {min_id}–{max_id}")
+
+        processed_count = 0
+        failed_count = 0
+
+        # Process one word at a time
+        async with aiohttp.ClientSession() as session:
+            for word in words:
+                try:
+                    logger.info(f"📌 Translating Spanish word ID {word.id}: '{word.text}' (es)")
+
+                    # Get existing translations
+                    result_trans = await self.db.execute(
+                        select(Translation.target_language_code)
+                        .where(Translation.source_word_id == word.id)
+                    )
+                    existing_langs = {row[0] for row in result_trans.fetchall()}
+                    missing_langs = [lang for lang in self.target_langs if lang not in existing_langs]
+
+                    if not missing_langs:
+                        logger.debug(f"⏭️ All translations exist for word ID {word.id}")
+                        continue
+
+                    logger.info(f"🌐 Translating to: {missing_langs}")
+
+                    # Translate all missing languages
+                    translations = await self._translate_text_batch(session, word.text, missing_langs)
+                    saved_count = 0
+
+                    for lang_code, translated_text in translations.items():
+                        if not translated_text:
+                            continue
+
+                        trans_model = Translation(
+                            source_word_id=word.id,
+                            target_language_code=lang_code,
+                            translated_text=translated_text.strip(),
+                        )
+                        self.db.add(trans_model)
+                        logger.debug(f"<saved> [{lang_code}] {translated_text}")
+                        saved_count += 1
+
+                    # ✅ Commit after each word
+                    await self.db.commit()
+                    processed_count += 1
+                    logger.info(f"✅ Translated word ID {word.id} → {saved_count} languages")
+
+                except Exception as e:
+                    await self.db.rollback()
+                    logger.error(f"💥 Failed to process word ID {word.id} ('{word.text}'): {str(e)}", exc_info=True)
+                    failed_count += 1
+                    continue  # Keep going
+
+        logger.info(f"🎉 Batch translation completed: {processed_count} success, {failed_count} failed")
+        return {
+            "status": "completed",
+            "range": {"min_id": min_id, "max_id": max_id},
+            "total_found": len(words),
+            "translated": processed_count,
+            "failed": failed_count,
+            "message": f"Translated {processed_count}/{len(words)} Spanish words"
+        }
+
+    async def _load_languages(self, codes: List[str]) -> Dict[str, Language]:
+        """Load languages from DB, auto-create if missing."""
+        result = await self.db.execute(select(Language).where(Language.code.in_(codes)))
+        lang_map = {lang.code: lang for lang in result.scalars().all()}
+
+        names = {
+            "es": "Spanish",
+            "en": "English",
+            "ru": "Russian",
+            "tr": "Turkish"
+        }
+
+        for code in codes:
+            if code not in lang_map:
+                new_lang = Language(code=code, name=names.get(code, code.capitalize()))
+                self.db.add(new_lang)
+                lang_map[code] = new_lang
+                logger.info(f"🔧 Auto-added language: {code} ({new_lang.name})")
+
+        if lang_map:
+            await self.db.flush()
+
+        return lang_map
+
+    async def _translate_text_batch(self, session: aiohttp.ClientSession, text: str, targets: List[str]) -> Dict[str, str]:
+        """
+        Translate one Spanish word into multiple languages.
+        One request per language.
+        """
+        results = {}
+
+        for lang_code in targets:
+            try:
+                payload = {
+                    "folderId": self.folder_id,
+                    "texts": [text],
+                    "targetLanguageCode": lang_code,
+                    "format": "PLAIN_TEXT"
+                }
+
+                async with session.post(self.translate_url, json=payload, headers=self.headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        translated = data["translations"][0]["text"].strip()
+                        results[lang_code] = translated
+                        logger.debug(f"<translation_OK> [{lang_code}] {translated}")
+                    else:
+                        error_text = await resp.text()
+                        logger.warning(f"📡 Failed to translate '{text}' → {lang_code}: {error_text}")
+                        results[lang_code] = None
+
+            except Exception as e:
+                logger.error(f"🚨 Translation failed for '{text}' → {lang_code}: {str(e)}", exc_info=True)
+                results[lang_code] = None
+
+            await asyncio.sleep(0.1)  # Avoid rate limits
+
+        return results
+
+
+class DefinePosCategorySpanishRepository:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not self.api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY is not set.")
+
+        self.client = httpx.AsyncClient(timeout=30.0)
+        self.deepseek_url = "https://api.deepseek.com/v1/chat/completions"
+        self.auth_headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        # Allowed POS values (in English)
+        self.valid_pos = [
+            "noun", "verb", "adjective", "adverb",
+            "pronoun", "preposition", "conjunction",
+            "interjection", "article"
+        ]
+
+        # Predefined category names (must match DB exactly — in English)
+        self.categories_list = [
+            "Greetings & Polite Phrases", "Numbers", "Colors",
+            "Days of the Week", "Months & Seasons", "Family Members",
+            "Food & Drinks", "Animals", "Clothing", "Body Parts",
+            "Emotions & Feelings", "Weather", "House & Rooms"
+        ]
+
+        # Blocklist: Common Spanish function words
+        self.es_function_words = {
+            # Pronouns
+            "yo", "tú", "usted", "él", "ella", "nosotros", "vosotros", "ustedes", "ellos", "ellas",
+            "mí", "ti", "sí", "nos", "os",
+            # Possessive
+            "mi", "tu", "su", "nuestro", "vuestro",
+            # Prepositions
+            "a", "de", "en", "con", "por", "para", "sin", "sobre", "entre", "hasta", "desde",
+            # Conjunctions
+            "y", "o", "pero", "porque", "si", "como", "cuando",
+            # Particles / clitics
+            "se", "lo", "la", "le", "les", "me", "te", "nos", "os"
+        }
+
+    async def define_pos_category_spanish_word(self, min_id: int = None, max_id: int = None) -> Dict[str, any]:
+        """
+        For each Spanish word in [min_id, max_id]:
+        - Use DeepSeek (with Spanish prompt) to get main POS and best category (in English)
+        - Save POS to WordMeaning
+        - Link to Category by English name
+        Commits after each word.
+        """
+        # Step 1: Load all categories into memory
+        result = await self.db.execute(select(Category))
+        categories = result.scalars().all()
+        category_map = {cat.name: cat for cat in categories}
+
+        missing_cats = [name for name in self.categories_list if name not in category_map]
+        if missing_cats:
+            raise RuntimeError(f"Missing categories in DB: {missing_cats}")
+
+        logger.info(f"✅ Loaded {len(category_map)} categories")
+
+        # Step 2: Query Spanish words
+        query = select(Word).where(Word.language_code == "es")
+        if min_id is not None:
+            query = query.where(Word.id >= min_id)
+        if max_id is not None:
+            query = query.where(Word.id <= max_id)
+        query = query.order_by(Word.id)
+
+        result = await self.db.execute(query)
+        words = result.scalars().all()
+
+        if not words:
+            logger.info("✅ No Spanish words found in the given range.")
+            return {"status": "no_words", "processed": 0}
+
+        logger.info(f"🔍 Processing {len(words)} Spanish words...")
+
+        processed_count = 0
+        failed_count = 0
+
+        async with httpx.AsyncClient() as client:
+            for word in words:
+                try:
+                    logger.info(f"📌 Processing Spanish word ID {word.id}: '{word.text}'")
+
+                    # Get POS and category from AI (via Spanish prompt)
+                    ai_result = await self._get_pos_and_category(client, word.text)
+                    if not ai_result:
+                        logger.warning(f"❌ AI failed for word '{word.text}'")
+                        failed_count += 1
+                        continue
+
+                    pos = ai_result["pos"]
+                    category_name = ai_result["category"]
+
+                    # Validate POS
+                    if pos not in self.valid_pos:
+                        logger.warning(f"⚠️ Invalid POS returned: {pos} → fallback to 'noun'")
+                        pos = "noun"
+
+                    # Always save/update POS
+                    await self._set_word_meaning_pos(word, pos)
+
+                    # Conditionally assign category
+                    if category_name is not None:
+                        if category_name in category_map:
+                            await self._link_word_to_category(word, category_map[category_name])
+                        else:
+                            logger.warning(f"⚠️ Unknown category: '{category_name}'")
+                    else:
+                        logger.debug(f"⏭️ No category assigned for '{word.text}'")
+
+                    # ✅ Commit after each word
+                    await self.db.commit()
+                    processed_count += 1
+                    logger.info(f"✅ Done: '{word.text}' → POS='{pos}', Cat='{category_name}'")
+
+                except Exception as e:
+                    await self.db.rollback()
+                    logger.error(f"💥 Failed on word ID {word.id} ('{word.text}'): {str(e)}", exc_info=True)
+                    failed_count += 1
+                    continue
+
+        logger.info(f"🎉 Completed: {processed_count} success, {failed_count} failed")
+        return {
+            "status": "completed",
+            "range": {"min_id": min_id, "max_id": max_id},
+            "processed": processed_count,
+            "failed": failed_count,
+            "total": len(words),
+            "message": f"POS and category assigned to {processed_count}/{len(words)} Spanish words."
+        }
+
+    async def _get_pos_and_category(self, client: httpx.AsyncClient, word: str) -> Dict[str, str] | None:
+        """
+        Send Spanish prompt to DeepSeek.
+        Returns POS and Category in English.
+        """
+        prompt = f"""
+        Analiza la palabra española "{word}".
+
+        Devuelve un objeto JSON con:
+        {{
+          "pos": "etiqueta de categoría gramatical en inglés: uno de [{', '.join(self.valid_pos)}]",
+          "category": "nombre de la mejor categoría coincidente en inglés de esta lista: [{', '.join(self.categories_list)}] o null si no encaja bien"
+        }}
+
+        Reglas:
+        - Solo devuelve JSON válido, sin explicaciones
+        - Si es pronombre (yo, tú), preposición (a, de), conjunción (y, pero) → category = null
+        - No adivines — si no estás seguro, usa category = null
+        - Tanto 'pos' como 'category' deben estar en inglés
+        """
+
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [{"role": "user", "content": prompt}],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.3,
+            "max_tokens": 200
+        }
+
+        try:
+            response = await client.post(self.deepseek_url, headers=self.auth_headers, json=payload)
+            if response.status_code != 200:
+                logger.warning(f"📡 API error {response.status_code}: {response.text}")
+                return None
+
+            content = response.json()["choices"][0]["message"]["content"].strip()
+            content = re.sub(r"^```json|```$", "", content).strip()
+            data = json.loads(content)
+
+            pos = data.get("pos", "").lower().strip()
+            category = data.get("category")
+
+            # Normalize
+            if str(category).lower() in ["null", "none", ""]:
+                category = None
+
+            # Force none for function words
+            if word.lower() in self.es_function_words:
+                category = None
+
+            return {"pos": pos, "category": category}
+        except Exception as e:
+            logger.error(f"🔥 Failed to parse AI response for '{word}': {str(e)}")
+            return None
+
+    async def _set_word_meaning_pos(self, word: Word, pos: str):
+        """
+        Get or create WordMeaning and set POS.
+        """
+        result = await self.db.execute(
+            select(WordMeaning).where(WordMeaning.word_id == word.id)
+        )
+        meaning = result.scalars().first()
+
+        if not meaning:
+            meaning = WordMeaning(
+                word_id=word.id,
+                definition=f"Significado generado automáticamente para '{word.text}'",
+                pos=pos
+            )
+            self.db.add(meaning)
+            logger.debug(f"<created> WordMeaning for '{word.text}'")
+        else:
+            meaning.pos = pos
+            logger.debug(f"<updated> POS for '{word.text}' → {pos}")
+
+    async def _link_word_to_category(self, word: Word, category: Category):
+        """
+        Link word to category using direct SQL check (safe in async).
+        Avoids lazy-loading issues.
+        """
+        category_name = category.name
+        if not category_name:
+            logger.debug(f"<skip> No category assigned for '{word.text}'")
+            return
+
+        # Re-fetch category by name to ensure session consistency (optional safety)
+        result = await self.db.execute(select(Category).where(Category.name == category_name))
+        category = result.scalars().first()
+        if not category:
+            logger.warning(f"⚠️ Category '{category_name}' not found")
+            return
+
+        # Check if already linked
+        stmt = select(word_category_association).where(
+            word_category_association.c.word_id == word.id,
+            word_category_association.c.category_id == category.id
+        )
+        result = await self.db.execute(stmt)
+        exists = result.first()
+
+        if not exists:
+            insert_stmt = word_category_association.insert().values(
+                word_id=word.id,
+                category_id=category.id
+            )
+            await self.db.execute(insert_stmt)
+            logger.debug(f"<linked> '{word.text}' → '{category_name}'")
+        else:
+            logger.debug(f"<skip> Already linked: '{word.text}' ↔ '{category_name}'")
+
+
+############################################################################################################################################# For Russian languages section
 class CreateMainStructureForRussianRepository:
 
     def __init__(self, db: AsyncSession):
@@ -1249,12 +1727,443 @@ class TranslateRussianSentences:
         return results
 
 
+class TranslateRussianWord:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.api_key = os.getenv("YANDEX_TRANSLATE_API_SECRET_KEY")
+        self.folder_id = os.getenv("YANDEX_FOLDER_ID")
+        self.translate_url = "https://translate.api.cloud.yandex.net/translate/v2/translate"
+
+        if not self.api_key:
+            raise RuntimeError("YANDEX_TRANSLATE_API_SECRET_KEY is not set")
+        if not self.folder_id:
+            raise RuntimeError("YANDEX_FOLDER_ID is not set")
+
+        # Target languages to translate INTO
+        self.target_langs = ["en", "es", "tr"]
+        self.headers = {
+            "Authorization": f"Api-Key {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    async def translate_russian_word(self, min_id: int = None, max_id: int = None) -> Dict[str, any]:
+        """
+        Translate Russian words (ru) into en, es, tr.
+        Only translates words missing one or more of the target translations.
+        Processes all eligible words in [min_id, max_id], one by one.
+        Commits after each word.
+        """
+        # Step 1: Ensure required languages exist
+        lang_map = await self._load_languages(["ru"] + self.target_langs)
+        ru_lang = lang_map.get("ru")
+        if not ru_lang:
+            raise RuntimeError("Russian language (ru) not found in DB")
+
+        # Step 2: Query Russian words in range
+        query = select(Word).where(Word.language_code == "ru")
+
+        if min_id is not None:
+            query = query.where(Word.id >= min_id)
+        if max_id is not None:
+            query = query.where(Word.id <= max_id)
+
+        # Exclude words already fully translated
+        subquery = (
+            select(Translation.source_word_id)
+            .where(Translation.target_language_code.in_(self.target_langs))
+            .group_by(Translation.source_word_id)
+            .having(func.count(Translation.target_language_code) >= len(self.target_langs))
+        ).subquery()
+
+        query = query.where(Word.id.not_in(select(subquery.c.source_word_id)))
+        query = query.order_by(Word.id)
+
+        result = await self.db.execute(query)
+        words = result.scalars().all()
+
+        if not words:
+            logger.info(f"✅ No untranslated Russian words found in range {min_id}–{max_id}")
+            return {
+                "status": "no_pending",
+                "range": {"min_id": min_id, "max_id": max_id},
+                "message": "No Russian words need translation."
+            }
+
+        logger.info(f"🔍 Found {len(words)} Russian words to translate in range {min_id}–{max_id}")
+
+        processed_count = 0
+        failed_count = 0
+
+        # Process one word at a time
+        async with aiohttp.ClientSession() as session:
+            for word in words:
+                try:
+                    logger.info(f"📌 Translating Russian word ID {word.id}: '{word.text}' (ru)")
+
+                    # Get existing translations
+                    result_trans = await self.db.execute(
+                        select(Translation.target_language_code)
+                        .where(Translation.source_word_id == word.id)
+                    )
+                    existing_langs = {row[0] for row in result_trans.fetchall()}
+                    missing_langs = [lang for lang in self.target_langs if lang not in existing_langs]
+
+                    if not missing_langs:
+                        logger.debug(f"⏭️ All translations exist for word ID {word.id}")
+                        continue
+
+                    logger.info(f"🌐 Translating to: {missing_langs}")
+
+                    # Translate all missing languages
+                    translations = await self._translate_text_batch(session, word.text, missing_langs)
+                    saved_count = 0
+
+                    for lang_code, translated_text in translations.items():
+                        if not translated_text:
+                            continue
+
+                        trans_model = Translation(
+                            source_word_id=word.id,
+                            target_language_code=lang_code,
+                            translated_text=translated_text.strip(),
+                        )
+                        self.db.add(trans_model)
+                        logger.debug(f"<saved> [{lang_code}] {translated_text}")
+                        saved_count += 1
+
+                    # ✅ Commit after each word
+                    await self.db.commit()
+                    processed_count += 1
+                    logger.info(f"✅ Translated word ID {word.id} → {saved_count} languages")
+
+                except Exception as e:
+                    await self.db.rollback()
+                    logger.error(f"💥 Failed to process word ID {word.id} ('{word.text}'): {str(e)}", exc_info=True)
+                    failed_count += 1
+                    continue  # Keep going
+
+        logger.info(f"🎉 Batch translation completed: {processed_count} success, {failed_count} failed")
+        return {
+            "status": "completed",
+            "range": {"min_id": min_id, "max_id": max_id},
+            "total_found": len(words),
+            "translated": processed_count,
+            "failed": failed_count,
+            "message": f"Translated {processed_count}/{len(words)} Russian words"
+        }
+
+    async def _load_languages(self, codes: List[str]) -> Dict[str, Language]:
+        """Load languages from DB, auto-create if missing."""
+        result = await self.db.execute(select(Language).where(Language.code.in_(codes)))
+        lang_map = {lang.code: lang for lang in result.scalars().all()}
+
+        names = {
+            "ru": "Russian",
+            "en": "English",
+            "es": "Spanish",
+            "tr": "Turkish"
+        }
+
+        for code in codes:
+            if code not in lang_map:
+                new_lang = Language(code=code, name=names.get(code, code.capitalize()))
+                self.db.add(new_lang)
+                lang_map[code] = new_lang
+                logger.info(f"🔧 Auto-added language: {code} ({new_lang.name})")
+
+        if lang_map:
+            await self.db.flush()
+
+        return lang_map
+
+    async def _translate_text_batch(self, session: aiohttp.ClientSession, text: str, targets: List[str]) -> Dict[str, str]:
+        """
+        Translate one Russian word into multiple languages.
+        One request per language.
+        """
+        results = {}
+
+        for lang_code in targets:
+            try:
+                payload = {
+                    "folderId": self.folder_id,
+                    "texts": [text],
+                    "targetLanguageCode": lang_code,
+                    "format": "PLAIN_TEXT"
+                }
+
+                async with session.post(self.translate_url, json=payload, headers=self.headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        translated = data["translations"][0]["text"].strip()
+                        results[lang_code] = translated
+                        logger.debug(f"<translation_OK> [{lang_code}] {translated}")
+                    else:
+                        error_text = await resp.text()
+                        logger.warning(f"📡 Failed to translate '{text}' → {lang_code}: {error_text}")
+                        results[lang_code] = None
+
+            except Exception as e:
+                logger.error(f"🚨 Translation failed for '{text}' → {lang_code}: {str(e)}", exc_info=True)
+                results[lang_code] = None
+
+            await asyncio.sleep(0.1)  # Avoid rate limits
+
+        return results
+
+
+class DefinePosCategoryRussianRepository:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not self.api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY is not set.")
+
+        self.client = httpx.AsyncClient(timeout=30.0)
+        self.deepseek_url = "https://api.deepseek.com/v1/chat/completions"
+        self.auth_headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        # Allowed POS values (in English, stored in DB)
+        self.valid_pos = [
+            "noun", "verb", "adjective", "adverb",
+            "pronoun", "preposition", "conjunction",
+            "interjection", "article"
+        ]
+
+        # Predefined category names (must match DB exactly — in English)
+        self.categories_list = [
+            "Greetings & Polite Phrases", "Numbers", "Colors",
+            "Days of the Week", "Months & Seasons", "Family Members",
+            "Food & Drinks", "Animals", "Clothing", "Body Parts",
+            "Emotions & Feelings", "Weather", "House & Rooms"
+        ]
+
+        # Blocklist: Russian function words → no category
+        self.ru_function_words = {
+            # Pronouns
+            "я", "ты", "он", "она", "оно", "мы", "вы", "они",
+            "меня", "тебя", "его", "её", "их", "нам", "вам", "им",
+            # Possessive
+            "мой", "твой", "свой", "наш", "ваш",
+            # Prepositions
+            "в", "на", "с", "у", "к", "от", "до", "для", "по", "за", "из", "о", "об", "про",
+            # Conjunctions
+            "и", "или", "а", "но", "да", "зато", "однако",
+            # Particles
+            "бы", "ли", "же", "ж", "то", "так", "пускай", "давай"
+        }
+
+    async def define_pos_category_russian_word(self, min_id: int = None, max_id: int = None) -> Dict[str, any]:
+        """
+        For each Russian word in [min_id, max_id]:
+        - Use DeepSeek (with Russian prompt) to get main POS and best category (in English)
+        - Save POS to WordMeaning
+        - Link to Category by English name
+        Commits after each word.
+        """
+        # Step 1: Load all categories into memory (by English name)
+        result = await self.db.execute(select(Category))
+        categories = result.scalars().all()
+        category_map = {cat.name: cat for cat in categories}
+
+        missing_cats = [name for name in self.categories_list if name not in category_map]
+        if missing_cats:
+            raise RuntimeError(f"Missing categories in DB: {missing_cats}")
+
+        logger.info(f"✅ Loaded {len(category_map)} categories")
+
+        # Step 2: Query Russian words
+        query = select(Word).where(Word.language_code == "ru")
+        if min_id is not None:
+            query = query.where(Word.id >= min_id)
+        if max_id is not None:
+            query = query.where(Word.id <= max_id)
+        query = query.order_by(Word.id)
+
+        result = await self.db.execute(query)
+        words = result.scalars().all()
+
+        if not words:
+            logger.info("✅ No Russian words found in the given range.")
+            return {"status": "no_words", "processed": 0}
+
+        logger.info(f"🔍 Processing {len(words)} Russian words...")
+
+        processed_count = 0
+        failed_count = 0
+
+        async with httpx.AsyncClient() as client:
+            for word in words:
+                try:
+                    logger.info(f"📌 Processing Russian word ID {word.id}: '{word.text}'")
+
+                    # Get POS and category from AI (via Russian prompt)
+                    ai_result = await self._get_pos_and_category(client, word.text)
+                    if not ai_result:
+                        logger.warning(f"❌ AI failed for word '{word.text}'")
+                        failed_count += 1
+                        continue
+
+                    pos = ai_result["pos"]
+                    category_name = ai_result["category"]  # Already in English!
+
+                    # Validate POS
+                    if pos not in self.valid_pos:
+                        logger.warning(f"⚠️ Invalid POS returned: {pos} → fallback to 'noun'")
+                        pos = "noun"
+
+                    # Always save/update POS
+                    await self._set_word_meaning_pos(word, pos)
+
+                    # Conditionally assign category
+                    if category_name is not None:
+                        if category_name in category_map:
+                            await self._link_word_to_category(word, category_map[category_name])
+                        else:
+                            logger.warning(f"⚠️ Unknown category: '{category_name}'")
+                    else:
+                        logger.debug(f"⏭️ No category assigned for '{word.text}'")
+
+                    # ✅ Commit after each word
+                    await self.db.commit()
+                    processed_count += 1
+                    logger.info(f"✅ Done: '{word.text}' → POS='{pos}', Cat='{category_name}'")
+
+                except Exception as e:
+                    await self.db.rollback()
+                    logger.error(f"💥 Failed on word ID {word.id} ('{word.text}'): {str(e)}", exc_info=True)
+                    failed_count += 1
+                    continue
+
+        logger.info(f"🎉 Completed: {processed_count} success, {failed_count} failed")
+        return {
+            "status": "completed",
+            "range": {"min_id": min_id, "max_id": max_id},
+            "processed": processed_count,
+            "failed": failed_count,
+            "total": len(words),
+            "message": f"POS and category assigned to {processed_count}/{len(words)} Russian words."
+        }
+
+    async def _get_pos_and_category(self, client: httpx.AsyncClient, word: str) -> Dict[str, str] | None:
+        """
+        Send Russian prompt to DeepSeek.
+        Returns POS and Category in English.
+        """
+        prompt = f"""
+        Проанализируй русское слово "{word}".
+
+        Верни JSON с двумя полями:
+        {{
+          "pos": "часть речи на английском языке: одно из [{', '.join(self.valid_pos)}]",
+          "category": "лучшая подходящая категория на английском языке из списка: [{', '.join(self.categories_list)}] ИЛИ null, если не подходит ни одна"
+        }}
+
+        Правила:
+        - Возвращай ТОЛЬКО валидный JSON, без объяснений
+        - Если это местоимение (я, ты), предлог (в, на), союз (и, но), частица (бы, ли) → category = null
+        - Не угадывай — если сомневаешься, верни category = null
+        - POS всегда на английском
+        - Категория всегда на английском (например: 'Food & Drinks')
+        """
+
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [{"role": "user", "content": prompt}],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.3,
+            "max_tokens": 200
+        }
+
+        try:
+            response = await client.post(self.deepseek_url, headers=self.auth_headers, json=payload)
+            if response.status_code != 200:
+                logger.warning(f"📡 API error {response.status_code}: {response.text}")
+                return None
+
+            content = response.json()["choices"][0]["message"]["content"].strip()
+            content = re.sub(r"^```json|```$", "", content).strip()
+            data = json.loads(content)
+
+            pos = data.get("pos", "").lower().strip()
+            category = data.get("category")
+
+            # Normalize category
+            if category in ["null", "none", ""]:
+                category = None
+
+            # Force none for known function words
+            if word.lower() in self.ru_function_words:
+                category = None
+
+            return {"pos": pos, "category": category}
+        except Exception as e:
+            logger.error(f"🔥 Failed to parse AI response for '{word}': {str(e)}")
+            return None
+
+    async def _set_word_meaning_pos(self, word: Word, pos: str):
+        """
+        Get or create WordMeaning and set POS.
+        """
+        result = await self.db.execute(
+            select(WordMeaning).where(WordMeaning.word_id == word.id)
+        )
+        meaning = result.scalars().first()
+
+        if not meaning:
+            # Ensure definition is not NULL
+            meaning = WordMeaning(
+                word_id=word.id,
+                # definition=f"Auto-generated meaning for '{word.text}'",
+                pos=pos
+            )
+            self.db.add(meaning)
+            logger.debug(f"<created> WordMeaning for '{word.text}'")
+        else:
+            meaning.pos = pos
+            logger.debug(f"<updated> POS for '{word.text}' → {pos}")
+
+    async def _link_word_to_category(self, word: Word, category: Category):
+
+        category_name = category.name
+
+        if not category_name:
+            logger.debug(f"<skip> No category assigned for '{word.text}'")
+            return
+
+        result = await self.db.execute(select(Category).where(Category.name == category_name))
+        category = result.scalars().first()
+
+        if not category:
+            logger.warning(f"⚠️ Category '{category_name}' not found")
+            return
+
+        # Check if already linked
+        stmt = select(word_category_association).where(
+            word_category_association.c.word_id == word.id,
+            word_category_association.c.category_id == category.id
+        )
+        result = await self.db.execute(stmt)
+        exists = result.first()
+
+        if not exists:
+            stmt = word_category_association.insert().values(
+                word_id=word.id,
+                category_id=category.id
+            )
+            await self.db.execute(stmt)
+            logger.debug(f"<linked> '{word.text}' → '{category_name}'")
+        else:
+            logger.debug(f"<skip> Already linked: '{word.text}' ↔ '{category_name}'")
+
+
 
 
 
 ############################################################################################################################################# For English languages section
-
-############################################ Save English words to WordModel
 class SaveEnglishWordsToDatabaseRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -1916,6 +2825,443 @@ class TranslateEnglishSentencesRepository:
                 await asyncio.sleep(0.1)
 
         return results
+
+
+class TranslateEnglishWord:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.api_key = os.getenv("YANDEX_TRANSLATE_API_SECRET_KEY")
+        self.folder_id = os.getenv("YANDEX_FOLDER_ID")
+        self.translate_url = "https://translate.api.cloud.yandex.net/translate/v2/translate"
+
+        if not self.api_key:
+            raise RuntimeError("YANDEX_TRANSLATE_API_SECRET_KEY is not set")
+        if not self.folder_id:
+            raise RuntimeError("YANDEX_FOLDER_ID is not set")
+
+        # Target languages
+        self.target_langs = ["es", "ru", "tr"]
+        self.headers = {
+            "Authorization": f"Api-Key {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    async def translate_english_word(self, min_id: int = None, max_id: int = None) -> Dict[str, any]:
+        """
+        Translate English words into Spanish, Russian, and Turkish.
+        Only translates words missing one or more of the target translations.
+        Processes all eligible words in [min_id, max_id], one by one.
+        Commits after each word.
+        """
+        # Step 1: Ensure required languages exist
+        lang_map = await self._load_languages(["en"] + self.target_langs)
+        en_lang = lang_map.get("en")
+        if not en_lang:
+            raise RuntimeError("English language (en) not found in DB")
+
+        # Step 2: Query English words in range
+        query = select(Word).where(Word.language_code == "en")
+
+        if min_id is not None:
+            query = query.where(Word.id >= min_id)
+        if max_id is not None:
+            query = query.where(Word.id <= max_id)
+
+        # Exclude words already fully translated
+        subquery = (
+            select(Translation.source_word_id)
+            .where(Translation.target_language_code.in_(self.target_langs))
+            .group_by(Translation.source_word_id)
+            .having(func.count(Translation.target_language_code) >= len(self.target_langs))
+        ).subquery()
+
+        query = query.where(Word.id.not_in(select(subquery.c.source_word_id)))
+        query = query.order_by(Word.id)
+
+        result = await self.db.execute(query)
+        words = result.scalars().all()
+
+        if not words:
+            logger.info(f"✅ No untranslated English words found in range {min_id}–{max_id}")
+            return {
+                "status": "no_pending",
+                "range": {"min_id": min_id, "max_id": max_id},
+                "message": "No English words need translation."
+            }
+
+        logger.info(f"🔍 Found {len(words)} English words to translate in range {min_id}–{max_id}")
+
+        processed_count = 0
+        failed_count = 0
+
+        # Process one word at a time
+        async with aiohttp.ClientSession() as session:
+            for word in words:
+                try:
+                    logger.info(f"📌 Translating word ID {word.id}: '{word.text}' (en)")
+
+                    # Get existing translations
+                    result_trans = await self.db.execute(
+                        select(Translation.target_language_code)
+                        .where(Translation.source_word_id == word.id)
+                    )
+                    existing_langs = {row[0] for row in result_trans.fetchall()}
+                    missing_langs = [lang for lang in self.target_langs if lang not in existing_langs]
+
+                    if not missing_langs:
+                        logger.debug(f"⏭️ All translations exist for word ID {word.id}")
+                        continue
+
+                    logger.info(f"🌐 Translating to: {missing_langs}")
+
+                    # Translate all missing languages
+                    translations = await self._translate_text_batch(session, word.text, missing_langs)
+                    saved_count = 0
+
+                    for lang_code, translated_text in translations.items():
+                        if not translated_text:
+                            continue
+
+                        trans_model = Translation(
+                            source_word_id=word.id,
+                            target_language_code=lang_code,
+                            translated_text=translated_text.strip(),
+                        )
+                        self.db.add(trans_model)
+                        logger.debug(f"<saved> [{lang_code}] {translated_text}")
+                        saved_count += 1
+
+                    # ✅ Commit after each word
+                    await self.db.commit()
+                    processed_count += 1
+                    logger.info(f"✅ Translated word ID {word.id} → {saved_count} languages")
+
+                except Exception as e:
+                    await self.db.rollback()
+                    logger.error(f"💥 Failed to process word ID {word.id} ('{word.text}'): {str(e)}", exc_info=True)
+                    failed_count += 1
+                    continue  # Keep going
+
+        logger.info(f"🎉 Word translation batch completed: {processed_count} done, {failed_count} failed")
+        return {
+            "status": "completed",
+            "range": {"min_id": min_id, "max_id": max_id},
+            "total_found": len(words),
+            "translated": processed_count,
+            "failed": failed_count,
+            "message": f"Translated {processed_count}/{len(words)} English words"
+        }
+
+    async def _load_languages(self, codes: List[str]) -> Dict[str, Language]:
+        """Load languages from DB, auto-create if missing."""
+        result = await self.db.execute(select(Language).where(Language.code.in_(codes)))
+        lang_map = {lang.code: lang for lang in result.scalars().all()}
+
+        names = {
+            "en": "English",
+            "es": "Spanish",
+            "ru": "Russian",
+            "tr": "Turkish"
+        }
+
+        for code in codes:
+            if code not in lang_map:
+                new_lang = Language(code=code, name=names.get(code, code.capitalize()))
+                self.db.add(new_lang)
+                lang_map[code] = new_lang
+                logger.info(f"🔧 Auto-added language: {code} ({new_lang.name})")
+
+        if lang_map:
+            await self.db.flush()
+
+        return lang_map
+
+    async def _translate_text_batch(self, session: aiohttp.ClientSession, text: str, targets: List[str]) -> Dict[str, str]:
+        """
+        Translate one English word into multiple languages.
+        Makes separate request per language.
+        """
+        results = {}
+
+        for lang_code in targets:
+            try:
+                payload = {
+                    "folderId": self.folder_id,
+                    "texts": [text],
+                    "targetLanguageCode": lang_code,
+                    "format": "PLAIN_TEXT"
+                }
+
+                async with session.post(self.translate_url, json=payload, headers=self.headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        translated = data["translations"][0]["text"].strip()
+                        results[lang_code] = translated
+                        logger.debug(f"<translation_OK> [{lang_code}] {translated}")
+                    else:
+                        error_text = await resp.text()
+                        logger.warning(f"📡 Failed to translate '{text}' → {lang_code}: {error_text}")
+                        results[lang_code] = None
+
+            except Exception as e:
+                logger.error(f"🚨 Translation failed for '{text}' → {lang_code}: {str(e)}", exc_info=True)
+                results[lang_code] = None
+
+            await asyncio.sleep(0.1)  # Avoid rate limits
+
+        return results
+
+
+class DefinePosCategoryEnglishRepository:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not self.api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY is not set.")
+
+        self.client = httpx.AsyncClient(timeout=30.0)
+        self.deepseek_url = "https://api.deepseek.com/v1/chat/completions"
+        self.auth_headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        # Allowed POS values (standard tags)
+        self.valid_pos = [
+            "noun", "verb", "adjective", "adverb",
+            "pronoun", "preposition", "conjunction",
+            "interjection", "article"
+        ]
+
+        # Predefined categories (must match DB exactly)
+        self.categories_list = [
+            "Greetings & Polite Phrases", "Numbers", "Colors",
+            "Days of the Week", "Months & Seasons", "Family Members",
+            "Food & Drinks", "Animals", "Clothing", "Body Parts",
+            "Emotions & Feelings", "Weather", "House & Rooms"
+        ]
+
+    async def define_pos_category_english_word(self, min_id: int = None, max_id: int = None) -> Dict[str, any]:
+        """
+        For each English word in [min_id, max_id]:
+        - Use DeepSeek to get main POS and best category
+        - Save POS to WordMeaning (create if needed)
+        - Link word to one primary category
+        Commits after each word.
+        """
+        # Step 1: Load all categories into memory
+        result = await self.db.execute(select(Category))
+        categories = result.scalars().all()
+        category_map = {cat.name: cat for cat in categories}
+
+        missing_cats = [name for name in self.categories_list if name not in category_map]
+        if missing_cats:
+            raise RuntimeError(f"Missing categories in DB: {missing_cats}")
+
+        logger.info(f"✅ Loaded {len(category_map)} categories")
+
+        # Step 2: Query eligible English words
+        query = select(Word).where(Word.language_code == "en")
+        if min_id is not None:
+            query = query.where(Word.id >= min_id)
+        if max_id is not None:
+            query = query.where(Word.id <= max_id)
+        query = query.order_by(Word.id)
+
+        result = await self.db.execute(query)
+        words = result.scalars().all()
+
+        if not words:
+            logger.info("✅ No English words found in the given range.")
+            return {"status": "no_words", "processed": 0}
+
+        logger.info(f"🔍 Processing {len(words)} English words...")
+
+        processed_count = 0
+        failed_count = 0
+
+
+        async with httpx.AsyncClient() as client:
+            for word in words:
+                try:
+                    logger.info(f"📌 Processing word ID {word.id}: '{word.text}'")
+
+                    # Call AI to get POS + category
+                    ai_result = await self._get_pos_and_category(client, word.text)
+                    if not ai_result:
+                        logger.warning(f"❌ AI failed for word '{word.text}'")
+                        failed_count += 1
+                        continue
+
+                    pos = ai_result["pos"]
+                    category_name = ai_result["category"]  # Can be None
+
+                    # ✅ VALIDATE AND SET POS FIRST
+                    if pos not in self.valid_pos:
+                        logger.warning(f"⚠️ Invalid POS returned: {pos} → using 'noun' as fallback")
+                        pos = "noun"
+
+                    # ✅ ALWAYS save/update POS
+                    await self._set_word_meaning_pos(word, pos)
+
+                    # 🔁 CONDITIONALLY assign category
+                    if category_name is not None:
+                        if category_name in category_map:
+                            await self._link_word_to_category(word, category_map[category_name])
+                        else:
+                            logger.warning(f"⚠️ Unknown category: {category_name}")
+                    else:
+                        logger.debug(f"⏭️ No category assigned for '{word.text}' — skipping")
+
+                    # ✅ Commit after each word
+                    await self.db.commit()
+                    processed_count += 1
+                    logger.info(f"✅ Done: '{word.text}' → POS='{pos}', Cat='{category_name}'")
+
+                except Exception as e:
+                    await self.db.rollback()
+                    logger.error(f"💥 Failed on word ID {word.id} ('{word.text}'): {str(e)}", exc_info=True)
+                    failed_count += 1
+                    continue
+
+
+        logger.info(f"🎉 Completed: {processed_count} success, {failed_count} failed")
+        return {
+            "status": "completed",
+            "range": {"min_id": min_id, "max_id": max_id},
+            "processed": processed_count,
+            "failed": failed_count,
+            "total": len(words),
+            "message": f"POS and category assigned to {processed_count}/{len(words)} words."
+        }
+
+    async def _get_pos_and_category(self, client: httpx.AsyncClient, word: str) -> Dict[str, str] | None:
+        """
+        Ask DeepSeek for:
+        - Main POS (most common use)
+        - Best-matching category from predefined list
+        """
+        prompt = f"""
+        Analyze the English word "{word}".
+
+        Return a JSON object:
+        {{
+          "pos": "main part of speech ({', '.join(self.valid_pos)})",
+          "category": "best-matching category OR 'none' if not clearly fitting"
+        }}
+
+        Category definitions:
+        - Greetings & Polite Phrases: Used to greet or be polite: hello, hi, please, thank you, sorry, excuse me, welcome
+        - Numbers: Words for counting: one, two, ten, hundred, first, second
+        - Colors: Red, blue, green, black, white, etc.
+        - Days of the Week: Monday, Tuesday, ..., Sunday
+        - Months & Seasons: January, February, spring, summer, autumn, winter
+        - Family Members: mother, father, brother, sister, son, daughter, grandma
+        - Food & Drinks: apple, bread, water, coffee, meat, rice
+        - Animals: dog, cat, lion, bird, fish
+        - Clothing: shirt, pants, dress, shoes, hat, jacket
+        - Body Parts: head, hand, eye, nose, leg, heart
+        - Emotions & Feelings: happy, sad, angry, excited, bored, scared
+        - Weather: sunny, rainy, snowy, windy, hot, cold
+        - House & Rooms: kitchen, bedroom, door, window, table, chair
+
+        Rules:
+        - Only return valid JSON
+        - If word is pronoun (I, you, he), article (a, the), conjunction (and, but), preposition (in, on) → category = "none"
+        - If no strong match → category = "none"
+        - Do NOT guess
+        """
+
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [{"role": "user", "content": prompt}],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.3,
+            "max_tokens": 200
+        }
+
+        try:
+            response = await client.post(self.deepseek_url, headers=self.auth_headers, json=payload)
+            if response.status_code != 200:
+                logger.warning(f"📡 API error {response.status_code}: {response.text}")
+                return None
+
+            content = response.json()["choices"][0]["message"]["content"].strip()
+            content = re.sub(r"^```json|```$", "", content).strip()
+            data = json.loads(content)
+
+            pos = data.get("pos", "").lower().strip()
+            category = data.get("category", "").strip()
+
+            # Normalize
+            if category.lower() in ["none", "no", "null", ""]:
+                category = None
+
+            # Force none for function words
+            if word.lower() in ["i", "you", "he", "she", "it", "we", "they",
+                                "me", "him", "her", "us", "them",
+                                "a", "an", "the", "this", "that",
+                                "and", "or", "but", "so", "because",
+                                "in", "on", "at", "by", "with", "to", "for"]:
+                category = None
+
+            return {"pos": pos, "category": category}
+        except Exception as e:
+            logger.error(f"🔥 Failed to parse AI response for '{word}': {str(e)}")
+            return None
+
+    async def _set_word_meaning_pos(self, word: Word, pos: str):
+        """
+        Get or create a WordMeaning for this word and set its POS.
+        We assume one main meaning for now.
+        """
+        result = await self.db.execute(
+            select(WordMeaning).where(WordMeaning.word_id == word.id)
+        )
+        meaning = result.scalars().first()
+
+        if not meaning:
+            meaning = WordMeaning(
+                word_id=word.id,
+                # definition=f"Main meaning of '{word.text}'",
+                pos=pos
+            )
+            self.db.add(meaning)
+            logger.debug(f"<created> WordMeaning for '{word.text}'")
+        else:
+            meaning.pos = pos
+            logger.debug(f"<updated> POS for '{word.text}' → {pos}")
+
+    async def _link_word_to_category(self, word: Word, category_name: str | None):
+        if not category_name:
+            logger.debug(f"<skip> No category assigned for '{word.text}'")
+            return
+
+        result = await self.db.execute(select(Category).where(Category.name == category_name.name))
+        category = result.scalars().first()
+
+        if not category:
+            logger.warning(f"⚠️ Category '{category_name}' not found")
+            return
+
+        # Check if already linked
+        stmt = select(word_category_association).where(
+            word_category_association.c.word_id == word.id,
+            word_category_association.c.category_id == category.id
+        )
+        result = await self.db.execute(stmt)
+        exists = result.first()
+
+        if not exists:
+            stmt = word_category_association.insert().values(
+                word_id=word.id,
+                category_id=category.id
+            )
+            await self.db.execute(stmt)
+            logger.debug(f"<linked> '{word.text}' → '{category_name}'")
+        else:
+            logger.debug(f"<skip> Already linked: '{word.text}' ↔ '{category_name}'")
+
 
 
 

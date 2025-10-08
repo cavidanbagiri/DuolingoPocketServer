@@ -22,10 +22,10 @@ from app.schemas.favorite_schemas import (FavoriteWordBase, FavoriteWordResponse
                                           FavoriteFetchWordResponse, CategoryWordsResponse, MoveWordResponse, MoveWordRequest)
 
 from app.repositories.structure_repository import (CreateMainStructureRepository,
-                                                   GenerateEnglishSentence, TranslateEnglishSentencesRepository,
-                                                   CreateMainStructureForRussianRepository, GenerateRussianSentences, TranslateRussianSentences,
-                                                    CreateMainStructureForSpanishRepository, GenerateSpanishSentences, TranslateSpanishSentences
-                                                   )
+                                                    DefineCommonCategories,
+                                                    GenerateEnglishSentence, TranslateEnglishSentencesRepository, TranslateEnglishWord, DefinePosCategoryEnglishRepository,
+                                                    CreateMainStructureForRussianRepository, GenerateRussianSentences, TranslateRussianSentences,TranslateRussianWord, DefinePosCategoryRussianRepository,
+                                                    CreateMainStructureForSpanishRepository, GenerateSpanishSentences, TranslateSpanishSentences, TranslateSpanishWord, DefinePosCategorySpanishRepository)
 
 from app.services.ai_service import AIService
 
@@ -35,6 +35,21 @@ from app.services.ai_service import AIService
 router = APIRouter()
 
 
+############################################################################################ Common Tables
+@router.post("/seed-core-categories", status_code=200)
+async def seed_core_categories(db: AsyncSession = Depends(get_db)):
+    """
+    Create the 15 foundational learning categories.
+    Safe to run multiple times — skips existing ones.
+    """
+    try:
+        repo = DefineCommonCategories(db)
+        result = await repo.define_common_categories()
+        return {"success": True, "data": result}
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"💥 Failed to seed categories: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
 
 
 
@@ -94,6 +109,50 @@ async def translate_spanish_sentences(
 
 
 
+@router.post("/spanish/translate_spanish_words", status_code=200)
+async def translate_spanish_words(
+    min_id: int = None,
+    max_id: int = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Translate Spanish words into English, Russian, and Turkish.
+    Saves to `Translation` table.
+    Processes all eligible words in the given ID range.
+    Commits after each word.
+    """
+    try:
+        repo = TranslateSpanishWord(db)
+        result = await repo.translate_spanish_word(min_id=min_id, max_id=max_id)
+        return {"success": True, "data": result}
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"💥 Spanish word translation failed: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+
+
+@router.post("/spanish/define_pos_category_spanish_words", status_code=200)
+async def define_pos_category_spanish_words(
+    min_id: int = None,
+    max_id: int = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Assign main POS and best-matching category to Spanish words.
+    Uses DeepSeek AI with Spanish prompts.
+    Safe to resume after crash.
+    """
+    try:
+        repo = DefinePosCategorySpanishRepository(db)
+        result = await repo.define_pos_category_spanish_word(min_id=min_id, max_id=max_id)
+        return {"success": True, "data": result}
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"💥 Spanish POS/Category failed: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
 
 
 ############################################################################################ Russian
@@ -127,7 +186,6 @@ async def generate_russian_sentences(
         raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
 
 
-
 @router.post('/russian/translate_sentence', status_code=200)
 async def translate_russian_sentences(
     min_id: int = None,
@@ -147,6 +205,51 @@ async def translate_russian_sentences(
         await db.rollback()
         logger.error(f"💥 Sentence translation failed: {str(ex)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+@router.post("/russian/translate_russian_words", status_code=200)
+async def translate_russian_words(
+    min_id: int = None,
+    max_id: int = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Translate Russian words into English, Spanish, and Turkish.
+    Saves to `Translation` table.
+    Processes all eligible words in the given ID range.
+    Commits after each word.
+    """
+    try:
+        repo = TranslateRussianWord(db)
+        result = await repo.translate_russian_word(min_id=min_id, max_id=max_id)
+        return {"success": True, "data": result}
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"💥 Russian word translation failed: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+
+@router.post("/russian/define_pos_category_russian_words", status_code=200)
+async def define_pos_category_english_word(
+    min_id: int = None,
+    max_id: int = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Assign main POS and best-matching category to English words.
+    Uses DeepSeek AI.
+    Safe to resume after crash.
+    """
+    try:
+        repo = DefinePosCategoryRussianRepository(db)
+        result = await repo.define_pos_category_russian_word(min_id=min_id, max_id=max_id)
+        return {"success": True, "data": result}
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"💥 Word Pos Category failed: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
 
 
 
@@ -192,5 +295,45 @@ async def translate_english_sentences(
         raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
 
 
+@router.post("/translate_english_words", status_code=200)
+async def translate_english_word(
+    min_id: int = None,
+    max_id: int = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Translate English words into Spanish, Russian, and Turkish.
+    Saves to `Translation` table.
+    Processes all eligible words in the given ID range.
+    Commits after each word.
+    """
+    try:
+        repo = TranslateEnglishWord(db)
+        result = await repo.translate_english_word(min_id=min_id, max_id=max_id)
+        return {"success": True, "data": result}
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"💥 Word translation failed: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
 
+
+@router.post("/define_pos_category_english_words", status_code=200)
+async def define_pos_category_english_word(
+    min_id: int = None,
+    max_id: int = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Assign main POS and best-matching category to English words.
+    Uses DeepSeek AI.
+    Safe to resume after crash.
+    """
+    try:
+        repo = DefinePosCategoryEnglishRepository(db)
+        result = await repo.define_pos_category_english_word(min_id=min_id, max_id=max_id)
+        return {"success": True, "data": result}
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"💥 Word Pos Category failed: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
 
