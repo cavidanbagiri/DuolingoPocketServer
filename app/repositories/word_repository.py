@@ -381,131 +381,131 @@ class VoiceHandleRepository:
                 )
 
 
-
 class GenerateAIWordRepository:
 
     def __init__(self):
-        self.headers = {
-            "Authorization": f"Api-Key {os.getenv('YANDEX_LANGMODEL_API_SECRET_KEY')}",
-            "Content-Type": "application/json"
-        }
-        self.model = 'yandexgpt'
-        self.folder_id = os.getenv('YANDEX_FOLDER_ID')
+        # DeepSeek configuration only
+        self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not self.deepseek_api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY is not set")
 
-    async def _call_yandex_gpt(self, prompt: str) -> Optional[str]:
+        self.client = httpx.AsyncClient(timeout=60.0)
+        self.deepseek_url = "https://api.deepseek.com/v1/chat/completions"
+        self.deepseek_headers = {
+            "Authorization": f"Bearer {self.deepseek_api_key}",
+            "Content-Type": "application/json",
+        }
+
+    async def _call_deepseek_gpt(self, prompt: str) -> Optional[str]:
         """
-        Make authenticated request to Yandex GPT API
+        Make authenticated request to DeepSeek GPT API
         """
         payload = {
-            "modelUri": f"gpt://{self.folder_id}/{self.model}",
-            "completionOptions": {
-                "stream": False,
-                "temperature": 0.3,  # Lower temperature for more factual responses
-                "maxTokens": 2000
-            },
+            "model": "deepseek-chat",
             "messages": [
                 {
                     "role": "system",
-                    "text": "You are a helpful language learning assistant. Provide accurate, educational responses about words and phrases."
+                    "content": "You are a helpful language learning assistant. Provide accurate, educational responses about words and phrases. Always respond with valid JSON."
                 },
                 {
                     "role": "user",
-                    "text": prompt
+                    "content": prompt
                 }
-            ]
+            ],
+            "temperature": 0.3,
+            "max_tokens": 2000,
+            "response_format": {"type": "json_object"}  # Force JSON response
         }
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                response = await client.post(
-                    "https://llm.api.cloud.yandex.net/foundationModels/v1/completion",
-                    headers=self.headers,
-                    json=payload
-                )
-                response.raise_for_status()
+        try:
+            response = await self.client.post(
+                self.deepseek_url,
+                headers=self.deepseek_headers,
+                json=payload
+            )
+            response.raise_for_status()
 
-                result = response.json()
-                return result['result']['alternatives'][0]['message']['text']
+            result = response.json()
+            return result['choices'][0]['message']['content']
 
-            except httpx.HTTPStatusError as e:
-                print(f"Yandex API HTTP error: {e.response.status_code} - {e.response.text}")
-                return None
-            except (httpx.RequestError, KeyError, json.JSONDecodeError) as e:
-                print(f"Yandex API request error: {str(e)}")
-                return None
+        except httpx.HTTPStatusError as e:
+            print(f"DeepSeek API HTTP error: {e.response.status_code} - {e.response.text}")
+            return None
+        except (httpx.RequestError, KeyError, json.JSONDecodeError) as e:
+            print(f"DeepSeek API request error: {str(e)}")
+            return None
 
     @lru_cache(maxsize=100)
     def _create_prompt(self, word: str, target_lang: str, native_lang: str) -> str:
         """
-        Create a highly structured prompt for Yandex GPT to get perfect JSON responses
-        for language learning content with native language translations
+        Create a highly structured prompt for AI to get perfect JSON responses
         """
         return f"""**ROLE**: You are an expert {target_lang} language teacher creating learning materials for {native_lang} speakers.
 
-    **TASK**: Create comprehensive educational content for the word "{word}" in {target_lang}.
+**TASK**: Create comprehensive educational content for the word "{word}" in {target_lang}.
 
-    **RESPONSE FORMAT**: You MUST return ONLY valid JSON with EXACTLY this structure:
-    {{
-        "word": "{word}",
-        "target_language": "{target_lang}",         
-        "native_language": "{native_lang}",         
-        "definition": "clear definition in {native_lang}",
-        "pronunciation": "phonetic pronunciation guide",
-        "part_of_speech": "main part of speech in {native_lang}",
-        "examples": [
-            "example 1 in {target_lang} - {native_lang} translation",
-            "example 2 in {target_lang} - {native_lang} translation",
-            "example 3 in {target_lang} - {native_lang} translation",
-            "example 4 in {target_lang} - {native_lang} translation",
-            "example 5 in {target_lang} - {native_lang} translation"
-        ],
-        "usage_contexts": [
-            "context 1 in {native_lang}",
-            "context 2 in {native_lang}",
-            "context 3 in {native_lang}"
-        ],
-        "common_phrases": [
-            "phrase 1 in {target_lang} - {native_lang} translation",
-            "phrase 2 in {target_lang} - {native_lang} translation",
-            "phrase 3 in {target_lang} - {native_lang} translation"
-        ],
-        "grammar_tips": [
-            "tip 1 in {native_lang}",
-            "tip 2 in {native_lang}",
-            "tip 3 in {native_lang}"
-        ],
-        "additional_insights": {{
-            "key": "value"
-        }}
+**RESPONSE FORMAT**: You MUST return ONLY valid JSON with EXACTLY this structure:
+{{
+    "word": "{word}",
+    "target_language": "{target_lang}",         
+    "native_language": "{native_lang}",         
+    "definition": "clear definition in {native_lang}",
+    "pronunciation": "phonetic pronunciation guide",
+    "part_of_speech": "main part of speech in {native_lang}",
+    "examples": [
+        "example 1 in {target_lang} - {native_lang} translation",
+        "example 2 in {target_lang} - {native_lang} translation",
+        "example 3 in {target_lang} - {native_lang} translation",
+        "example 4 in {target_lang} - {native_lang} translation",
+        "example 5 in {target_lang} - {native_lang} translation"
+    ],
+    "usage_contexts": [
+        "context 1 in {native_lang}",
+        "context 2 in {native_lang}",
+        "context 3 in {native_lang}"
+    ],
+    "common_phrases": [
+        "phrase 1 in {target_lang} - {native_lang} translation",
+        "phrase 2 in {target_lang} - {native_lang} translation",
+        "phrase 3 in {target_lang} - {native_lang} translation"
+    ],
+    "grammar_tips": [
+        "tip 1 in {native_lang}",
+        "tip 2 in {native_lang}",
+        "tip 3 in {native_lang}"
+    ],
+    "additional_insights": {{
+        "key": "value"
     }}
+}}
 
-    **CRITICAL INSTRUCTIONS**:
-    1. **NATIVE LANGUAGE FIRST**: All explanations, definitions, tips, and notes MUST be in {native_lang}
-    2. **TRANSLATION FORMAT**: Examples and phrases must use "Target Text - Native Translation" format
-    3. **DIVERSE EXAMPLES**: Provide 5 varied examples showing different:
-       - Tenses (if verb)
-       - Cases (if noun/adjective)  
-       - Sentence structures
-       - Formality levels
-    4. **ACCURATE CONTENT**: Ensure all translations and explanations are 100% accurate
-    5. **CULTURAL CONTEXT**: Include relevant cultural usage notes
-    6. **GRAMMAR FOCUS**: Provide specific grammar tips for this word
-    7. **NO MARKDOWN**: Return ONLY raw JSON, no code blocks or explanations
-    8. **WORD SPECIFIC**: Tailor all content specifically to the word "{word}"
+**CRITICAL INSTRUCTIONS**:
+1. **NATIVE LANGUAGE FIRST**: All explanations, definitions, tips, and notes MUST be in {native_lang}
+2. **TRANSLATION FORMAT**: Examples and phrases must use "Target Text - Native Translation" format
+3. **DIVERSE EXAMPLES**: Provide 5 varied examples showing different:
+   - Tenses (if verb)
+   - Cases (if noun/adjective)  
+   - Sentence structures
+   - Formality levels
+4. **ACCURATE CONTENT**: Ensure all translations and explanations are 100% accurate
+5. **CULTURAL CONTEXT**: Include relevant cultural usage notes
+6. **GRAMMAR FOCUS**: Provide specific grammar tips for this word
+7. **NO MARKDOWN**: Return ONLY raw JSON, no code blocks or explanations
+8. **WORD SPECIFIC**: Tailor all content specifically to the word "{word}"
 
-    **WORD-SPECIFIC GUIDANCE**:
-    - If "{word}" is a verb: include conjugation patterns, aspect pairs, government patterns
-    - If "{word}" is a noun: include gender, declension patterns, plural forms
-    - If "{word}" is short/functional: explain nuanced usage and common collocations
-    - If "{word}" is ambiguous: clarify different meanings with examples
+**WORD-SPECIFIC GUIDANCE**:
+- If "{word}" is a verb: include conjugation patterns, aspect pairs, government patterns
+- If "{word}" is a noun: include gender, declension patterns, plural forms
+- If "{word}" is short/functional: explain nuanced usage and common collocations
+- If "{word}" is ambiguous: clarify different meanings with examples
 
-    **EXAMPLE FORMATTING**:
-    - "Я читаю книгу. - I am reading a book."
-    - "Он прочитал книгу вчера. - He read the book yesterday."
-    - "Эта книга интересная. - This book is interesting."
+**EXAMPLE FORMATTING**:
+- "Я читаю книгу. - I am reading a book."
+- "Он прочитал книгу вчера. - He read the book yesterday."
+- "Эта книга интересная. - This book is interesting."
 
-    **REMEMBER**: You are helping a {native_lang} speaker master {target_lang}. Quality and accuracy are paramount.
-    """
+**REMEMBER**: You are helping a {native_lang} speaker master {target_lang}. Quality and accuracy are paramount.
+"""
 
     def _get_native_language_name(self, language_code: str) -> str:
         """
@@ -573,57 +573,50 @@ class GenerateAIWordRepository:
             }
         }
 
-        # Default to English if the native language isn't in our map
         template = fallback_templates.get(native_lang, fallback_templates['en'])
         return template[field_type]
 
-
-    async def generate_ai_for_word(self, data):
-        print(f'Received request for word: {data.text}, target: {data.language}, native: {data.native}')
+    async def generate_ai_for_word(self, data) -> AIWordResponse:
+        """
+        Generate AI content for a word using DeepSeek API
+        """
+        print(f'🎯 Received request for word: {data.text}, target: {data.language}, native: {data.native}')
 
         # Create the prompt
         prompt = self._create_prompt(data.text, data.language, data.native)
-        print(f"Prompt generated, length: {len(prompt)} chars")
+        print(f"📝 Prompt generated, length: {len(prompt)} chars")
 
-        # Call Yandex GPT
-        ai_response = await self._call_yandex_gpt(prompt)
-        print(f"Raw AI response type: {type(ai_response)}")
-        print(f"Raw AI response: {ai_response}")  # This should show the JSON you shared
+        # Call DeepSeek API
+        ai_response = await self._call_deepseek_gpt(prompt)
 
         if not ai_response:
-            print("AI returned empty response")
-            raise HTTPException(status_code=503, detail="AI service unavailable")
+            print("❌ DeepSeek API failed, using fallback response")
+            return self._create_fallback_response(data)
 
         try:
-
+            # Clean the response
             cleaned_response = ai_response.strip()
-
             cleaned_response = re.sub(r'^```(?:json)?\s*', '', cleaned_response)
             cleaned_response = re.sub(r'\s*```$', '', cleaned_response)
             cleaned_response = cleaned_response.strip()
 
-            print(f"Cleaned response: {cleaned_response}")
+            print(f"🧹 Cleaned response preview: {cleaned_response[:200]}...")
 
             # Parse the JSON
             parsed_response = json.loads(cleaned_response)
             print("✅ Successfully parsed JSON!")
-            print(f"✅ Successfully parsed JSON: {parsed_response}")  # Add this
-            print(f"Parsed keys: {list(parsed_response.keys())}")
+            print(f"📊 Parsed keys: {list(parsed_response.keys())}")
 
             # Validate and return
-            # return AIWordResponse(**parsed_response)
-
-            try:
-                return AIWordResponse(**parsed_response)
-            except ValidationError as e:
-                print(f"❌ Pydantic validation failed: {e}")
-                print(f"Parsed data: {parsed_response}")
-                return self._create_fallback_response(data)
+            return AIWordResponse(**parsed_response)
 
         except json.JSONDecodeError as e:
             print(f"❌ JSON decode failed! Error: {str(e)}")
-            print(f"Failed content: {ai_response}")
-            print(f"Cleaned content: {cleaned_response}")  # Add this
+            print(f"❌ Failed content: {ai_response}")
+            return self._create_fallback_response(data)
+        except ValidationError as e:
+            print(f"❌ Pydantic validation failed: {e}")
+            print(f"❌ Parsed data: {parsed_response}")
             return self._create_fallback_response(data)
         except Exception as e:
             print(f"❌ Other error: {str(e)}")
@@ -660,7 +653,6 @@ class GenerateAIWordRepository:
                 "Pay attention to sentence structure",
                 "Practice with different contexts"
             ],
-
             additional_insights=None
         )
 
@@ -673,86 +665,87 @@ class GenerateAIWordRepository:
             try:
                 return await self.generate_ai_for_word(data)
             except Exception as e:
+                print(f"🔄 Attempt {attempt + 1} failed for word '{data.text}': {str(e)}")
                 if attempt == max_retries - 1:
-                    print(f"All attempts failed for word '{data.text}': {str(e)}")
+                    print(f"❌ All attempts failed for word '{data.text}': {str(e)}")
                     return self._create_fallback_response(data)
+                await asyncio.sleep(1)  # Wait before retry
 
         raise Exception("Unexpected error in retry logic")
 
+    async def close(self):
+        """Close the HTTP client"""
+        await self.client.aclose()
 
 
-# Generate AI Answer
 class GenerateAIQuestionRepository:
 
     def __init__(self):
-        self.headers = {
-            "Authorization": f"Api-Key {os.getenv('YANDEX_LANGMODEL_API_SECRET_KEY')}", # Renamed for clarity
-            "Content-Type": "application/json"
+        # DeepSeek configuration only
+        self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not self.deepseek_api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY is not set in environment variables")
+
+        self.deepseek_url = "https://api.deepseek.com/v1/chat/completions"
+        self.deepseek_headers = {
+            "Authorization": f"Bearer {self.deepseek_api_key}",
+            "Content-Type": "application/json",
         }
-        self.model = 'yandexgpt' # or 'yandexgpt', choose based on needs
-        self.folder_id = os.getenv('YANDEX_FOLDER_ID')
-        self.api_url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
-        self.max_tokens = 1500  # Prevent overly long responses
+        self.max_tokens = 1500
 
+    async def _call_deepseek_gpt(self, messages: list) -> str:
+        """Call DeepSeek GPT API for conversational responses."""
+        print('[_call_deepseek_gpt] Method called. Preparing payload...')
 
-    async def _call_yandex_gpt(self, messages: list) -> str:
-        """Generic method to call YandexGPT Completion API."""
-        print('[_call_yandex_gpt] Method called. Preparing payload...')
+        # Convert to DeepSeek format
+        deepseek_messages = []
+        for msg in messages:
+            deepseek_messages.append({
+                "role": msg["role"],
+                "content": msg["text"]
+            })
 
         payload = {
-            "modelUri": f"gpt://{self.folder_id}/{self.model}",
-            "completionOptions": {
-                "stream": False,
-                "temperature": 0.2,
-                "maxTokens": self.max_tokens
-            },
-            "messages": messages
+            "model": "deepseek-chat",
+            "messages": deepseek_messages,
+            "temperature": 0.2,
+            "max_tokens": self.max_tokens,
+            "stream": False
         }
 
         async with aiohttp.ClientSession() as session:
             try:
-                print('[DEBUG] Making request to Yandex API...')
-                async with session.post(self.api_url, json=payload, headers=self.headers,
+                print('[DEBUG] Making request to DeepSeek API...')
+                async with session.post(self.deepseek_url, json=payload, headers=self.deepseek_headers,
                                         timeout=aiohttp.ClientTimeout(total=30)) as response:
 
-                    # CRITICAL: Get the response text regardless of the status code
                     response_text = await response.text()
-                    print(f'[DEBUG] Yandex API Response Status: {response.status}')
-                    print(f'[DEBUG] Yandex API Response Body: {response_text}')
+                    print(f'[DEBUG] DeepSeek API Response Status: {response.status}')
+                    print(f'[DEBUG] DeepSeek API Response Body: {response_text}')
 
-                    # Now check for errors
                     response.raise_for_status()
 
-                    # If successful, try to parse JSON
                     data = await response.json()
                     print(f'[DEBUG] Parsed JSON Response: {data}')
-                    return data['result']['alternatives'][0]['message']['text']
+                    return data['choices'][0]['message']['content']
 
             except aiohttp.ClientResponseError as e:
-                # This will now print the actual error message from Yandex
-                logger.error(f"YandexGPT API error: {e.status} - {e.message}. Response: {response_text}")
+                logger.error(f"DeepSeek API error: {e.status} - {e.message}. Response: {response_text}")
                 raise HTTPException(status_code=502,
                                     detail=f"AI service error: {e.status}. Please check the request parameters.")
             except aiohttp.ClientConnectorError as e:
-                logger.error(f"Connection to YandexGPT failed: {str(e)}")
+                logger.error(f"Connection to DeepSeek failed: {str(e)}")
                 raise HTTPException(status_code=503, detail="Cannot connect to AI service. Check your network.")
             except asyncio.TimeoutError:
-                logger.error("Request to YandexGPT timed out.")
+                logger.error("Request to DeepSeek timed out.")
                 raise HTTPException(status_code=504, detail="AI service request timed out.")
             except (aiohttp.ClientError, KeyError) as e:
-                logger.error(f"Unexpected error during YandexGPT call: {str(e)}")
+                logger.error(f"Unexpected error during DeepSeek call: {str(e)}")
                 raise HTTPException(status_code=500, detail="An unexpected error occurred with the AI service.")
 
-
-
-    async def generate_ai_chat(self, data: GenerateAIChatSchema) -> dict:
-        """
-        Generates a conversational response about a specific word.
-        Returns a dict with the AI's reply.
-        """
-
-        # 1. Construct a detailed system prompt to guide the AI's behavior.
-        system_prompt = (
+    def _create_system_prompt(self, data: GenerateAIChatSchema) -> str:
+        """Create a detailed system prompt for language learning assistance."""
+        return (
             f"You are a helpful, precise, and enthusiastic language learning assistant. "
             f"The user is learning the {data.language} word '{data.word}'. "
             f"Their native language is {data.native}. "
@@ -763,8 +756,11 @@ class GenerateAIQuestionRepository:
             f"If the user's question is not related to the word, politely steer the conversation back to language learning."
         )
 
-        # 2. Structure the messages for the API
-        messages = [
+    def _create_messages(self, data: GenerateAIChatSchema) -> list:
+        """Structure messages for the API call."""
+        system_prompt = self._create_system_prompt(data)
+
+        return [
             {
                 "role": "system",
                 "text": system_prompt
@@ -775,14 +771,57 @@ class GenerateAIQuestionRepository:
             }
         ]
 
-        # 3. Call the API
-        ai_response_text = await self._call_yandex_gpt(messages)
+    async def generate_ai_chat(self, data: GenerateAIChatSchema) -> dict:
+        """
+        Generates a conversational response about a specific word using DeepSeek.
+        Returns a dict with the AI's reply.
+        """
+        print(f"🎯 Generating AI chat response for word: '{data.word}'")
+        print(f"🔧 Target language: {data.language}, Native language: {data.native}")
+        print(f"💬 User message: {data.message}")
 
-        # 4. Return the response in a structured format for the frontend
-        return {"reply": ai_response_text.strip()}
+        try:
+            # Create messages for the API
+            messages = self._create_messages(data)
+
+            # Call DeepSeek API
+            ai_response_text = await self._call_deepseek_gpt(messages)
+
+            # Return the response in a structured format
+            response_data = {"reply": ai_response_text.strip()}
+            print(f"✅ Successfully generated AI response: {response_data['reply'][:100]}...")
+            return response_data
+
+        except HTTPException:
+            # Re-raise HTTP exceptions
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in generate_ai_chat: {str(e)}")
+            raise HTTPException(status_code=500, detail="An unexpected error occurred while processing your request.")
+
+    async def generate_ai_chat_with_retry(self, data: GenerateAIChatSchema, max_retries: int = 2) -> dict:
+        """
+        Enhanced version with retry logic for DeepSeek API calls.
+        """
+        for attempt in range(max_retries):
+            try:
+                return await self.generate_ai_chat(data)
+            except HTTPException as e:
+                if e.status_code >= 500 and attempt < max_retries - 1:  # Retry on server errors
+                    print(f"🔄 Attempt {attempt + 1} failed with server error: {e.detail}")
+                    await asyncio.sleep(1)
+                    continue
+                raise  # Re-raise client errors immediately
+            except Exception as e:
+                print(f"🔄 Attempt {attempt + 1} failed with unexpected error: {str(e)}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(1)
+                    continue
+                raise HTTPException(status_code=500, detail="Failed to generate AI response after multiple attempts.")
+
+        raise HTTPException(status_code=503, detail="AI service is currently unavailable.")
 
 
-# Search Words
 class SearchRepository:
 
     def __init__(self, db: AsyncSession, user_id: int):
