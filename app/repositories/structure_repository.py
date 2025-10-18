@@ -461,7 +461,7 @@ class GenerateSpanishSentences:
         stmt = (
             select(Word)
             .where(Word.language_code == "es")
-            .where(Word.id.between(19107, 19110))
+            .where(Word.id.between(19115, 20111))
             # .where(Word.id.in_(select(subquery.c.word_id)))
             # .limit(limit)
         )
@@ -1333,7 +1333,7 @@ class GenerateRussianSentences:
             "Content-Type": "application/json",
         }
 
-    async def generate_sentences(self, limit: int = 10) -> dict:
+    async def generate_sentences(self, limit: int = 1000) -> dict:
         """
         Generate 5 example sentences IN RUSSIAN for Russian words.
         Only for words that have < 5 Russian example sentences.
@@ -1357,7 +1357,7 @@ class GenerateRussianSentences:
             select(Word)
             .where(Word.language_code == "ru")
             # .where(Word.id.in_(select(subquery.c.word_id)))
-            .where(Word.id.between(9916, 9940))
+            .where(Word.id.between(9965,10960))
             # .limit(limit)
         )
 
@@ -1371,15 +1371,33 @@ class GenerateRussianSentences:
         logger.info(f"🎯 Starting generation for {len(words)} Russian words: {[w.text for w in words]}")
 
         processed_count = 0
+        failed_words = []
+
         async with httpx.AsyncClient() as client:
             for word in words:
                 try:
                     logger.info(f"📌 Generating 5 Russian sentences for '{word.text}' (ID: {word.id})")
 
-                    # Generate exactly 5 good Russian sentences
-                    sentences = await self._generate_five_russian_sentences(client, word.text)
+                    # Generate exactly 5 good Russian sentences - RETRY LOGIC
+                    max_retries = 3
+                    sentences = []
+
+                    for attempt in range(max_retries):
+                        try:
+                            sentences = await self._generate_five_russian_sentences(client, word.text)
+                            if len(sentences) >= 5:
+                                break
+                            else:
+                                logger.warning(
+                                    f"🔄 Attempt {attempt + 1} for '{word.text}': Only got {len(sentences)} sentences, retrying...")
+                        except Exception as e:
+                            logger.warning(f"🔄 Attempt {attempt + 1} for '{word.text}' failed: {str(e)}")
+                            if attempt < max_retries - 1:
+                                await asyncio.sleep(1)  # Wait before retry
+
                     if len(sentences) < 5:
-                        logger.warning(f"⚠️ Only {len(sentences)} sentences generated for '{word.text}'")
+                        logger.error(f"❌ Failed to generate 5 sentences for '{word.text}' after {max_retries} attempts")
+                        failed_words.append(word.text)
                         continue
 
                     # Save all sentences and links
@@ -1393,19 +1411,29 @@ class GenerateRussianSentences:
                 except Exception as e:
                     await self.db.rollback()
                     logger.error(f"💥 Failed processing word '{word.text}': {str(e)}", exc_info=True)
+                    failed_words.append(word.text)
                     continue
+
+        # Summary report
+        success_rate = (processed_count / len(words)) * 100
+        logger.info(f"📊 Generation complete: {processed_count}/{len(words)} words successful ({success_rate:.1f}%)")
+
+        if failed_words:
+            logger.warning(f"❌ Failed words: {failed_words}")
 
         return {
             "status": "success",
             "words_processed": processed_count,
             "total_requested": len(words),
-            "message": f"Generated native Russian sentences for {processed_count}/{len(words)} words."
+            "success_rate": f"{success_rate:.1f}%",
+            "failed_words": failed_words,
+            "message": f"Generated Russian sentences for {processed_count}/{len(words)} words."
         }
 
     async def _generate_five_russian_sentences(self, client: httpx.AsyncClient, word: str) -> List[str]:
         """
         Ask DeepSeek to generate 5 diverse, natural Russian sentences using the word.
-        Must respond in valid JSON.
+        With improved error handling and validation.
         """
         prompt = f"""
         Вы — профессиональный преподаватель русского языка.
@@ -1415,7 +1443,8 @@ class GenerateRussianSentences:
         - Каждое предложение должно естественным образом включать слово "{word}"
         - Используйте разные контексты: вопрос, утверждение, эмоция, повседневная жизнь
         - Избегайте бессмысленных или неестественных фраз
-        - Никогда не говорите о самом слове (например, «слово привет»)
+        - Включи как минимум 2 предложения с элементарным уровнем лексики и простой структурой
+        - Никогда не говорите о самом слове (например, «слово {word}»)
         - Верните ТОЛЬКО JSON объект:
           {{ "sentences": ["Предложение 1", "Предложение 2", ...] }}
         - Никаких объяснений, ничего лишнего
@@ -1425,52 +1454,204 @@ class GenerateRussianSentences:
             "model": "deepseek-chat",
             "messages": [{"role": "user", "content": prompt}],
             "response_format": {"type": "json_object"},
-            "temperature": 0.7,
-            "max_tokens": 600
+            "temperature": 0.8,  # Slightly higher for more diversity
+            "max_tokens": 800  # Increased for better responses
         }
 
         try:
-            response = await client.post(self.deepseek_url, headers=self.auth_headers, json=payload)
+            response = await client.post(self.deepseek_url, headers=self.auth_headers, json=payload, timeout=60.0)
+
+            print(f'coming response is................................... {response}')
+
             if response.status_code != 200:
                 logger.warning(f"📡 DeepSeek API error {response.status_code}: {response.text}")
-                return self._fallback_sentences(word)
+                return []
 
             content = response.json()["choices"][0]["message"]["content"].strip()
             content = re.sub(r"^```json|```$", "", content).strip()
-            parsed = json.loads(content)
 
-            raw_sents = parsed.get("sentences")
-            if not isinstance(raw_sents, list):
-                raise ValueError("Invalid format")
+            # More robust JSON parsing
+            try:
+                parsed = json.loads(content)
+            except json.JSONDecodeError:
+                # Try to extract JSON from malformed response
+                json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                if json_match:
+                    parsed = json.loads(json_match.group())
+                else:
+                    raise ValueError("No valid JSON found in response")
+
+            raw_sents = parsed.get("sentences", [])
+            if not isinstance(raw_sents, list) or len(raw_sents) < 5:
+                raise ValueError(
+                    f"Expected 5 sentences, got {len(raw_sents) if isinstance(raw_sents, list) else 'invalid'}")
 
             cleaned = []
             forbidden_patterns = [
                 rf"\bиспользовать\s+{re.escape(word)}\b",
                 rf"\bпро\s+{re.escape(word)}\b",
-                rf"\bслово\s+{re.escape(word)}\b"
+                rf"\bслово\s+{re.escape(word)}\b",
+                rf"\bфраза\s+{re.escape(word)}\b",
+                rf"\bпример\s+{re.escape(word)}\b"
             ]
 
             for s in raw_sents:
                 if isinstance(s, str):
                     s_clean = s.strip('". ')
-                    if (len(s_clean) > 5 and
-                        word in s_clean and
-                        not any(re.search(pat, s_clean, re.IGNORECASE) for pat in forbidden_patterns) and
-                        s_clean not in cleaned):
+                    if (len(s_clean) > 8 and  # Increased minimum length
+                            word.lower() in s_clean.lower() and  # Case insensitive check
+                            not any(re.search(pat, s_clean, re.IGNORECASE) for pat in forbidden_patterns) and
+                            s_clean not in cleaned):
                         cleaned.append(s_clean)
 
-            # Pad if needed
-            while len(cleaned) < 5:
-                for fb in self._fallback_sentences(word):
-                    if fb not in cleaned:
-                        cleaned.append(fb)
-                        break
-
+            # If we have at least 3 good sentences, that's acceptable for one attempt
             return cleaned[:5]
 
         except Exception as e:
             logger.error(f"🔥 Failed to parse AI response for '{word}': {str(e)}")
-            return self._fallback_sentences(word)
+            return []
+
+
+
+    # async def generate_sentences(self, limit: int = 10) -> dict:
+    #     """
+    #     Generate 5 example sentences IN RUSSIAN for Russian words.
+    #     Only for words that have < 5 Russian example sentences.
+    #     """
+    #     # Step 1: Get Russian language
+    #     result = await self.db.execute(select(Language).where(Language.code == "ru"))
+    #     ru_lang = result.scalars().first()
+    #     if not ru_lang:
+    #         raise RuntimeError("Russian language (ru) not found in DB")
+    #
+    #     # Step 2: Find Russian words with fewer than 5 example sentences
+    #     subquery = (
+    #         select(SentenceWord.word_id)
+    #         .join(Sentence)
+    #         .where(Sentence.language_code == "ru")
+    #         .group_by(SentenceWord.word_id)
+    #         .having(func.count(SentenceWord.sentence_id) < 5)
+    #     ).subquery()
+    #
+    #     stmt = (
+    #         select(Word)
+    #         .where(Word.language_code == "ru")
+    #         # .where(Word.id.in_(select(subquery.c.word_id)))
+    #         .where(Word.id.between(9910, 9920))
+    #         # .limit(limit)
+    #     )
+    #
+    #     result = await self.db.execute(stmt)
+    #     words = result.scalars().all()
+    #
+    #     if not words:
+    #         logger.info("✅ All Russian words already have at least 5 example sentences.")
+    #         return {"status": "complete", "processed": 0}
+    #
+    #     logger.info(f"🎯 Starting generation for {len(words)} Russian words: {[w.text for w in words]}")
+    #
+    #     processed_count = 0
+    #     async with httpx.AsyncClient() as client:
+    #         for word in words:
+    #             try:
+    #                 logger.info(f"📌 Generating 5 Russian sentences for '{word.text}' (ID: {word.id})")
+    #
+    #                 # Generate exactly 5 good Russian sentences
+    #                 sentences = await self._generate_five_russian_sentences(client, word.text)
+    #                 if len(sentences) < 5:
+    #                     logger.warning(f"⚠️ Only {len(sentences)} sentences generated for '{word.text}'")
+    #                     continue
+    #
+    #                 # Save all sentences and links
+    #                 for sent_text in sentences:
+    #                     await self._save_sentence_and_link(sent_text, word, ru_lang)
+    #
+    #                 await self.db.commit()
+    #                 processed_count += 1
+    #                 logger.info(f"✅ Saved 5 Russian sentences for '{word.text}'")
+    #
+    #             except Exception as e:
+    #                 await self.db.rollback()
+    #                 logger.error(f"💥 Failed processing word '{word.text}': {str(e)}", exc_info=True)
+    #                 continue
+    #
+    #     return {
+    #         "status": "success",
+    #         "words_processed": processed_count,
+    #         "total_requested": len(words),
+    #         "message": f"Generated native Russian sentences for {processed_count}/{len(words)} words."
+    #     }
+
+    # async def _generate_five_russian_sentences(self, client: httpx.AsyncClient, word: str) -> List[str]:
+    #     """
+    #     Ask DeepSeek to generate 5 diverse, natural Russian sentences using the word.
+    #     Must respond in valid JSON.
+    #     """
+    #     prompt = f"""
+    #     Вы — профессиональный преподаватель русского языка.
+    #     Сгенерируйте ровно 5 разнообразных, грамматически правильных примеров предложений на русском языке с использованием слова "{word}".
+    #
+    #     Требования:
+    #     - Каждое предложение должно естественным образом включать слово "{word}"
+    #     - Используйте разные контексты: вопрос, утверждение, эмоция, повседневная жизнь
+    #     - Избегайте бессмысленных или неестественных фраз
+    #     - Включи как минимум 2 предложения с элементарным уровнем лексики и простой структурой
+    #     - Никогда не говорите о самом слове (например, «слово привет»)
+    #     - Верните ТОЛЬКО JSON объект:
+    #       {{ "sentences": ["Предложение 1", "Предложение 2", ...] }}
+    #     - Никаких объяснений, ничего лишнего
+    #     """
+    #
+    #     payload = {
+    #         "model": "deepseek-chat",
+    #         "messages": [{"role": "user", "content": prompt}],
+    #         "response_format": {"type": "json_object"},
+    #         "temperature": 0.7,
+    #         "max_tokens": 600
+    #     }
+    #
+    #     try:
+    #         response = await client.post(self.deepseek_url, headers=self.auth_headers, json=payload)
+    #         if response.status_code != 200:
+    #             logger.warning(f"📡 DeepSeek API error {response.status_code}: {response.text}")
+    #             # return self._fallback_sentences(word)
+    #
+    #         content = response.json()["choices"][0]["message"]["content"].strip()
+    #         content = re.sub(r"^```json|```$", "", content).strip()
+    #         parsed = json.loads(content)
+    #
+    #         raw_sents = parsed.get("sentences")
+    #         if not isinstance(raw_sents, list):
+    #             raise ValueError("Invalid format")
+    #
+    #         cleaned = []
+    #         forbidden_patterns = [
+    #             rf"\bиспользовать\s+{re.escape(word)}\b",
+    #             rf"\bпро\s+{re.escape(word)}\b",
+    #             rf"\bслово\s+{re.escape(word)}\b"
+    #         ]
+    #
+    #         for s in raw_sents:
+    #             if isinstance(s, str):
+    #                 s_clean = s.strip('". ')
+    #                 if (len(s_clean) > 5 and
+    #                     word in s_clean and
+    #                     not any(re.search(pat, s_clean, re.IGNORECASE) for pat in forbidden_patterns) and
+    #                     s_clean not in cleaned):
+    #                     cleaned.append(s_clean)
+    #
+    #         # Pad if needed
+    #         # while len(cleaned) < 5:
+    #         #     for fb in self._fallback_sentences(word):
+    #         #         if fb not in cleaned:
+    #         #             cleaned.append(fb)
+    #         #             break
+    #
+    #         return cleaned[:5]
+    #
+    #     except Exception as e:
+    #         logger.error(f"🔥 Failed to parse AI response for '{word}': {str(e)}")
+    #         return self._fallback_sentences(word)
 
     def _fallback_sentences(self, word: str) -> List[str]:
         """Safe fallback Russian sentences."""
@@ -2344,7 +2525,7 @@ class GenerateEnglishSentence:
                 """
         # Step 1: Get words by ID
         result = await self.db.execute(
-            select(Word).where(Word.id.between(6499, 6500)).order_by(Word.id)
+            select(Word).where(Word.id.between(107, 1000)).order_by(Word.id)
         )
         words = result.scalars().all()
 
@@ -2402,6 +2583,7 @@ class GenerateEnglishSentence:
                 - Each must naturally include "{word}"
                 - Use different contexts: question, command, emotional, daily life
                 - Avoid robotic phrases like "use you every day"
+                - Include at least 2 sentences with elementary-level vocabulary and simple sentence structure
                 - Do NOT say "the word {word}"
                 - Return ONLY a JSON object:
                   {{ "sentences": ["Sentence 1", "Sentence 2", ...] }}

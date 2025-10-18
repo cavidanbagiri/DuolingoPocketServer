@@ -224,12 +224,13 @@ async def generate_ai_chat(data: GenerateAIChatSchema, repo: GenerateAIQuestionR
 async def get_detail_word(word_id: int,
                           db: AsyncSession = Depends(get_db),
                           user_info = Depends(TokenHandler.verify_access_token)):
-
+    print('here is working................')
     try:
         repo = DetailWordRepository(db=db, word_id=word_id, user_id=int(user_info.get('sub')))
         result = await repo.get_word_detail()
         return result
     except Exception as ex:
+        print(f'./././././././././././.{ex}')
         raise HTTPException(status_code=500, detail=str(ex))
 
 

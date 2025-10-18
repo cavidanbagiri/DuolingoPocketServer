@@ -889,6 +889,7 @@ class DetailWordRepository:
         word: Word = result.scalar_one_or_none()
         if not word:
             return None
+        print(f'................word is {word}')
 
         # 2. Check if word is starred or learned
         user_word_result = await self.db.execute(
@@ -926,7 +927,7 @@ class DetailWordRepository:
             meanings.append({
                 "id": meaning.id,
                 "pos": meaning.pos,
-                "example": meaning.example,
+                # "example": meaning.example,
                 "sentences": meaning_sentences
             })
 
