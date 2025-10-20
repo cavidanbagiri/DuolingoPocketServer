@@ -28,7 +28,8 @@ origins = [
     "http://localhost:8081",
     "http://192.168.1.76:19006",  # Expo Web Dev Tools
     "http://192.168.1.76:19000",  # Expo Go (Android)
-    "http://192.168.1.101:8081"
+    "http://192.168.1.101:8081",
+    "*"
 ]
 
 app.add_middleware(
