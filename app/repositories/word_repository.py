@@ -1128,75 +1128,68 @@ class GenerateAIWordRepository:
 
 
 
-
 class GenerateAIQuestionRepository:
 
     def __init__(self):
-        # DeepSeek configuration only
-        self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
-        if not self.deepseek_api_key:
-            raise RuntimeError("DEEPSEEK_API_KEY is not set in environment variables")
+        self.headers = {
+            "Authorization": f"Api-Key {os.getenv('YANDEX_LANGMODEL_API_SECRET_KEY')}", # Renamed for clarity
+            "Content-Type": "application/json"}
 
-        self.deepseek_url = "https://api.deepseek.com/v1/chat/completions"
-        self.deepseek_headers = {
-            "Authorization": f"Bearer {self.deepseek_api_key}",
-            "Content-Type": "application/json",
-        }
-        self.max_tokens = 1500
+        self.model = 'yandexgpt'  # or 'yandexgpt', choose based on needs
+        self.folder_id = os.getenv('YANDEX_FOLDER_ID')
+        self.api_url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
+        self.max_tokens = 1500  # Prevent overly long responses
 
-    async def _call_deepseek_gpt(self, messages: list) -> str:
-        """Call DeepSeek GPT API for conversational responses."""
-        print('[_call_deepseek_gpt] Method called. Preparing payload...')
-
-        # Convert to DeepSeek format
-        deepseek_messages = []
-        for msg in messages:
-            deepseek_messages.append({
-                "role": msg["role"],
-                "content": msg["text"]
-            })
+    async def _call_yandex_gpt(self, messages: list) -> str:
+        """Generic method to call YandexGPT Completion API."""
+        print('[_call_yandex_gpt] Method called. Preparing payload...')
 
         payload = {
-            "model": "deepseek-chat",
-            "messages": deepseek_messages,
-            "temperature": 0.2,
-            "max_tokens": self.max_tokens,
-            "stream": False
+            "modelUri": f"gpt://{self.folder_id}/{self.model}",
+            "completionOptions": {
+                "stream": False,
+                "temperature": 0.2,
+                "maxTokens": self.max_tokens
+            },
+            "messages": messages
         }
 
         async with aiohttp.ClientSession() as session:
             try:
-                print('[DEBUG] Making request to DeepSeek API...')
-                async with session.post(self.deepseek_url, json=payload, headers=self.deepseek_headers,
+                print('[DEBUG] Making request to Yandex API...')
+                async with session.post(self.api_url, json=payload, headers=self.headers,
                                         timeout=aiohttp.ClientTimeout(total=30)) as response:
 
+
                     response_text = await response.text()
-                    print(f'[DEBUG] DeepSeek API Response Status: {response.status}')
-                    print(f'[DEBUG] DeepSeek API Response Body: {response_text}')
-
                     response.raise_for_status()
-
                     data = await response.json()
-                    print(f'[DEBUG] Parsed JSON Response: {data}')
-                    return data['choices'][0]['message']['content']
+                    return data['result']['alternatives'][0]['message']['text']
 
             except aiohttp.ClientResponseError as e:
-                logger.error(f"DeepSeek API error: {e.status} - {e.message}. Response: {response_text}")
+                # This will now print the actual error message from Yandex
+                logger.error(f"YandexGPT API error: {e.status} - {e.message}. Response: {response_text}")
                 raise HTTPException(status_code=502,
                                     detail=f"AI service error: {e.status}. Please check the request parameters.")
             except aiohttp.ClientConnectorError as e:
-                logger.error(f"Connection to DeepSeek failed: {str(e)}")
+                logger.error(f"Connection to YandexGPT failed: {str(e)}")
                 raise HTTPException(status_code=503, detail="Cannot connect to AI service. Check your network.")
             except asyncio.TimeoutError:
-                logger.error("Request to DeepSeek timed out.")
+                logger.error("Request to YandexGPT timed out.")
                 raise HTTPException(status_code=504, detail="AI service request timed out.")
             except (aiohttp.ClientError, KeyError) as e:
-                logger.error(f"Unexpected error during DeepSeek call: {str(e)}")
+                logger.error(f"Unexpected error during YandexGPT call: {str(e)}")
                 raise HTTPException(status_code=500, detail="An unexpected error occurred with the AI service.")
 
-    def _create_system_prompt(self, data: GenerateAIChatSchema) -> str:
-        """Create a detailed system prompt for language learning assistance."""
-        return (
+
+    async def generate_ai_chat(self, data: GenerateAIChatSchema) -> dict:
+        """
+        Generates a conversational response about a specific word.
+        Returns a dict with the AI's reply.
+        """
+
+        # 1. Construct a detailed system prompt to guide the AI's behavior.
+        system_prompt = (
             f"You are a helpful, precise, and enthusiastic language learning assistant. "
             f"The user is learning the {data.language} word '{data.word}'. "
             f"Their native language is {data.native}. "
@@ -1205,72 +1198,168 @@ class GenerateAIQuestionRepository:
             f"Your answer must be in {data.native} to ensure the user understands. "
             f"Focus on explaining usage, grammar, nuances, or cultural context related to '{data.word}'."
             f"If the user's question is not related to the word, politely steer the conversation back to language learning."
+
         )
-
-    def _create_messages(self, data: GenerateAIChatSchema) -> list:
-        """Structure messages for the API call."""
-        system_prompt = self._create_system_prompt(data)
-
-        return [
+        # 2. Structure the messages for the API
+        messages = [
             {
                 "role": "system",
                 "text": system_prompt
-            },
-            {
-                "role": "user",
-                "text": data.message
             }
         ]
+        # 3. Call the API
+        ai_response_text = await self._call_yandex_gpt(messages)
 
-    async def generate_ai_chat(self, data: GenerateAIChatSchema) -> dict:
-        """
-        Generates a conversational response about a specific word using DeepSeek.
-        Returns a dict with the AI's reply.
-        """
-        print(f"🎯 Generating AI chat response for word: '{data.word}'")
-        print(f"🔧 Target language: {data.language}, Native language: {data.native}")
-        print(f"💬 User message: {data.message}")
+        # 4. Return the response in a structured format for the frontend
+        return {"reply": ai_response_text.strip()}
 
-        try:
-            # Create messages for the API
-            messages = self._create_messages(data)
 
-            # Call DeepSeek API
-            ai_response_text = await self._call_deepseek_gpt(messages)
 
-            # Return the response in a structured format
-            response_data = {"reply": ai_response_text.strip()}
-            print(f"✅ Successfully generated AI response: {response_data['reply'][:100]}...")
-            return response_data
 
-        except HTTPException:
-            # Re-raise HTTP exceptions
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error in generate_ai_chat: {str(e)}")
-            raise HTTPException(status_code=500, detail="An unexpected error occurred while processing your request.")
 
-    async def generate_ai_chat_with_retry(self, data: GenerateAIChatSchema, max_retries: int = 2) -> dict:
-        """
-        Enhanced version with retry logic for DeepSeek API calls.
-        """
-        for attempt in range(max_retries):
-            try:
-                return await self.generate_ai_chat(data)
-            except HTTPException as e:
-                if e.status_code >= 500 and attempt < max_retries - 1:  # Retry on server errors
-                    print(f"🔄 Attempt {attempt + 1} failed with server error: {e.detail}")
-                    await asyncio.sleep(1)
-                    continue
-                raise  # Re-raise client errors immediately
-            except Exception as e:
-                print(f"🔄 Attempt {attempt + 1} failed with unexpected error: {str(e)}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(1)
-                    continue
-                raise HTTPException(status_code=500, detail="Failed to generate AI response after multiple attempts.")
-
-        raise HTTPException(status_code=503, detail="AI service is currently unavailable.")
+# DeepSeek Version, 28 seconds
+# class GenerateAIQuestionRepository:
+#
+#     def __init__(self):
+#         # DeepSeek configuration only
+#         self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
+#         if not self.deepseek_api_key:
+#             raise RuntimeError("DEEPSEEK_API_KEY is not set in environment variables")
+#
+#         self.deepseek_url = "https://api.deepseek.com/v1/chat/completions"
+#         self.deepseek_headers = {
+#             "Authorization": f"Bearer {self.deepseek_api_key}",
+#             "Content-Type": "application/json",
+#         }
+#         self.max_tokens = 1500
+#
+#     async def _call_deepseek_gpt(self, messages: list) -> str:
+#         """Call DeepSeek GPT API for conversational responses."""
+#         print('[_call_deepseek_gpt] Method called. Preparing payload...')
+#
+#         # Convert to DeepSeek format
+#         deepseek_messages = []
+#         for msg in messages:
+#             deepseek_messages.append({
+#                 "role": msg["role"],
+#                 "content": msg["text"]
+#             })
+#
+#         payload = {
+#             "model": "deepseek-chat",
+#             "messages": deepseek_messages,
+#             "temperature": 0.2,
+#             "max_tokens": self.max_tokens,
+#             "stream": False
+#         }
+#
+#         async with aiohttp.ClientSession() as session:
+#             try:
+#                 print('[DEBUG] Making request to DeepSeek API...')
+#                 async with session.post(self.deepseek_url, json=payload, headers=self.deepseek_headers,
+#                                         timeout=aiohttp.ClientTimeout(total=30)) as response:
+#
+#                     response_text = await response.text()
+#                     print(f'[DEBUG] DeepSeek API Response Status: {response.status}')
+#                     print(f'[DEBUG] DeepSeek API Response Body: {response_text}')
+#
+#                     response.raise_for_status()
+#
+#                     data = await response.json()
+#                     print(f'[DEBUG] Parsed JSON Response: {data}')
+#                     return data['choices'][0]['message']['content']
+#
+#             except aiohttp.ClientResponseError as e:
+#                 logger.error(f"DeepSeek API error: {e.status} - {e.message}. Response: {response_text}")
+#                 raise HTTPException(status_code=502,
+#                                     detail=f"AI service error: {e.status}. Please check the request parameters.")
+#             except aiohttp.ClientConnectorError as e:
+#                 logger.error(f"Connection to DeepSeek failed: {str(e)}")
+#                 raise HTTPException(status_code=503, detail="Cannot connect to AI service. Check your network.")
+#             except asyncio.TimeoutError:
+#                 logger.error("Request to DeepSeek timed out.")
+#                 raise HTTPException(status_code=504, detail="AI service request timed out.")
+#             except (aiohttp.ClientError, KeyError) as e:
+#                 logger.error(f"Unexpected error during DeepSeek call: {str(e)}")
+#                 raise HTTPException(status_code=500, detail="An unexpected error occurred with the AI service.")
+#
+#     def _create_system_prompt(self, data: GenerateAIChatSchema) -> str:
+#         """Create a detailed system prompt for language learning assistance."""
+#         return (
+#             f"You are a helpful, precise, and enthusiastic language learning assistant. "
+#             f"The user is learning the {data.language} word '{data.word}'. "
+#             f"Their native language is {data.native}. "
+#             f"Answer the user's question specifically about this word. "
+#             f"Be concise, pedagogical, and provide clear examples. "
+#             f"Your answer must be in {data.native} to ensure the user understands. "
+#             f"Focus on explaining usage, grammar, nuances, or cultural context related to '{data.word}'."
+#             f"If the user's question is not related to the word, politely steer the conversation back to language learning."
+#         )
+#
+#     def _create_messages(self, data: GenerateAIChatSchema) -> list:
+#         """Structure messages for the API call."""
+#         system_prompt = self._create_system_prompt(data)
+#
+#         return [
+#             {
+#                 "role": "system",
+#                 "text": system_prompt
+#             },
+#             {
+#                 "role": "user",
+#                 "text": data.message
+#             }
+#         ]
+#
+#     async def generate_ai_chat(self, data: GenerateAIChatSchema) -> dict:
+#         """
+#         Generates a conversational response about a specific word using DeepSeek.
+#         Returns a dict with the AI's reply.
+#         """
+#         print(f"🎯 Generating AI chat response for word: '{data.word}'")
+#         print(f"🔧 Target language: {data.language}, Native language: {data.native}")
+#         print(f"💬 User message: {data.message}")
+#
+#         try:
+#             # Create messages for the API
+#             messages = self._create_messages(data)
+#
+#             # Call DeepSeek API
+#             ai_response_text = await self._call_deepseek_gpt(messages)
+#
+#             # Return the response in a structured format
+#             response_data = {"reply": ai_response_text.strip()}
+#             print(f"✅ Successfully generated AI response: {response_data['reply'][:100]}...")
+#             return response_data
+#
+#         except HTTPException:
+#             # Re-raise HTTP exceptions
+#             raise
+#         except Exception as e:
+#             logger.error(f"Unexpected error in generate_ai_chat: {str(e)}")
+#             raise HTTPException(status_code=500, detail="An unexpected error occurred while processing your request.")
+#
+#     async def generate_ai_chat_with_retry(self, data: GenerateAIChatSchema, max_retries: int = 2) -> dict:
+#         """
+#         Enhanced version with retry logic for DeepSeek API calls.
+#         """
+#         for attempt in range(max_retries):
+#             try:
+#                 return await self.generate_ai_chat(data)
+#             except HTTPException as e:
+#                 if e.status_code >= 500 and attempt < max_retries - 1:  # Retry on server errors
+#                     print(f"🔄 Attempt {attempt + 1} failed with server error: {e.detail}")
+#                     await asyncio.sleep(1)
+#                     continue
+#                 raise  # Re-raise client errors immediately
+#             except Exception as e:
+#                 print(f"🔄 Attempt {attempt + 1} failed with unexpected error: {str(e)}")
+#                 if attempt < max_retries - 1:
+#                     await asyncio.sleep(1)
+#                     continue
+#                 raise HTTPException(status_code=500, detail="Failed to generate AI response after multiple attempts.")
+#
+#         raise HTTPException(status_code=503, detail="AI service is currently unavailable.")
 
 
 
