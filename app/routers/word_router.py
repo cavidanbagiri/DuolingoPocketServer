@@ -179,7 +179,7 @@ async def generate_ai_for_word(
     - Difficulty level assessment
     """
     try:
-        result = await repo.generate_ai_for_word_with_fallback(data)
+        result = await repo.generate_ai_for_word(data)
 
         # Log successful generation
         logger.info(f"Successfully generated AI content for word: {data.text}")

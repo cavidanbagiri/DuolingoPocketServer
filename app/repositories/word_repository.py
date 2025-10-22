@@ -10,6 +10,10 @@ import asyncio
 from functools import lru_cache
 import random
 from datetime import datetime, timezone, timedelta, date
+import hashlib
+import time
+from pydantic import ValidationError
+from dataclasses import dataclass
 
 from fastapi import HTTPException, status
 from sqlalchemy import select, func, and_, update, or_, case, delete
@@ -383,242 +387,153 @@ class VoiceHandleRepository:
 
 
 
+# Yandex GPT version, 7 seconds
 class GenerateAIWordRepository:
 
     def __init__(self):
-        # DeepSeek configuration only
-        self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
-        if not self.deepseek_api_key:
-            raise RuntimeError("DEEPSEEK_API_KEY is not set")
+        self.headers = {
+            "Authorization": f"Api-Key {os.getenv('YANDEX_LANGMODEL_API_SECRET_KEY')}",
+            "Content-Type": "application/json"}
 
-        self.client = httpx.AsyncClient(timeout=60.0)
-        self.deepseek_url = "https://api.deepseek.com/v1/chat/completions"
-        self.deepseek_headers = {
-            "Authorization": f"Bearer {self.deepseek_api_key}",
-            "Content-Type": "application/json",
-        }
+        self.model = 'yandexgpt'
+        self.folder_id = os.getenv('YANDEX_FOLDER_ID')
 
-    async def _call_deepseek_gpt(self, prompt: str) -> Optional[str]:
-        """
-        Make authenticated request to DeepSeek GPT API
-        """
+    async def _call_yandex_gpt(self, prompt: str) -> Optional[str]:
         payload = {
-            "model": "deepseek-chat",
+            "modelUri": f"gpt://{self.folder_id}/{self.model}",
+            "completionOptions": {
+                "stream": False,
+                "temperature": 0.3,  # Lower temperature for more factual responses
+                "maxTokens": 2000
+            },
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are a helpful language learning assistant. Provide accurate, educational responses about words and phrases. Always respond with valid JSON."
+                    "text": "You are a helpful language learning assistant. Provide accurate, educational responses about words and phrases."
                 },
                 {
                     "role": "user",
-                    "content": prompt
+                    "text": prompt
                 }
-            ],
-            "temperature": 0.3,
-            "max_tokens": 2000,
-            "response_format": {"type": "json_object"}  # Force JSON response
+            ]
         }
 
-        try:
-            response = await self.client.post(
-                self.deepseek_url,
-                headers=self.deepseek_headers,
-                json=payload
-            )
-            response.raise_for_status()
-
-            result = response.json()
-            return result['choices'][0]['message']['content']
-
-        except httpx.HTTPStatusError as e:
-            print(f"DeepSeek API HTTP error: {e.response.status_code} - {e.response.text}")
-            return None
-        except (httpx.RequestError, KeyError, json.JSONDecodeError) as e:
-            print(f"DeepSeek API request error: {str(e)}")
-            return None
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                response = await client.post(
+                    "https://llm.api.cloud.yandex.net/foundationModels/v1/completion",
+                    headers=self.headers,
+                    json=payload
+                )
+                response.raise_for_status()
+                result = response.json()
+                return result['result']['alternatives'][0]['message']['text']
+            except httpx.HTTPStatusError as e:
+                print(f"Yandex API HTTP error: {e.response.status_code} - {e.response.text}")
+                return None
+            except (httpx.RequestError, KeyError, json.JSONDecodeError) as e:
+                print(f"Yandex API request error: {str(e)}")
+                return None
 
     @lru_cache(maxsize=100)
     def _create_prompt(self, word: str, target_lang: str, native_lang: str) -> str:
-        """
-        Create a highly structured prompt for AI to get perfect JSON responses
-        """
         return f"""**ROLE**: You are an expert {target_lang} language teacher creating learning materials for {native_lang} speakers.
 
-**TASK**: Create comprehensive educational content for the word "{word}" in {target_lang}.
+            **TASK**: Create comprehensive educational content for the word "{word}" in {target_lang}.
 
-**RESPONSE FORMAT**: You MUST return ONLY valid JSON with EXACTLY this structure:
-{{
-    "word": "{word}",
-    "target_language": "{target_lang}",         
-    "native_language": "{native_lang}",         
-    "definition": "clear definition in {native_lang}",
-    "pronunciation": "phonetic pronunciation guide",
-    "part_of_speech": "main part of speech in {native_lang}",
-    "examples": [
-        "example 1 in {target_lang} - {native_lang} translation",
-        "example 2 in {target_lang} - {native_lang} translation",
-        "example 3 in {target_lang} - {native_lang} translation",
-        "example 4 in {target_lang} - {native_lang} translation",
-        "example 5 in {target_lang} - {native_lang} translation"
-    ],
-    "usage_contexts": [
-        "context 1 in {native_lang}",
-        "context 2 in {native_lang}",
-        "context 3 in {native_lang}"
-    ],
-    "common_phrases": [
-        "phrase 1 in {target_lang} - {native_lang} translation",
-        "phrase 2 in {target_lang} - {native_lang} translation",
-        "phrase 3 in {target_lang} - {native_lang} translation"
-    ],
-    "grammar_tips": [
-        "tip 1 in {native_lang}",
-        "tip 2 in {native_lang}",
-        "tip 3 in {native_lang}"
-    ],
-    "additional_insights": {{
-        "key": "value"
-    }}
-}}
+            **RESPONSE FORMAT**: You MUST return ONLY valid JSON with EXACTLY this structure:
+            {{
+                "word": "{word}",
+                "target_language": "{target_lang}",
+                "native_language": "{native_lang}",
+                "definition": "clear definition in {native_lang}",
+                "pronunciation": "phonetic pronunciation guide",
+                "part_of_speech": "main part of speech in {native_lang}",
+                "examples": [
+                    "example 1 in {target_lang} - {native_lang} translation",
+                    "example 2 in {target_lang} - {native_lang} translation",
+                    "example 3 in {target_lang} - {native_lang} translation",
+                    "example 4 in {target_lang} - {native_lang} translation",
+                    "example 5 in {target_lang} - {native_lang} translation"
+                ],
+                "usage_contexts": [
+                    "context 1 in {native_lang}",
+                    "context 2 in {native_lang}",
+                    "context 3 in {native_lang}"
+                ],
+                "common_phrases": [
+                    "phrase 1 in {target_lang} - {native_lang} translation",
+                    "phrase 2 in {target_lang} - {native_lang} translation",
+                    "phrase 3 in {target_lang} - {native_lang} translation"
+                ],
+                "grammar_tips": [
+                    "tip 1 in {native_lang}",
+                    "tip 2 in {native_lang}",
+                    "tip 3 in {native_lang}"
+                ],
+                "additional_insights": {{
+                    "key": "value"
+                }}
+                }}
 
-**CRITICAL INSTRUCTIONS**:
-1. **NATIVE LANGUAGE FIRST**: All explanations, definitions, tips, and notes MUST be in {native_lang}
-2. **TRANSLATION FORMAT**: Examples and phrases must use "Target Text - Native Translation" format
-3. **DIVERSE EXAMPLES**: Provide 5 varied examples showing different:
-   - Tenses (if verb)
-   - Cases (if noun/adjective)  
-   - Sentence structures
-   - Formality levels
-4. **ACCURATE CONTENT**: Ensure all translations and explanations are 100% accurate
-5. **CULTURAL CONTEXT**: Include relevant cultural usage notes
-6. **GRAMMAR FOCUS**: Provide specific grammar tips for this word
-7. **NO MARKDOWN**: Return ONLY raw JSON, no code blocks or explanations
-8. **WORD SPECIFIC**: Tailor all content specifically to the word "{word}"
+    **CRITICAL INSTRUCTIONS**:
+    1. **NATIVE LANGUAGE FIRST**: All explanations, definitions, tips, and notes MUST be in {native_lang}
+    2. **TRANSLATION FORMAT**: Examples and phrases must use "Target Text - Native Translation" format
+    3. **DIVERSE EXAMPLES**: Provide 5 varied examples showing different:
+       - Tenses (if verb)
+       - Cases (if noun/adjective)
+       - Sentence structures
+       - Formality levels
+    4. **ACCURATE CONTENT**: Ensure all translations and explanations are 100% accurate
+    5. **CULTURAL CONTEXT**: Include relevant cultural usage notes
+    6. **GRAMMAR FOCUS**: Provide specific grammar tips for this word
+    7. **NO MARKDOWN**: Return ONLY raw JSON, no code blocks or explanations
+    8. **WORD SPECIFIC**: Tailor all content specifically to the word "{word}"
 
-**WORD-SPECIFIC GUIDANCE**:
-- If "{word}" is a verb: include conjugation patterns, aspect pairs, government patterns
-- If "{word}" is a noun: include gender, declension patterns, plural forms
-- If "{word}" is short/functional: explain nuanced usage and common collocations
-- If "{word}" is ambiguous: clarify different meanings with examples
+    **WORD-SPECIFIC GUIDANCE**:
+    - If "{word}" is a verb: include conjugation patterns, aspect pairs, government patterns
+    - If "{word}" is a noun: include gender, declension patterns, plural forms
+    - If "{word}" is short/functional: explain nuanced usage and common collocations
+    - If "{word}" is ambiguous: clarify different meanings with examples
 
-**EXAMPLE FORMATTING**:
-- "Я читаю книгу. - I am reading a book."
-- "Он прочитал книгу вчера. - He read the book yesterday."
-- "Эта книга интересная. - This book is interesting."
+    **EXAMPLE FORMATTING**:
+    - "Я читаю книгу. - I am reading a book."
+    - "Он прочитал книгу вчера. - He read the book yesterday."
+    - "Эта книга интересная. - This book is interesting."
 
-**REMEMBER**: You are helping a {native_lang} speaker master {target_lang}. Quality and accuracy are paramount.
-"""
+    **REMEMBER**: You are helping a {native_lang} speaker master {target_lang}. Quality and accuracy are paramount.
+    """
 
     def _get_native_language_name(self, language_code: str) -> str:
-        """
-        Map language codes to their native names for better fallback responses
-        """
-        language_map = {
-            'en': 'English',
-            'es': 'Spanish',
-            'tr': 'Turkish',
-            'zh': 'Chinese',
-            'ru': 'Russian',
-            'de': 'German',
-            'fr': 'French',
-            'it': 'Italian',
-            'ja': 'Japanese',
-            'ko': 'Korean',
-            'ar': 'Arabic',
-            'pt': 'Portuguese'
-        }
-        return language_map.get(language_code, language_code)
-
-    def _get_fallback_text(self, field_type: str, native_lang: str, target_lang: str, word: str) -> str:
-        """
-        Generate fallback text in the user's native language
-        """
-        target_lang_name = self._get_native_language_name(target_lang)
-        native_lang_name = self._get_native_language_name(native_lang)
-
-        fallback_templates = {
-            'en': {
-                'definition': f"A word in {target_lang_name} that you're learning",
-                'example': f"Example with {word} in {target_lang_name} - Translation in {native_lang_name}",
-                'usage': f"In daily conversations in {target_lang_name}",
-                'phrase': f"Common expression with {word} - Translation",
-                'grammar': "Check a dictionary for complete conjugations",
-                'cultural': f"Important word in {target_lang_name} culture",
-                'part_of_speech': 'word'
-            },
-            'es': {
-                'definition': f"Palabra en {target_lang_name} que estás aprendiendo",
-                'example': f"Ejemplo con {word} en {target_lang_name} - Traducción en {native_lang_name}",
-                'usage': f"En conversaciones diarias en {target_lang_name}",
-                'phrase': f"Expresión común con {word} - Traducción",
-                'grammar': "Consulta un diccionario para conjugaciones completas",
-                'cultural': f"Palabra importante en la cultura {target_lang_name}",
-                'part_of_speech': 'palabra'
-            },
-            'tr': {
-                'definition': f"Öğrendiğiniz {target_lang_name} dilinde bir kelime",
-                'example': f"{target_lang_name} dilinde {word} ile örnek - {native_lang_name} çevirisi",
-                'usage': f"{target_lang_name} dilinde günlük konuşmalarda",
-                'phrase': f"{word} ile ortak ifade - Çeviri",
-                'grammar': "Tam çekimler için bir sözlüğe bakın",
-                'cultural': f"{target_lang_name} kültüründe önemli bir kelime",
-                'part_of_speech': 'kelime'
-            },
-            'zh': {
-                'definition': f"您正在学习的{target_lang_name}单词",
-                'example': f"{target_lang_name}中的{word}示例 - {native_lang_name}翻译",
-                'usage': f"在{target_lang_name}的日常对话中",
-                'phrase': f"常用表达与{word} - 翻译",
-                'grammar': "查看字典以获取完整变位",
-                'cultural': f"{target_lang_name}文化中的重要词汇",
-                'part_of_speech': '单词'
-            }
-        }
-
         template = fallback_templates.get(native_lang, fallback_templates['en'])
         return template[field_type]
 
-    async def generate_ai_for_word(self, data) -> AIWordResponse:
-        """
-        Generate AI content for a word using DeepSeek API
-        """
-        print(f'🎯 Received request for word: {data.text}, target: {data.language}, native: {data.native}')
-
-        # Create the prompt
+    async def generate_ai_for_word(self, data):
+        print(f'Received request for word: {data.text}, target: {data.language}, native: {data.native}')
         prompt = self._create_prompt(data.text, data.language, data.native)
-        print(f"📝 Prompt generated, length: {len(prompt)} chars")
-
-        # Call DeepSeek API
-        ai_response = await self._call_deepseek_gpt(prompt)
-
+        ai_response = await self._call_yandex_gpt(prompt)
         if not ai_response:
-            print("❌ DeepSeek API failed, using fallback response")
-            return self._create_fallback_response(data)
+            print("AI returned empty response")
+            raise HTTPException(status_code=503, detail="AI service unavailable")
 
         try:
-            # Clean the response
             cleaned_response = ai_response.strip()
             cleaned_response = re.sub(r'^```(?:json)?\s*', '', cleaned_response)
             cleaned_response = re.sub(r'\s*```$', '', cleaned_response)
             cleaned_response = cleaned_response.strip()
-
-            print(f"🧹 Cleaned response preview: {cleaned_response[:200]}...")
-
-            # Parse the JSON
             parsed_response = json.loads(cleaned_response)
             print("✅ Successfully parsed JSON!")
-            print(f"📊 Parsed keys: {list(parsed_response.keys())}")
 
-            # Validate and return
-            return AIWordResponse(**parsed_response)
-
+            try:
+                return AIWordResponse(**parsed_response)
+            except ValidationError as e:
+                print(f"❌ Pydantic validation failed: {e}")
+                print(f"Parsed data: {parsed_response}")
+                return self._create_fallback_response(data)
         except json.JSONDecodeError as e:
             print(f"❌ JSON decode failed! Error: {str(e)}")
-            print(f"❌ Failed content: {ai_response}")
-            return self._create_fallback_response(data)
-        except ValidationError as e:
-            print(f"❌ Pydantic validation failed: {e}")
-            print(f"❌ Parsed data: {parsed_response}")
+            print(f"Failed content: {ai_response}")
+            print(f"Cleaned content: {cleaned_response}")  # Add this
             return self._create_fallback_response(data)
         except Exception as e:
             print(f"❌ Other error: {str(e)}")
@@ -641,43 +556,576 @@ class GenerateAIWordRepository:
                 self._get_fallback_text('example', data.native, data.language, data.text)
             ],
             usage_contexts=[
-                self._get_fallback_text('usage', data.native, data.language, data.text),
-                self._get_fallback_text('usage', data.native, data.language, data.text),
-                self._get_fallback_text('usage', data.native, data.language, data.text)
-            ],
-            common_phrases=[
-                self._get_fallback_text('phrase', data.native, data.language, data.text),
-                self._get_fallback_text('phrase', data.native, data.language, data.text),
-                self._get_fallback_text('phrase', data.native, data.language, data.text)
-            ],
-            grammar_tips=[
-                self._get_fallback_text('grammar', data.native, data.language, data.text),
-                "Pay attention to sentence structure",
+                               self._get_fallback_text('usage', data.native, data.language, data.text),
+                               self._get_fallback_text('usage', data.native, data.language, data.text),
+
+                                     "Pay attention to sentence structure",
                 "Practice with different contexts"
             ],
-            additional_insights=None
+            additional_insights = None
         )
 
-    async def generate_ai_for_word_with_fallback(self, data) -> AIWordResponse:
-        """
-        Enhanced version with retry logic and comprehensive fallback
-        """
-        max_retries = 2
-        for attempt in range(max_retries):
-            try:
-                return await self.generate_ai_for_word(data)
-            except Exception as e:
-                print(f"🔄 Attempt {attempt + 1} failed for word '{data.text}': {str(e)}")
-                if attempt == max_retries - 1:
-                    print(f"❌ All attempts failed for word '{data.text}': {str(e)}")
-                    return self._create_fallback_response(data)
-                await asyncio.sleep(1)  # Wait before retry
 
-        raise Exception("Unexpected error in retry logic")
 
-    async def close(self):
-        """Close the HTTP client"""
-        await self.client.aclose()
+
+# This is global version but not reliable
+# @dataclass
+# class AIProvider:
+#     name: str
+#     call_function: callable
+#     avg_response_time: float = 10.0
+#     success_count: int = 0
+#     failure_count: int = 0
+#     enabled: bool = True
+
+# During testing only choose yandex for speed, deepseek version cant tested
+# class GenerateAIWordRepository:
+#     """
+#     Global AI provider with automatic failover and performance optimization
+#     """
+#
+#     def __init__(self):
+#         self.providers: List[AIProvider] = [
+#             AIProvider(name="yandex", call_function=self._call_yandex_gpt),
+#             AIProvider(name="deepseek", call_function=self._call_deepseek_gpt),
+#             # Add more providers easily: openai, anthropic, etc.
+#         ]
+#
+#         self.provider_stats: Dict[str, Dict] = {}
+#         self.current_best_provider = None
+#         self.performance_check_interval = 10  # Check performance every 10 requests
+#
+#     # Yandex GPT Implementation
+#     async def _call_yandex_gpt(self, prompt: str) -> Optional[str]:
+#         headers = {
+#             "Authorization": f"Api-Key {os.getenv('YANDEX_LANGMODEL_API_SECRET_KEY')}",
+#             "Content-Type": "application/json"
+#         }
+#
+#         payload = {
+#             "modelUri": f"gpt://{os.getenv('YANDEX_FOLDER_ID')}/yandexgpt",
+#             "completionOptions": {"stream": False, "temperature": 0.3, "maxTokens": 2000},
+#             "messages": [
+#                 {"role": "system",
+#                  "text": "You are a helpful language learning assistant. Provide accurate, educational responses about words and phrases. Always respond with valid JSON."},
+#                 {"role": "user", "text": prompt}
+#             ]
+#         }
+#
+#         try:
+#             start_time = time.time()
+#             async with httpx.AsyncClient(timeout=15.0) as client:
+#                 response = await client.post(
+#                     "https://llm.api.cloud.yandex.net/foundationModels/v1/completion",
+#                     headers=headers,
+#                     json=payload
+#                 )
+#             response_time = time.time() - start_time
+#
+#             response.raise_for_status()
+#             result = response.json()
+#             text = result['result']['alternatives'][0]['message']['text']
+#
+#             # Update provider stats
+#             self._update_provider_stats("yandex", response_time, True)
+#             print(f"✅ Yandex GPT: {response_time:.2f}s")
+#             return text
+#
+#         except Exception as e:
+#             self._update_provider_stats("yandex", 0, False)
+#             print(f"❌ Yandex GPT error: {e}")
+#             return None
+#
+#     # DeepSeek Implementation
+#     async def _call_deepseek_gpt(self, prompt: str) -> Optional[str]:
+#         headers = {
+#             "Authorization": f"Bearer {os.getenv('DEEPSEEK_API_KEY')}",
+#             "Content-Type": "application/json"
+#         }
+#
+#         payload = {
+#             "model": "deepseek-chat",
+#             "messages": [
+#                 {"role": "system",
+#                  "content": "You are a helpful language learning assistant. Provide accurate, educational responses about words and phrases. Always respond with valid JSON."},
+#                 {"role": "user", "content": prompt}
+#             ],
+#             "temperature": 0.3,
+#             "max_tokens": 2000,
+#             "stream": False
+#         }
+#
+#         try:
+#             start_time = time.time()
+#             async with httpx.AsyncClient(timeout=15.0) as client:
+#                 response = await client.post(
+#                     "https://api.deepseek.com/v1/chat/completions",
+#                     headers=headers,
+#                     json=payload
+#                 )
+#             response_time = time.time() - start_time
+#
+#             response.raise_for_status()
+#             result = response.json()
+#             text = result['choices'][0]['message']['content']
+#
+#             # Update provider stats
+#             self._update_provider_stats("deepseek", response_time, True)
+#             print(f"✅ DeepSeek: {response_time:.2f}s")
+#             return text
+#
+#         except Exception as e:
+#             self._update_provider_stats("deepseek", 0, False)
+#             print(f"❌ DeepSeek error: {e}")
+#             return None
+#
+#     def _update_provider_stats(self, provider_name: str, response_time: float, success: bool):
+#         """Update performance statistics for each provider"""
+#         if provider_name not in self.provider_stats:
+#             self.provider_stats[provider_name] = {
+#                 'response_times': [],
+#                 'success_count': 0,
+#                 'failure_count': 0,
+#                 'avg_response_time': 10.0
+#             }
+#
+#         stats = self.provider_stats[provider_name]
+#
+#         if success:
+#             stats['response_times'].append(response_time)
+#             stats['success_count'] += 1
+#             # Keep only last 20 response times for moving average
+#             stats['response_times'] = stats['response_times'][-20:]
+#             stats['avg_response_time'] = sum(stats['response_times']) / len(stats['response_times'])
+#         else:
+#             stats['failure_count'] += 1
+#
+#     def _get_best_provider(self) -> AIProvider:
+#         """Get the best performing provider based on recent statistics"""
+#         if not self.provider_stats:
+#             # No stats yet, return first enabled provider
+#             return next((p for p in self.providers if p.enabled), self.providers[0])
+#
+#         best_provider = None
+#         best_score = float('inf')
+#
+#         for provider in self.providers:
+#             if not provider.enabled:
+#                 continue
+#
+#             stats = self.provider_stats.get(provider.name, {})
+#             success_count = stats.get('success_count', 0)
+#             failure_count = stats.get('failure_count', 0)
+#             avg_time = stats.get('avg_response_time', 10.0)
+#
+#             # Calculate score: lower is better
+#             # Consider both speed and reliability
+#             reliability = success_count / (success_count + failure_count + 1)  # +1 to avoid division by zero
+#             score = avg_time * (2 - reliability)  # Penalize unreliable providers
+#
+#             if score < best_score:
+#                 best_score = score
+#                 best_provider = provider
+#
+#         return best_provider or self.providers[0]
+#
+#     async def _call_with_fallback(self, prompt: str) -> Optional[str]:
+#         """
+#         Smart provider selection with automatic failover
+#         """
+#         # Try best provider first
+#         best_provider = self._get_best_provider()
+#         print(f"🎯 Trying best provider: {best_provider.name}")
+#
+#         response = await best_provider.call_function(prompt)
+#         if response:
+#             return response
+#
+#         # Best provider failed, try all others
+#         print("🔄 Best provider failed, trying fallbacks...")
+#         for provider in self.providers:
+#             if provider.name == best_provider.name or not provider.enabled:
+#                 continue
+#
+#             print(f"🔄 Trying fallback: {provider.name}")
+#             response = await provider.call_function(prompt)
+#             if response:
+#                 return response
+#
+#         return None
+#
+#     @lru_cache(maxsize=100)
+#     def _create_prompt(self, word: str, target_lang: str, native_lang: str) -> str:
+#         """Your existing optimized prompt"""
+#         return f"""**ROLE**: You are an expert {target_lang} language teacher creating learning materials for {native_lang} speakers.
+#
+# **TASK**: Create comprehensive educational content for the word "{word}" in {target_lang}.
+#
+# **RESPONSE FORMAT**: You MUST return ONLY valid JSON with EXACTLY this structure:
+# {{
+#     "word": "{word}",
+#     "target_language": "{target_lang}",
+#     "native_language": "{native_lang}",
+#     "definition": "clear definition in {native_lang}",
+#     "pronunciation": "phonetic pronunciation guide",
+#     "part_of_speech": "main part of speech in {native_lang}",
+#     "examples": [
+#         "example 1 in {target_lang} - {native_lang} translation",
+#         "example 2 in {target_lang} - {native_lang} translation",
+#         "example 3 in {target_lang} - {native_lang} translation",
+#         "example 4 in {target_lang} - {native_lang} translation",
+#         "example 5 in {target_lang} - {native_lang} translation"
+#     ],
+#     "usage_contexts": [
+#         "context 1 in {native_lang}",
+#         "context 2 in {native_lang}",
+#         "context 3 in {native_lang}"
+#     ],
+#     "common_phrases": [
+#         "phrase 1 in {target_lang} - {native_lang} translation",
+#         "phrase 2 in {target_lang} - {native_lang} translation",
+#         "phrase 3 in {target_lang} - {native_lang} translation"
+#     ],
+#     "grammar_tips": [
+#         "tip 1 in {native_lang}",
+#         "tip 2 in {native_lang}",
+#         "tip 3 in {native_lang}"
+#     ],
+#     "additional_insights": {{
+#         "key": "value"
+#     }}
+# }}
+#
+# **CRITICAL INSTRUCTIONS**:
+# 1. All explanations MUST be in {native_lang}
+# 2. Examples must use "Target Text - Native Translation" format
+# 3. Provide 5 varied examples
+# 4. Return ONLY raw JSON, no code blocks
+# """
+#
+#     async def generate_ai_for_word(self, data):
+#         """
+#         Global AI generation with automatic provider optimization
+#         """
+#         print(f'🌍 Global AI request: "{data.text}" ({data.language}→{data.native})')
+#         start_time = time.time()
+#
+#         prompt = self._create_prompt(data.text, data.language, data.native)
+#         ai_response = await self._call_with_fallback(prompt)
+#
+#         if not ai_response:
+#             print("❌ All providers failed, using fallback")
+#             return self._create_fallback_response(data)
+#
+#         try:
+#             cleaned_response = ai_response.strip()
+#             cleaned_response = re.sub(r'^```(?:json)?\s*', '', cleaned_response)
+#             cleaned_response = re.sub(r'\s*```$', '', cleaned_response)
+#             cleaned_response = cleaned_response.strip()
+#
+#             parsed_response = json.loads(cleaned_response)
+#             result = AIWordResponse(**parsed_response)
+#
+#             total_time = time.time() - start_time
+#             print(f"✅ Global AI success: {total_time:.2f}s")
+#             return result
+#
+#         except Exception as e:
+#             print(f"❌ Response parsing failed: {e}")
+#             return self._create_fallback_response(data)
+#
+#     def _create_fallback_response(self, data) -> AIWordResponse:
+#         """Your existing fallback response"""
+#         return AIWordResponse(
+#             word=data.text,
+#             target_language=data.language,
+#             native_language=data.native,
+#             definition=f"A word in {self._get_language_name(data.language)}",
+#             pronunciation="",
+#             part_of_speech="word",
+#             examples=[f"Example {i} with {data.text} - Translation" for i in range(1, 6)],
+#             usage_contexts=["Daily conversations", "Written language", "Formal situations"],
+#             common_phrases=[f"Common phrase with {data.text} - Translation" for _ in range(3)],
+#             grammar_tips=["Pay attention to context", "Practice with examples", "Check proper usage"],
+#             additional_insights=None
+#         )
+#
+#     def _get_language_name(self, language_code: str) -> str:
+#         language_map = {'en': 'English', 'es': 'Spanish', 'tr': 'Turkish', 'ru': 'Russian'}
+#         return language_map.get(language_code, language_code)
+#
+#     def get_provider_stats(self) -> Dict:
+#         """Get current provider statistics for monitoring"""
+#         return {
+#             'current_best': self._get_best_provider().name,
+#             'stats': self.provider_stats,
+#             'providers': [p.name for p in self.providers if p.enabled]
+#         }
+#
+#     async def generate_ai_for_word_with_fallback(self, data):
+#         return await self.generate_ai_for_word(data)
+
+
+
+
+# New Code For DeepSeek, 20 seconds
+# class GenerateAIWordRepository:
+#     """
+#     Fixed DeepSeek repository with correct message format
+#     """
+#
+#     def __init__(self):
+#         self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
+#         if not self.deepseek_api_key:
+#             raise RuntimeError("DEEPSEEK_API_KEY is not set")
+#
+#         self.headers = {
+#             "Authorization": f"Bearer {self.deepseek_api_key}",
+#             "Content-Type": "application/json"
+#         }
+#         self.url = "https://api.deepseek.com/v1/chat/completions"
+#
+#     async def _call_deepseek_gpt(self, prompt: str) -> Optional[str]:
+#         """
+#         Fixed API call with correct message format for DeepSeek
+#         """
+#         payload = {
+#             "model": "deepseek-chat",
+#             "messages": [
+#                 {
+#                     "role": "system",
+#                     "content": "You are a helpful language learning assistant. Provide accurate, educational responses about words and phrases. Always respond with valid JSON."
+#                     # Changed from 'text' to 'content'
+#                 },
+#                 {
+#                     "role": "user",
+#                     "content": prompt  # Changed from 'text' to 'content'
+#                 }
+#             ],
+#             "temperature": 0.3,
+#             "max_tokens": 2000,
+#             "stream": False
+#         }
+#
+#         async with httpx.AsyncClient(timeout=30.0) as client:
+#             try:
+#                 start_time = time.time()
+#                 response = await client.post(
+#                     self.url,
+#                     headers=self.headers,
+#                     json=payload
+#                 )
+#                 response_time = time.time() - start_time
+#                 print(f"⏱️ DeepSeek API: {response_time:.2f}s")
+#
+#                 response.raise_for_status()
+#                 result = response.json()
+#                 return result['choices'][0]['message']['content']
+#
+#             except httpx.HTTPStatusError as e:
+#                 print(f"DeepSeek API HTTP error: {e.response.status_code} - {e.response.text}")
+#                 return None
+#             except (httpx.RequestError, KeyError, json.JSONDecodeError) as e:
+#                 print(f"DeepSeek API request error: {str(e)}")
+#                 return None
+#
+#     @lru_cache(maxsize=100)
+#     def _create_prompt(self, word: str, target_lang: str, native_lang: str) -> str:
+#         """
+#         Use the EXACT same prompt as Yandex (which was working in 7 seconds)
+#         """
+#         return f"""**ROLE**: You are an expert {target_lang} language teacher creating learning materials for {native_lang} speakers.
+#
+# **TASK**: Create comprehensive educational content for the word "{word}" in {target_lang}.
+#
+# **RESPONSE FORMAT**: You MUST return ONLY valid JSON with EXACTLY this structure:
+# {{
+#     "word": "{word}",
+#     "target_language": "{target_lang}",
+#     "native_language": "{native_lang}",
+#     "definition": "clear definition in {native_lang}",
+#     "pronunciation": "phonetic pronunciation guide",
+#     "part_of_speech": "main part of speech in {native_lang}",
+#     "examples": [
+#         "example 1 in {target_lang} - {native_lang} translation",
+#         "example 2 in {target_lang} - {native_lang} translation",
+#         "example 3 in {target_lang} - {native_lang} translation",
+#         "example 4 in {target_lang} - {native_lang} translation",
+#         "example 5 in {target_lang} - {native_lang} translation"
+#     ],
+#     "usage_contexts": [
+#         "context 1 in {native_lang}",
+#         "context 2 in {native_lang}",
+#         "context 3 in {native_lang}"
+#     ],
+#     "common_phrases": [
+#         "phrase 1 in {target_lang} - {native_lang} translation",
+#         "phrase 2 in {target_lang} - {native_lang} translation",
+#         "phrase 3 in {target_lang} - {native_lang} translation"
+#     ],
+#     "grammar_tips": [
+#         "tip 1 in {native_lang}",
+#         "tip 2 in {native_lang}",
+#         "tip 3 in {native_lang}"
+#     ],
+#     "additional_insights": {{
+#         "key": "value"
+#     }}
+# }}
+#
+# **CRITICAL INSTRUCTIONS**:
+# 1. **NATIVE LANGUAGE FIRST**: All explanations, definitions, tips, and notes MUST be in {native_lang}
+# 2. **TRANSLATION FORMAT**: Examples and phrases must use "Target Text - Native Translation" format
+# 3. **DIVERSE EXAMPLES**: Provide 5 varied examples showing different:
+#    - Tenses (if verb)
+#    - Cases (if noun/adjective)
+#    - Sentence structures
+#    - Formality levels
+# 4. **ACCURATE CONTENT**: Ensure all translations and explanations are 100% accurate
+# 5. **CULTURAL CONTEXT**: Include relevant cultural usage notes
+# 6. **GRAMMAR FOCUS**: Provide specific grammar tips for this word
+# 7. **NO MARKDOWN**: Return ONLY raw JSON, no code blocks or explanations
+# 8. **WORD SPECIFIC**: Tailor all content specifically to the word "{word}"
+#
+# **WORD-SPECIFIC GUIDANCE**:
+# - If "{word}" is a verb: include conjugation patterns, aspect pairs, government patterns
+# - If "{word}" is a noun: include gender, declension patterns, plural forms
+# - If "{word}" is short/functional: explain nuanced usage and common collocations
+# - If "{word}" is ambiguous: clarify different meanings with examples
+#
+# **EXAMPLE FORMATTING**:
+# - "Я читаю книгу. - I am reading a book."
+# - "Он прочитал книгу вчера. - He read the book yesterday."
+# - "Эта книга интересная. - This book is interesting."
+#
+# **REMEMBER**: You are helping a {native_lang} speaker master {target_lang}. Quality and accuracy are paramount.
+# """
+#
+#     def _get_fallback_text(self, field_type: str, native_lang: str, target_lang: str, word: str) -> str:
+#         """Fallback text generator"""
+#         target_lang_name = self._get_language_name(target_lang)
+#         native_lang_name = self._get_language_name(native_lang)
+#
+#         fallback_templates = {
+#             'en': {
+#                 'definition': f"A word in {target_lang_name} that you're learning",
+#                 'example': f"Example with {word} in {target_lang_name} - Translation in {native_lang_name}",
+#                 'usage': f"In daily conversations in {target_lang_name}",
+#                 'phrase': f"Common expression with {word} - Translation",
+#                 'grammar': "Check a dictionary for complete conjugations",
+#                 'cultural': f"Important word in {target_lang_name} culture",
+#                 'part_of_speech': 'word'
+#             },
+#             'es': {
+#                 'definition': f"Palabra en {target_lang_name} que estás aprendiendo",
+#                 'example': f"Ejemplo con {word} en {target_lang_name} - Traducción en {native_lang_name}",
+#                 'usage': f"En conversaciones diarias en {target_lang_name}",
+#                 'phrase': f"Expresión común con {word} - Traducción",
+#                 'grammar': "Consulta un diccionario para conjugaciones completas",
+#                 'cultural': f"Palabra importante en la cultura {target_lang_name}",
+#                 'part_of_speech': 'palabra'
+#             },
+#             'tr': {
+#                 'definition': f"Öğrendiğiniz {target_lang_name} dilinde bir kelime",
+#                 'example': f"{target_lang_name} dilinde {word} ile örnek - {native_lang_name} çevirisi",
+#                 'usage': f"{target_lang_name} dilinde günlük konuşmalarda",
+#                 'phrase': f"{word} ile ortak ifade - Çeviri",
+#                 'grammar': "Tam çekimler için bir sözlüğe bakın",
+#                 'cultural': f"{target_lang_name} kültüründe önemli bir kelime",
+#                 'part_of_speech': 'kelime'
+#             }
+#         }
+#
+#         template = fallback_templates.get(native_lang, fallback_templates['en'])
+#         return template.get(field_type, template['definition'])
+#
+#     def _get_language_name(self, language_code: str) -> str:
+#         """Get language name from code"""
+#         language_map = {
+#             'en': 'English', 'es': 'Spanish', 'tr': 'Turkish', 'ru': 'Russian',
+#             'fr': 'French', 'de': 'German', 'it': 'Italian', 'ja': 'Japanese',
+#             'ko': 'Korean', 'zh': 'Chinese', 'ar': 'Arabic', 'pt': 'Portuguese'
+#         }
+#         return language_map.get(language_code, language_code)
+#
+#     async def generate_ai_for_word(self, data):
+#         """
+#         Exact same logic as Yandex version but for DeepSeek
+#         """
+#         print(f'🎯 Received request for word: {data.text}, target: {data.language}, native: {data.native}')
+#
+#         prompt = self._create_prompt(data.text, data.language, data.native)
+#         ai_response = await self._call_deepseek_gpt(prompt)
+#
+#         if not ai_response:
+#             print("❌ DeepSeek returned empty response")
+#             return self._create_fallback_response(data)
+#
+#         try:
+#             # Same cleaning logic as Yandex
+#             cleaned_response = ai_response.strip()
+#             cleaned_response = re.sub(r'^```(?:json)?\s*', '', cleaned_response)
+#             cleaned_response = re.sub(r'\s*```$', '', cleaned_response)
+#             cleaned_response = cleaned_response.strip()
+#
+#             print(f"🧹 Cleaned response preview: {cleaned_response[:200]}...")
+#
+#             parsed_response = json.loads(cleaned_response)
+#             print("✅ Successfully parsed JSON!")
+#
+#             try:
+#                 return AIWordResponse(**parsed_response)
+#             except ValidationError as e:
+#                 print(f"❌ Pydantic validation failed: {e}")
+#                 print(f"Parsed data: {parsed_response}")
+#                 return self._create_fallback_response(data)
+#
+#         except json.JSONDecodeError as e:
+#             print(f"❌ JSON decode failed! Error: {str(e)}")
+#             print(f"Failed content: {ai_response}")
+#             return self._create_fallback_response(data)
+#         except Exception as e:
+#             print(f"❌ Other error: {str(e)}")
+#             return self._create_fallback_response(data)
+#
+#     def _create_fallback_response(self, data) -> AIWordResponse:
+#         """Create a fallback response - same as Yandex version"""
+#         return AIWordResponse(
+#             word=data.text,
+#             target_language=data.language,
+#             native_language=data.native,
+#             definition=self._get_fallback_text('definition', data.native, data.language, data.text),
+#             pronunciation=None,
+#             part_of_speech=self._get_fallback_text('part_of_speech', data.native, data.language, data.text),
+#             examples=[
+#                 self._get_fallback_text('example', data.native, data.language, data.text),
+#                 self._get_fallback_text('example', data.native, data.language, data.text),
+#                 self._get_fallback_text('example', data.native, data.language, data.text),
+#                 self._get_fallback_text('example', data.native, data.language, data.text),
+#                 self._get_fallback_text('example', data.native, data.language, data.text)
+#             ],
+#             usage_contexts=[
+#                 self._get_fallback_text('usage', data.native, data.language, data.text),
+#                 self._get_fallback_text('usage', data.native, data.language, data.text),
+#                 self._get_fallback_text('usage', data.native, data.language, data.text)
+#             ],
+#             common_phrases=[
+#                 self._get_fallback_text('phrase', data.native, data.language, data.text),
+#                 self._get_fallback_text('phrase', data.native, data.language, data.text),
+#                 self._get_fallback_text('phrase', data.native, data.language, data.text)
+#             ],
+#             grammar_tips=[
+#                 self._get_fallback_text('grammar', data.native, data.language, data.text),
+#                 "Pay attention to sentence structure",
+#                 "Practice with different contexts"
+#             ],
+#             additional_insights=None
+#         )
+#
+#     async def generate_ai_for_word_with_fallback(self, data):
+#         """For compatibility with your router"""
+#         return await self.generate_ai_for_word(data)
+
 
 
 
