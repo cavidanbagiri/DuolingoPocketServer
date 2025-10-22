@@ -14,7 +14,7 @@ from app.repositories.word_repository import FetchWordRepository, \
     VoiceHandleRepository, GenerateAIWordRepository, GenerateAIQuestionRepository, SearchRepository, \
     TranslateRepository, AddFavoritesRepository, CreateNewFavoriteCategoryRepository, FavoriteCategoryRepository, \
     CategoryWordsRepository, DeleteFavoriteWordRepository, MoveFavoriteWordRepository, DeleteCategoryRepository, \
-    SearchFavoriteRepository, FetchStatisticsForProfile
+    SearchFavoriteRepository, FetchStatisticsForProfileRepository, DailyStreakRepository
 from app.schemas.user_schema import ChangeWordStatusSchema
 from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, GenerateAIChatSchema, TranslateSchema
 from app.schemas.favorite_schemas import (FavoriteWordBase, FavoriteWordResponse, FavoriteCategoryBase, FavoriteCategoryResponse,
@@ -490,8 +490,7 @@ async def search_statistics_for_profile(
     Fetch user statistics: username, email, total learned words, and days registered
     """
     try:
-        print('..................................................../////// {}'.format(user_info))
-        repository = FetchStatisticsForProfile(db, user_id=int(user_info.get('sub')))
+        repository = FetchStatisticsForProfileRepository(db, user_id=int(user_info.get('sub')))
         data = await repository.fetch_statistics()
         return data
     except HTTPException:
@@ -501,4 +500,27 @@ async def search_statistics_for_profile(
         raise HTTPException(
             status_code=500,
             detail="We're having trouble with the profile fetch statistics"
+        )
+
+
+@router.get('/user/daily_streak', status_code=200, response_model=Dict[str, Any])
+async def search_statistics_for_profile(
+        db: AsyncSession = Depends(get_db),
+        user_info: dict = Depends(TokenHandler.verify_access_token)
+):
+    """
+    Fetch daily streak statistics: last learned language, daily learned words
+    """
+    try:
+        print('..........................l am working dailt streak')
+        repository = DailyStreakRepository(db, user_id=int(user_info.get('sub')))
+        data = await repository.daily_streak()
+        return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during header fetch daily streak: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="We're having trouble with the header fetch daily streak"
         )
