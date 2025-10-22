@@ -9,6 +9,7 @@ import aiohttp
 import asyncio
 from functools import lru_cache
 import random
+from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
 from sqlalchemy import select, func, and_, update, or_, case, delete
@@ -1761,4 +1762,79 @@ class SearchFavoriteRepository:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Database error during search"
             )
+
+
+
+class FetchStatisticsForProfile:
+
+    def __init__(self, db: AsyncSession, user_id: Optional[int] = None):
+        self.db = db
+        self.user_id = user_id
+
+    async def fetch_statistics(self) -> Dict[str, Any]:
+        """
+        Fetch user statistics using a single query with join
+        """
+        if not self.user_id:
+            raise HTTPException(status_code=400, detail="User ID is required")
+
+        # Single query to get user info and count learned words
+        query = select(
+            UserModel.username,
+            UserModel.email,
+            UserModel.created_at,
+            UserModel.is_premium,
+            func.count(UserWord.id).label('total_learned_words')
+        ).select_from(UserModel).outerjoin(
+            UserWord,
+            (UserWord.user_id == UserModel.id) & (UserWord.is_learned == True)
+        ).where(
+            UserModel.id == self.user_id
+        ).group_by(
+            UserModel.id,
+            UserModel.username,
+            UserModel.email,
+            UserModel.created_at,
+            UserModel.is_premium
+        )
+
+        result = await self.db.execute(query)
+        user_data = result.first()
+
+        if not user_data:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Calculate days since registration
+        days_registered = await self._calculate_days_registered(user_data.created_at)
+
+        # Prepare response data
+        statistics = {
+            "username": user_data.username,
+            "email": user_data.email,
+            "total_learned_words": user_data.total_learned_words or 0,
+            "days_registered": days_registered,
+            "join_date": user_data.created_at.isoformat() if user_data.created_at else None,
+            "is_premium": user_data.is_premium
+        }
+
+
+        return statistics
+
+    async def _calculate_days_registered(self, created_at: datetime) -> int:
+        """Calculate how many days the user has been registered"""
+        if not created_at:
+            return 0
+
+        # Ensure both datetimes are timezone-aware
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+
+        current_time = datetime.now(timezone.utc)
+
+        # Calculate difference in days
+        time_difference = current_time - created_at
+        days_registered = time_difference.days
+
+        # Ensure at least 1 day for same-day registration
+        return max(1, days_registered)
 
