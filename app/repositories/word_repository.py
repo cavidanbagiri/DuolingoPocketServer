@@ -1840,7 +1840,6 @@ class FetchStatisticsForProfileRepository:
 
 
 
-
 class DailyStreakRepository:
     def __init__(self, db: AsyncSession, user_id: Optional[int] = None):
         self.db = db
@@ -1852,7 +1851,6 @@ class DailyStreakRepository:
         - last_learned_language: The language_code of the most recently learned word
         - daily_learned_words: Number of words learned TODAY
         """
-        print('here is working')
         if not self.user_id:
             raise HTTPException(status_code=400, detail="User ID is required")
 
@@ -1861,7 +1859,7 @@ class DailyStreakRepository:
         start_of_today = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
         end_of_today = start_of_today + timedelta(days=1)
 
-        # Get last learned language (most recent learned word's language_code)
+        # Get last learned language (using updated_at for accurate ordering)
         last_learned_language = await self._get_last_learned_language()
 
         # Get today's learned words count
@@ -1869,17 +1867,38 @@ class DailyStreakRepository:
 
         return_data = {
             "last_learned_language": last_learned_language,
-            "daily_learned_words": daily_learned_words,  # This is TODAY's count
-            "date": today.isoformat(),  # Include which date we're counting
+            "daily_learned_words": daily_learned_words,
+            "date": today.isoformat(),
             "last_updated": datetime.now(timezone.utc).isoformat()
         }
-        print('........................return data for streak {}'.format(return_data))
         return return_data
 
     async def _get_last_learned_language(self) -> Optional[str]:
-        """Get the language_code of the most recently learned word using ID ordering"""
+        """Get the language_code of the most recently learned word using updated_at"""
         try:
-            # Use ID for ordering since it auto-increments and is more reliable
+            # Debug: Show recent learning activity
+            debug_query = (
+                select(UserWord.id, UserWord.created_at, UserWord.updated_at,
+                       UserWord.is_learned, Word.language_code, Word.text)
+                .select_from(UserWord)
+                .join(Word, UserWord.word_id == Word.id)
+                .where(UserWord.user_id == self.user_id)
+                .order_by(UserWord.updated_at.desc())
+                .limit(10)
+            )
+
+            debug_result = await self.db.execute(debug_query)
+            recent_activity = debug_result.all()
+
+            # print("=== DEBUG: Recent UserWord activity (ordered by updated_at) ===")
+            for uw_id, created_at, updated_at, is_learned, lang_code, text in recent_activity:
+                status = "LEARNED" if is_learned else "UNLEARNED"
+                # print(f"  - ID: {uw_id}, Status: {status}, Lang: {lang_code}")
+                # print(f"     Created: {created_at}, Updated: {updated_at}")
+                # print(f"     Word: {text}")
+            # print("=============================================================")
+
+            # Main query using updated_at for most recent learning activity
             query = (
                 select(Word.language_code)
                 .select_from(UserWord)
@@ -1890,14 +1909,14 @@ class DailyStreakRepository:
                         UserWord.is_learned == True
                     )
                 )
-                .order_by(UserWord.id.desc())  # Use ID instead of created_at
+                .order_by(UserWord.updated_at.desc())  # Use updated_at for accurate ordering
                 .limit(1)
             )
 
             result = await self.db.execute(query)
             last_language = result.scalar_one_or_none()
 
-            print(f"Last learned word language_code: {last_language}")
+            # print(f"Last learned word language_code: {last_language}")
             return last_language
 
         except Exception as e:
@@ -1906,19 +1925,20 @@ class DailyStreakRepository:
             return None
 
     async def _get_today_learned_words(self, today: date) -> int:
-        """Get count of words learned TODAY"""
+        """Get count of words learned TODAY (based on when they were marked as learned)"""
         try:
             start_of_today = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
             end_of_today = start_of_today + timedelta(days=1)
 
+            # Count words that were marked as learned today (using updated_at)
             query = (
                 select(func.count(UserWord.id))
                 .where(
                     and_(
                         UserWord.user_id == self.user_id,
                         UserWord.is_learned == True,
-                        UserWord.created_at >= start_of_today,
-                        UserWord.created_at < end_of_today
+                        UserWord.updated_at >= start_of_today,  # Use updated_at instead of created_at
+                        UserWord.updated_at < end_of_today
                     )
                 )
             )
@@ -1926,209 +1946,8 @@ class DailyStreakRepository:
             result = await self.db.execute(query)
             count = result.scalar() or 0
 
-            print(f"Words learned today ({today}): {count}")
             return count
 
         except Exception as e:
             logger.error(f"Error getting today's learned words: {str(e)}")
             return 0
-
-
-
-
-
-
-
-
-#
-# class DailyStreakRepository:
-#     def __init__(self, db: AsyncSession, user_id: Optional[int] = None):
-#         self.db = db
-#         self.user_id = user_id
-#
-#     async def daily_streak(self) -> Dict[str, Any]:
-#         """
-#         Fetch daily streak statistics:
-#         - last_learned_language: The language_code of the most recently learned word
-#         - daily_learned_words: Number of words learned TODAY
-#         """
-#         print('here is working')
-#         if not self.user_id:
-#             raise HTTPException(status_code=400, detail="User ID is required")
-#
-#         # Get today's date
-#         today = datetime.now(timezone.utc).date()
-#         start_of_today = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
-#         end_of_today = start_of_today + timedelta(days=1)
-#
-#         # Get last learned language (most recent learned word's language_code)
-#         last_learned_language = await self._get_last_learned_language()
-#
-#         # Get today's learned words count
-#         daily_learned_words = await self._get_today_learned_words(today)
-#
-#         return_data = {
-#             "last_learned_language": last_learned_language,
-#             "daily_learned_words": daily_learned_words,  # This is TODAY's count
-#             "date": today.isoformat(),  # Include which date we're counting
-#             "last_updated": datetime.now(timezone.utc).isoformat()
-#         }
-#         print('........................return data for streak {}'.format(return_data))
-#         return return_data
-#
-#
-#
-#     async def _get_last_learned_language(self) -> Optional[str]:
-#         """Get the language_code of the most recently learned word - Alternative approach"""
-#         try:
-#             # Get the most recent UserWord entry first, then get its language
-#             subquery = (
-#                 select(UserWord.id)
-#                 .where(
-#                     and_(
-#                         UserWord.user_id == self.user_id,
-#                         UserWord.is_learned == True
-#                     )
-#                 )
-#                 .order_by(UserWord.created_at.desc())
-#                 .limit(1)
-#                 .scalar_subquery()
-#             )
-#
-#             query = (
-#                 select(Word.language_code)
-#                 .select_from(UserWord)
-#                 .join(Word, UserWord.word_id == Word.id)
-#                 .where(UserWord.id == subquery)
-#             )
-#
-#             result = await self.db.execute(query)
-#             last_language = result.scalar_one_or_none()
-#
-#             print(f"Last learned word language_code: {last_language}")
-#             return last_language
-#
-#         except Exception as e:
-#             logger.error(f"Error getting last learned language: {str(e)}")
-#             print(f"Error in _get_last_learned_language: {str(e)}")
-#             return None
-#
-#     async def _get_today_learned_words(self, today: date) -> int:
-#         """Get count of words learned TODAY"""
-#         try:
-#             start_of_today = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
-#             end_of_today = start_of_today + timedelta(days=1)
-#
-#             query = (
-#                 select(func.count(UserWord.id))
-#                 .where(
-#                     and_(
-#                         UserWord.user_id == self.user_id,
-#                         UserWord.is_learned == True,
-#                         UserWord.created_at >= start_of_today,
-#                         UserWord.created_at < end_of_today
-#                     )
-#                 )
-#             )
-#
-#             result = await self.db.execute(query)
-#             count = result.scalar() or 0
-#
-#             print(f"Words learned today ({today}): {count}")
-#             return count
-#
-#         except Exception as e:
-#             logger.error(f"Error getting today's learned words: {str(e)}")
-#             return 0
-#
-
-
-# class DailyStreakRepository:
-#     def __init__(self, db: AsyncSession, user_id: Optional[int] = None):
-#         self.db = db
-#         self.user_id = user_id
-#
-#     async def daily_streak(self) -> Dict[str, Any]:
-#         """
-#         Fetch daily streak statistics:
-#         - last_learned_language: The language_code of the most recently learned word
-#         - daily_learned_words: Number of words learned TODAY
-#         """
-#         print('here is working')
-#         if not self.user_id:
-#             raise HTTPException(status_code=400, detail="User ID is required")
-#
-#         # Get today's date
-#         today = datetime.now(timezone.utc).date()
-#         start_of_today = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
-#         end_of_today = start_of_today + timedelta(days=1)
-#
-#         # Get last learned language (most recent learned word's language_code)
-#         last_learned_language = await self._get_last_learned_language()
-#
-#         # Get today's learned words count
-#         daily_learned_words = await self._get_today_learned_words(today)
-#
-#         return_data = {
-#             "last_learned_language": last_learned_language,
-#             "daily_learned_words": daily_learned_words,  # This is TODAY's count
-#             "date": today.isoformat(),  # Include which date we're counting
-#             "last_updated": datetime.now(timezone.utc).isoformat()
-#         }
-#         print('........................return data for streak {}'.format(return_data))
-#         return return_data
-#
-#     async def _get_last_learned_language(self) -> Optional[str]:
-#         """Get the language_code of the most recently learned word"""
-#         try:
-#             query = (
-#                 select(Word.language_code)
-#                 .select_from(UserWord)
-#                 .join(Word, UserWord.word_id == Word.id)
-#                 .where(
-#                     and_(
-#                         UserWord.user_id == self.user_id,
-#                         UserWord.is_learned == True
-#                     )
-#                 )
-#                 .order_by(UserWord.created_at.desc())
-#                 .limit(1)
-#             )
-#
-#             result = await self.db.execute(query)
-#             last_language = result.scalar_one_or_none()
-#
-#             print(f"Last learned word language_code: {last_language}")
-#             return last_language
-#
-#         except Exception as e:
-#             logger.error(f"Error getting last learned language: {str(e)}")
-#             return None
-#
-#     async def _get_today_learned_words(self, today: date) -> int:
-#         """Get count of words learned TODAY"""
-#         try:
-#             start_of_today = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
-#             end_of_today = start_of_today + timedelta(days=1)
-#
-#             query = (
-#                 select(func.count(UserWord.id))
-#                 .where(
-#                     and_(
-#                         UserWord.user_id == self.user_id,
-#                         UserWord.is_learned == True,
-#                         UserWord.created_at >= start_of_today,
-#                         UserWord.created_at < end_of_today
-#                     )
-#                 )
-#             )
-#
-#             result = await self.db.execute(query)
-#             count = result.scalar() or 0
-#
-#             print(f"Words learned today ({today}): {count}")
-#             return count
-#
-#         except Exception as e:
-#             logger.error(f"Error getting today's learned words: {str(e)}")
-#             return 0

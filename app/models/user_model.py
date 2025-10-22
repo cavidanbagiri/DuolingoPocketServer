@@ -71,6 +71,7 @@ class UserWord(Base):
     is_learned = mapped_column(Boolean, default=False)
 
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())  # Add this!
 
     # Relationships
     # user = relationship("UserModel", back_populates="user_words")
