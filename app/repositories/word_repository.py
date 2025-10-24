@@ -188,7 +188,7 @@ class FetchWordRepository:
             return []
 
         native_language = user.native
-        lang_code_map = {"Russian": "ru", "English": "en", "Spanish": "es"}
+        lang_code_map = {"Russian": "ru", "English": "en", "Spanish": "es", "Turkish": "tr"}
         native_code = lang_code_map.get(native_language)
 
         if not native_code:
