@@ -759,7 +759,6 @@ class SearchRepository:
         self.user_id = user_id
 
     async def search(self, native_language: str, target_language: str, query: str):
-        print(f'Searching for: "{query}" in target_lang: {target_language}, native_lang: {native_language}')
 
         if not query or len(query.strip()) < 1:
             return {"results": []}

@@ -58,9 +58,9 @@ async def get_user_languages(
 
 @router.get('/search-test', status_code=201)
 async def search_word(
-    native_language: str,
     target_language: str,
     query: str,
+    native_language: str | None = None,
     db: AsyncSession = Depends(get_db),
     user_info = Depends(TokenHandler.verify_access_token)
 ):
