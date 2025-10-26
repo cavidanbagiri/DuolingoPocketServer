@@ -461,7 +461,7 @@ class GenerateSpanishSentences:
         stmt = (
             select(Word)
             .where(Word.language_code == "es")
-            .where(Word.id.between(19115, 20111))
+            .where(Word.id.between(21077, 23077))
             # .where(Word.id.in_(select(subquery.c.word_id)))
             # .limit(limit)
         )
@@ -1357,7 +1357,7 @@ class GenerateRussianSentences:
             select(Word)
             .where(Word.language_code == "ru")
             # .where(Word.id.in_(select(subquery.c.word_id)))
-            .where(Word.id.between(9965,10960))
+            .where(Word.id.between(11622, 13622))
             # .limit(limit)
         )
 
@@ -2525,7 +2525,7 @@ class GenerateEnglishSentence:
                 """
         # Step 1: Get words by ID
         result = await self.db.execute(
-            select(Word).where(Word.id.between(107, 1000)).order_by(Word.id)
+            select(Word).where(Word.id.between(2036, 4036)).order_by(Word.id)
         )
         words = result.scalars().all()
 

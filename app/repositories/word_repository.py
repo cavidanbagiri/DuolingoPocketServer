@@ -23,6 +23,16 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, outerjoin
 
+
+# New Added For GOOGLE
+import base64
+from google.cloud import texttospeech
+from google.oauth2 import service_account
+#############################################
+
+
+
+
 from app.logging_config import setup_logger
 from app.models.word_model import Word, Sentence, SentenceWord, WordMeaning, Translation, SentenceTranslation, \
     LearnedWord
@@ -345,45 +355,120 @@ class ChangeWordStatusRepository:
 
 class VoiceHandleRepository:
 
+    def __init__(self):
+        self.client = self._create_google_client()
+
+    def _create_google_client(self):
+        """Create Google TTS client using environment variables directly"""
+        try:
+            # Build credentials dictionary from environment variables
+            credentials_info = {
+                "type": "service_account",
+                "project_id": os.getenv("GOOGLE_PROJECT_ID"),
+                "private_key_id": os.getenv("GOOGLE_PRIVATE_KEY_ID"),
+                "private_key": os.getenv("GOOGLE_PRIVATE_KEY", "").replace('\\n', '\n'),
+                "client_email": os.getenv("GOOGLE_CLIENT_EMAIL"),
+                "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+                "auth_uri": os.getenv("GOOGLE_AUTH_URI", "https://accounts.google.com/o/oauth2/auth"),
+                "token_uri": os.getenv("GOOGLE_TOKEN_URI", "https://oauth2.googleapis.com/token"),
+                "auth_provider_x509_cert_url": os.getenv("GOOGLE_AUTH_PROVIDER_X509_CERT_URL",
+                                                         "https://www.googleapis.com/oauth2/v1/certs"),
+            }
+
+            # Create credentials from service account info
+            credentials = service_account.Credentials.from_service_account_info(credentials_info)
+
+            # Create and return the TTS client
+            return texttospeech.TextToSpeechClient(credentials=credentials)
+
+        except Exception as e:
+            print(f"Failed to create Google TTS client: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail="Google TTS service configuration error"
+            )
+
     async def generate_speech(self, text: str, lang: str) -> bytes:
+        """
+        Generate speech using Google Text-to-Speech API
+        """
+        try:
+            # Map language codes to Google TTS voice names
+            mapped_lang, voice_name = self._get_voice_for_language(lang)
 
-        url = "https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize"
+            # Set the text input to be synthesized
+            synthesis_input = texttospeech.SynthesisInput(text=text)
 
-        api_key = os.getenv("YANDEX_SPEECHKIT_API_KEY")
-        folder_id = os.getenv("YANDEX_FOLDER_ID")
+            # Build the voice request - use the MAPPED language code
+            voice = texttospeech.VoiceSelectionParams(
+                language_code=mapped_lang,  # Use the mapped language code, not the original
+                name=voice_name
+            )
 
-        data = {
-            "text": text,
-            "lang": lang,
-            "format": "mp3",  # Or 'oggopus'
-            "folderId": folder_id,
+            # Select the type of audio file you want returned
+            audio_config = texttospeech.AudioConfig(
+                audio_encoding=texttospeech.AudioEncoding.MP3
+            )
+
+            # Perform the text-to-speech request
+            response = self.client.synthesize_speech(
+                input=synthesis_input,
+                voice=voice,
+                audio_config=audio_config
+            )
+
+            # The response's audio_content is binary
+            return response.audio_content
+
+        except Exception as e:
+            print(f"Google TTS error: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Google TTS service error: {str(e)}"
+            )
+
+    def _get_voice_for_language(self, lang: str) -> tuple[str, str]:
+        """
+        Map simple language codes to Google TTS language codes and voice names
+        Returns: (language_code, voice_name)
+        """
+        # Map of simple codes to Google language codes and specific voices
+        language_mapping = {
+            "en": ("en-US", "en-US-Neural2-F"),
+            "ru": ("ru-RU", "ru-RU-Wavenet-D"),
+            "tr": ("tr-TR", "tr-TR-Wavenet-B"),
+            "de": ("de-DE", "de-DE-Neural2-F"),
+            "fr": ("fr-FR", "fr-FR-Neural2-A"),
+            "es": ("es-ES", "es-ES-Neural2-F"),
+            "it": ("it-IT", "it-IT-Neural2-A"),
+            "ja": ("ja-JP", "ja-JP-Neural2-B"),
+            "ko": ("ko-KR", "ko-KR-Neural2-A"),
+            "zh": ("zh-CN", "zh-CN-Neural2-A"),
+            "pt": ("pt-BR", "pt-BR-Neural2-F"),  # Added Portuguese
+            "ar": ("ar-XA", "ar-XA-Wavenet-B"),  # Added Arabic
         }
 
-        headers = {
-            "Authorization": f"Api-Key {api_key}",
-        }
-
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(url, data=data, headers=headers, timeout=30.0)
-
-                response.raise_for_status()
-
-                return response.content
-
-            except httpx.HTTPStatusError as e:
-                error_detail = e.response.text
-                print(f"Yandex API error: {e.response.status_code} - {error_detail}")
-                raise HTTPException(
-                    status_code=e.response.status_code,
-                    detail=f"Yandex TTS service error: {error_detail}"
-                )
-            except httpx.RequestError as e:
-                print(f"Network error requesting Yandex TTS: {str(e)}")
-                raise HTTPException(
-                    status_code=503,
-                    detail="Service temporarily unavailable. Please try again."
-                )
+        # If the language is already in full format (like "es-ES"), use it directly
+        if '-' in lang and lang in language_mapping:
+            return language_mapping[lang]
+        elif '-' in lang:
+            # If it's already a full code but not in our mapping, use it as-is with default voice
+            return (lang, f"{lang}-Wavenet-A")
+        elif lang in language_mapping:
+            # If it's a simple code, return the mapped full code and voice
+            return language_mapping[lang]
+        else:
+            # Fallback: try to create a reasonable default
+            # For 2-letter codes, try to map to the most common region
+            default_mapping = {
+                "en": "en-US",
+                "es": "es-ES",
+                "pt": "pt-BR",
+                "zh": "zh-CN",
+                "ar": "ar-XA"
+            }
+            default_lang = default_mapping.get(lang, f"{lang}-{lang.upper()}")
+            return (default_lang, f"{default_lang}-Wavenet-A")
 
 
 
