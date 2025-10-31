@@ -13,7 +13,7 @@ from app.database.setup import get_db
 
 from app.repositories.user_repository import (UserRegisterRepository, UserLoginRepository, UserLogoutRepository,
                                               CheckUserAvailable, RefreshTokenRepository, DeleteRefreshTokenRepository,
-                                              SetNativeRepository, ChooseLangTargetRepository, )
+                                              SetNativeRepository, ChooseLangTargetRepository, GoogleAuthRepository)
 
 from app.schemas.user_schema import UserLoginSchema, UserTokenSchema, UserRegisterSchema, NativeLangSchema, \
     ChooseLangSchema
@@ -82,6 +82,59 @@ async def login(response: Response, login_data: UserLoginSchema, db_session: Ann
         logger.exception("Unexpected error login user: %s", ex)
         raise HTTPException(500, 'Internal server error')
 
+
+
+
+# Google Login
+@router.post('/google', status_code=201)
+async def google_auth(
+        response: Response,
+        google_data: dict,  # We'll receive { "code": "authorization_code" }
+        db_session: Annotated[AsyncSession, Depends(get_db)]
+):
+    """
+    Google Sign-In endpoint
+    Handles both registration and login automatically
+    """
+    logger.info("Google auth endpoint called")
+
+    try:
+        # Validate input
+        if not google_data.get('code'):
+            logger.error("Google auth called without authorization code")
+            raise HTTPException(status_code=400, detail="Authorization code is required")
+
+        # Initialize repository
+        repository = GoogleAuthRepository(db_session)
+
+        # Process Google authentication
+        logger.info("Processing Google authentication")
+        auth_result = await repository.authenticate_with_google(google_data['code'])
+
+        # Set refresh token cookie (same as your existing endpoints)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+
+        response.set_cookie(
+            key='refresh_token',
+            value=auth_result.get('refresh_token'),
+            httponly=True,
+            secure=True,
+            samesite="none"
+        )
+
+        logger.info("Google auth completed successfully")
+        return {
+            'user': auth_result.get('user'),
+            'access_token': auth_result.get('access_token')
+        }
+
+    except HTTPException as ex:
+        logger.error(f"Google auth HTTP error: {ex.detail}")
+        raise ex
+    except Exception as ex:
+        logger.exception(f"Unexpected error in Google auth: {ex}")
+        raise HTTPException(500, 'Internal server error')
 
 
 @router.post("/refresh", status_code=200)

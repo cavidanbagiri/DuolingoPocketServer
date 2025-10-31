@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from typing import Any, Coroutine, Union
 
@@ -7,6 +8,12 @@ from sqlalchemy import insert, select, delete
 from sqlalchemy.exc import NoResultFound, DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# New added for Google sign in
+import httpx
+from jose import jwt
+from jose.exceptions import JWTError
+###########################################
+
 from app.auth.refresh_token_handler import DeleteRefreshTokenRepository
 from app.schemas.user_schema import UserLoginSchema
 
@@ -15,6 +22,7 @@ from app.models.user_model import UserModel, TokenModel, UserLanguage
 from app.utils.hash_password import PasswordHash
 
 from app.auth.token_handler import TokenHandler
+
 
 
 from app.logging_config import setup_logger
@@ -195,6 +203,214 @@ class UserLoginRepository:
     @staticmethod
     def return_data(user: UserModel, access_token: str, refresh_token: str, target_langs: list[str]):
 
+        return {
+            'user': {
+                'sub': str(user.id),
+                'email': user.email,
+                'username': user.username,
+                'native': user.native,
+                'learning_targets': target_langs
+            },
+            'access_token': access_token,
+            'refresh_token': refresh_token
+        }
+
+
+# This is new added
+class GoogleAuthRepository:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.refresh_token_repo = RefreshTokenRepository(db)
+
+        # Google OAuth endpoints
+        self.token_endpoint = "https://oauth2.googleapis.com/token"
+        self.userinfo_endpoint = "https://www.googleapis.com/oauth2/v3/userinfo"
+
+        # Get credentials from environment
+        self.client_id = os.getenv('GOOGLE_OAUTH2_CLIENT_ID')
+        self.client_secret = os.getenv('GOOGLE_OAUTH2_CLIENT_SECRET')
+
+    async def authenticate_with_google(self, authorization_code: str):
+        """
+        Main method that handles the entire Google authentication flow
+        """
+        logger.info("Starting Google authentication process")
+
+        try:
+            # Step 1: Exchange authorization code for access token
+            logger.info("Exchanging authorization code for access token")
+            google_tokens = await self._exchange_code_for_tokens(authorization_code)
+
+            # Step 2: Get user info from Google
+            logger.info("Fetching user info from Google")
+            google_user_info = await self._get_google_user_info(google_tokens['access_token'])
+
+            # Step 3: Find or create user in our database
+            logger.info(f"Looking up user with email: {google_user_info['email']}")
+            user = await self._find_or_create_user(google_user_info)
+
+            # Step 4: Generate our JWT tokens
+            logger.info(f"Generating JWT tokens for user: {user.email}")
+            tokens = await self._generate_our_tokens(user)
+
+            logger.info("Google authentication completed successfully")
+            return tokens
+
+        except HTTPException:
+            # Re-raise HTTP exceptions (like 401, 404, etc.)
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in Google authentication: {str(e)}")
+            raise HTTPException(status_code=500, detail="Google authentication failed")
+
+    async def _exchange_code_for_tokens(self, authorization_code: str) -> dict:
+        """
+        Step 1: Exchange the authorization code for Google access tokens
+        This is where we prove to Google that we have a valid code
+        """
+        logger.info("Exchanging authorization code with Google...")
+
+        try:
+            async with httpx.AsyncClient() as client:
+                # Prepare the request to Google's token endpoint
+                data = {
+                    'code': authorization_code,
+                    'client_id': self.client_id,
+                    'client_secret': self.client_secret,
+                    'redirect_uri': 'postmessage',  # For web applications
+                    'grant_type': 'authorization_code'
+                }
+
+                logger.debug(f"Sending token exchange request to Google")
+                response = await client.post(self.token_endpoint, data=data)
+
+                if response.status_code != 200:
+                    logger.error(f"Google token exchange failed: {response.text}")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid authorization code"
+                    )
+
+                tokens = response.json()
+                logger.info("Successfully exchanged code for Google tokens")
+                return tokens
+
+        except httpx.RequestError as e:
+            logger.error(f"Network error during token exchange: {str(e)}")
+            raise HTTPException(status_code=503, detail="Cannot connect to Google services")
+
+    async def _get_google_user_info(self, access_token: str) -> dict:
+        """
+        Step 2: Use the access token to get user information from Google
+        This verifies the user's identity and gets their profile data
+        """
+        logger.info("Fetching user info from Google...")
+
+        try:
+            async with httpx.AsyncClient() as client:
+                headers = {'Authorization': f'Bearer {access_token}'}
+                response = await client.get(self.userinfo_endpoint, headers=headers)
+
+                if response.status_code != 200:
+                    logger.error(f"Failed to fetch user info: {response.text}")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Failed to get user information from Google"
+                    )
+
+                user_info = response.json()
+                logger.info(f"Retrieved user info: {user_info['email']}")
+
+                # Validate essential fields
+                if not user_info.get('email'):
+                    logger.error("Google user info missing email")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Google account email is required"
+                    )
+
+                return user_info
+
+        except httpx.RequestError as e:
+            logger.error(f"Network error fetching user info: {str(e)}")
+            raise HTTPException(status_code=503, detail="Cannot connect to Google services")
+
+    async def _find_or_create_user(self, google_user_info: dict) -> UserModel:
+        """
+        Step 3: Find existing user or create new one
+        This is where we integrate with your existing user system
+        """
+        email = google_user_info['email']
+
+        # Check if user already exists
+        logger.info(f"Checking if user exists with email: {email}")
+        result = await self.db.execute(
+            select(UserModel).where(UserModel.email == email)
+        )
+        existing_user = result.scalar()
+
+        if existing_user:
+            logger.info(f"User found in database: {email}")
+            return existing_user
+
+        # Create new user (Auto-register)
+        logger.info(f"Creating new user for: {email}")
+        new_user = UserModel(
+            email=email,
+            username=self._generate_username(google_user_info),
+            # Google users don't have passwords in our system
+            password="",  # Or you can generate a random password
+            native=None,  # User can set this later
+        )
+
+        self.db.add(new_user)
+        await self.db.commit()
+        await self.db.refresh(new_user)
+
+        logger.info(f"Successfully created new user: {new_user.id}")
+        return new_user
+
+    def _generate_username(self, google_user_info: dict) -> str:
+        """
+        Generate a username from Google profile data
+        Uses email prefix or name fields
+        """
+        # Try to use the name from Google profile
+        if google_user_info.get('name'):
+            base_username = google_user_info['name'].lower().replace(' ', '_')
+        else:
+            # Use email prefix (before @)
+            base_username = google_user_info['email'].split('@')[0]
+
+        # You might want to add uniqueness check here
+        return base_username
+
+    async def _generate_our_tokens(self, user: UserModel) -> dict:
+        """
+        Step 4: Generate our JWT tokens (same format as your existing auth)
+        This integrates with your current token system
+        """
+        logger.info(f"Generating JWT tokens for user ID: {user.id}")
+
+        # Create token payload (same as your existing system)
+        token_data = {
+            'sub': str(user.id),
+            'username': user.username,
+        }
+
+        # Generate tokens using your existing TokenHandler
+        access_token = TokenHandler.generate_access_token(token_data)
+        refresh_token = TokenHandler.generate_refresh_token(token_data)
+
+        # Save refresh token (same as your existing system)
+        await self.refresh_token_repo.manage_refresh_token(user.id, refresh_token)
+
+        # Get user's target languages (same as your login)
+        stmt = select(UserLanguage.target_language_code).where(UserLanguage.user_id == user.id)
+        result = await self.db.execute(stmt)
+        target_langs = [row[0] for row in result.all()]
+
+        # Return same format as your login/register endpoints
         return {
             'user': {
                 'sub': str(user.id),

@@ -15,7 +15,8 @@ class UserModel(Base):
 
     username: Mapped[str] = mapped_column( nullable=True, unique=True, index=True)
     email: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
-    password: Mapped[str] = mapped_column(String(100), nullable=False)
+    # password: Mapped[str] = mapped_column(String(100), nullable=False) # need to change it
+    password: Mapped[str] = mapped_column(String(100), nullable=True) # need to change it
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     is_premium: Mapped[bool] = mapped_column(Boolean, default=False)
     role: Mapped[str] = mapped_column(String, default="user")
