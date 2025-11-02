@@ -180,20 +180,24 @@ class UserLoginRepository:
         try:
             logger.info(f'{login_data.email} try to login')
             user = await self.check_user_available.check_user_exists(login_data)
+
+
+            # Fetch existing target languages --->>>> New Added
+            stmt = select(UserLanguage.target_language_code).where(UserLanguage.user_id == user.id)
+            result = await self.db.execute(stmt)
+            target_langs = [row[0] for row in result.all()]  # extract codes as list
+
             token_data = {
                 'sub': str(user.id),
                 'username': user.username,
+                'target_langs': target_langs,
+                'native': user.native,
             }
 
             access_token = TokenHandler.generate_access_token(token_data)
             refresh_token = TokenHandler.generate_refresh_token(token_data)
 
             await self.refresh_token_repo.manage_refresh_token(user.id, refresh_token)
-
-            # Fetch existing target languages --->>>> New Added
-            stmt = select(UserLanguage.target_language_code).where(UserLanguage.user_id == user.id)
-            result = await self.db.execute(stmt)
-            target_langs = [row[0] for row in result.all()]  # extract codes as list
 
             return self.return_data(user, access_token, refresh_token, target_langs)
 
