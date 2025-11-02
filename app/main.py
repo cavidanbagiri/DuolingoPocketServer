@@ -15,14 +15,19 @@ load_dotenv()
 app = FastAPI()
 
 origins = [
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://192.168.1.76:8081",  # Expo's Metro bundler origin
-    "http://localhost:8081",
-    "http://192.168.1.76:19006",  # Expo Web Dev Tools
-    "http://192.168.1.76:19000",  # Expo Go (Android)
-    "http://192.168.1.101:8081",
-    "*"
+    # "http://localhost:5173",
+    # "http://localhost:5174",
+    # "http://192.168.1.76:8081",  # Expo's Metro bundler origin
+    # "http://localhost:8081",
+    # "http://192.168.1.76:19006",  # Expo Web Dev Tools
+    # "http://192.168.1.76:19000",  # Expo Go (Android)
+    # "http://192.168.1.101:8081",
+    "www.w9999.tech",
+    "https://www.w9999.tech",
+    "http://www.w9999.tech",
+    "https://w9999-web.onrender.com/"
+
+    # "*"
 ]
 
 app.add_middleware(
