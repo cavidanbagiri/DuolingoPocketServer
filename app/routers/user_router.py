@@ -160,33 +160,98 @@ async def refresh_token(response: Response, request: Request, db: AsyncSession =
         raise HTTPException(status_code=500, detail=f"An error occurred while refreshing the token {e}")
 
 
-
-
 @router.post('/logout', status_code=200)
 async def logout(
-    request: Request,
-    response: Response,
-    user_payload: Annotated[UserTokenSchema, Depends(TokenHandler.verify_access_token)],
-    db: AsyncSession = Depends(get_db)
+        request: Request,
+        response: Response,
+        db: AsyncSession = Depends(get_db)
 ):
-    if not user_payload:
-        return JSONResponse(status_code=401, content={"message": "Please login before logging out"})
+
+    # Get refresh token from cookies
+    refresh_token = request.cookies.get("refresh_token")
+
+    if not refresh_token:
+        # If no refresh token exists, just return success (already logged out)
+        response.delete_cookie(
+            key="refresh_token",
+            secure=True,
+            samesite="none",
+            httponly=True,
+            path="/"
+        )
+        return {"message": "Logout successful"}
+
     user_logout_repository = UserLogoutRepository(db)
     try:
-        result = await user_logout_repository.logout(int(user_payload.get('sub')))
+        # Try to verify the refresh token to get user ID
+        user_payload = TokenHandler.verify_refresh_token(refresh_token)
+        user_id = int(user_payload.get('sub'))
 
-        if result:
-            response.delete_cookie(key="refresh_token")
-            return{
-                "message": "Logout successful"
-            }
+        # Perform server-side logout
+        result = await user_logout_repository.logout(user_id)
 
-        return JSONResponse(status_code=500, content={"message": "Error logging out user"})
+        # Always clear the cookie regardless of server-side result
+        response.delete_cookie(
+            key="refresh_token",
+            secure=True,
+            samesite="none",
+            httponly=True,
+            path="/"
+        )
+
+        return {"message": "Logout successful"}
+
     except HTTPException as ex:
-        return JSONResponse(status_code=200, content={"message": f"An error occurred during logout {ex}"})
+        # Even if token verification fails, clear the cookie
+        response.delete_cookie(
+            key="refresh_token",
+            secure=True,
+            samesite="none",
+            httponly=True,
+            path="/"
+        )
+        return {"message": "Logout successful"}
+
     except Exception as e:
+        # Clear cookie on any error
+        response.delete_cookie(
+            key="refresh_token",
+            secure=True,
+            samesite="none",
+            httponly=True,
+            path="/"
+        )
         logger.error(f"Error during logout: {str(e)}")
-        return JSONResponse(status_code=500, content={"message": f"An error occurred during logout {e}"})
+        return {"message": "Logout successful"}
+
+
+# @router.post('/logout', status_code=200)
+# async def logout(
+#     request: Request,
+#     response: Response,
+#     # user_payload: Annotated[UserTokenSchema, Depends(TokenHandler.verify_access_token)],
+#     db: AsyncSession = Depends(get_db)
+# ):
+#     print('.............................logout start to work')
+#     user_payload = ''
+#     if not user_payload:
+#         return JSONResponse(status_code=401, content={"message": "Please login before logging out"})
+#     user_logout_repository = UserLogoutRepository(db)
+#     try:
+#         result = await user_logout_repository.logout(int(user_payload.get('sub')))
+#
+#         if result:
+#             response.delete_cookie(key="refresh_token")
+#             return{
+#                 "message": "Logout successful"
+#             }
+#
+#         return JSONResponse(status_code=500, content={"message": "Error logging out user"})
+#     except HTTPException as ex:
+#         return JSONResponse(status_code=200, content={"message": f"An error occurred during logout {ex}"})
+#     except Exception as e:
+#         logger.error(f"Error during logout: {str(e)}")
+#         return JSONResponse(status_code=500, content={"message": f"An error occurred during logout {e}"})
 
 
 
