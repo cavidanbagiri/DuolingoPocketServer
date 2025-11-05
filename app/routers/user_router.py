@@ -166,7 +166,6 @@ async def logout(
         response: Response,
         db: AsyncSession = Depends(get_db)
 ):
-
     # Get refresh token from cookies
     refresh_token = request.cookies.get("refresh_token")
 
