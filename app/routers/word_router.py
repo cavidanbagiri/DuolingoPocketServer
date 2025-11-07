@@ -14,9 +14,10 @@ from app.repositories.word_repository import FetchWordRepository, \
     VoiceHandleRepository, GenerateAIWordRepository, GenerateAIQuestionRepository, SearchRepository, \
     TranslateRepository, AddFavoritesRepository, CreateNewFavoriteCategoryRepository, FavoriteCategoryRepository, \
     CategoryWordsRepository, DeleteFavoriteWordRepository, MoveFavoriteWordRepository, DeleteCategoryRepository, \
-    SearchFavoriteRepository, FetchStatisticsForProfileRepository, DailyStreakRepository
+    SearchFavoriteRepository, FetchStatisticsForProfileRepository, DailyStreakRepository, GenerateDirectAIChat
 from app.schemas.user_schema import ChangeWordStatusSchema
-from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, GenerateAIChatSchema, TranslateSchema
+from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, GenerateAIChatSchema, TranslateSchema, \
+    AiDirectChatSchema
 from app.schemas.favorite_schemas import (FavoriteWordBase, FavoriteWordResponse, FavoriteCategoryBase, FavoriteCategoryResponse,
                                           FavoriteFetchWordResponse, CategoryWordsResponse, MoveWordResponse, MoveWordRequest)
 
@@ -200,7 +201,6 @@ async def generate_ai_for_word(
 
 
 
-
 @router.post('/aichat', status_code=200)
 async def generate_ai_chat(data: GenerateAIChatSchema, repo: GenerateAIQuestionRepository = Depends()):
     try:
@@ -217,6 +217,32 @@ async def generate_ai_chat(data: GenerateAIChatSchema, repo: GenerateAIQuestionR
             status_code=500,
             detail="We're having trouble processing your question. Please try again in a moment."
         )
+
+
+
+@router.post('/ai_direct_chat', status_code=200)
+async def ai_direct_chat(data: AiDirectChatSchema, db_session: AsyncSession = Depends(get_db)):
+    """
+    AI Direct Chat Endpoint
+    Provides language learning assistance through AI
+    """
+    logger.info(f"AI direct chat request received: {data.message[:50]}...")
+
+    try:
+        repo = GenerateDirectAIChat()
+        result = await repo.ai_direct_chat(data)
+
+        logger.info("AI direct chat completed successfully")
+        return result
+
+    except HTTPException as ex:
+        logger.error(f"HTTP error in AI direct chat: {ex.detail}")
+        raise ex
+    except Exception as ex:
+        logger.exception(f"Unexpected error in AI direct chat: {str(ex)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 
 
 

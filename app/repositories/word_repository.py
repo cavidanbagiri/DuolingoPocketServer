@@ -651,6 +651,118 @@ class GenerateAIWordRepository:
 
 
 
+# class GenerateDirectAIChat:
+#
+#     def __init__(self):
+#         self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
+#
+#     async def ai_direct_chat(self, data):
+#         print(f'coming data is {data}')
+#
+#         return {'msg': 'AIChat returning'}
+
+
+class GenerateDirectAIChat:
+    def __init__(self):
+        self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
+        self.api_url = "https://api.deepseek.com/v1/chat/completions"
+
+        # System prompt to enforce language learning context
+        self.system_prompt = """You are an AI language learning tutor. Your role is strictly limited to helping users learn languages. 
+
+CORE RESPONSIBILITIES:
+- Answer questions about vocabulary, grammar, pronunciation, and language usage
+- Provide language practice exercises and conversations
+- Explain cultural aspects related to languages
+- Help with translation and language comprehension
+- Create learning activities and study plans
+
+STRICT BOUNDARIES:
+- ONLY discuss language learning topics
+- If asked about unrelated topics (cars, sports, politics, etc.), politely redirect to language learning
+- Do not provide information outside of language education
+- Maintain a professional, educational tone
+
+RESPONSE GUIDELINES:
+- Be encouraging and supportive
+- Provide clear, structured explanations
+- Include practical examples when possible
+- Adapt to the user's native language for better understanding
+- Keep responses focused and educational"""
+
+    async def ai_direct_chat(self, data):
+        try:
+
+            # Validate API key
+            if not self.deepseek_api_key:
+                logger.error("DeepSeek API key not configured")
+                raise HTTPException(status_code=500, detail="AI service not configured")
+
+            # Prepare the messages for DeepSeek API
+            messages = [
+                {
+                    "role": "system",
+                    "content": self.system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": f"User's native language: {data.native_language}. User question: {data.message}"
+                }
+            ]
+
+            # Call DeepSeek API
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    self.api_url,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {self.deepseek_api_key}"
+                    },
+                    json={
+                        "model": "deepseek-chat",
+                        "messages": messages,
+                        "temperature": 0.7,
+                        "max_tokens": 2000,
+                        "stream": False
+                    }
+                )
+
+                if response.status_code != 200:
+                    logger.error(f"DeepSeek API error: {response.status_code} - {response.text}")
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail="AI service temporarily unavailable"
+                    )
+
+                result = response.json()
+
+                # Extract the AI response
+                ai_response = result["choices"][0]["message"]["content"]
+
+                # Log successful response
+                logger.info(f"AI response generated for user query: {data.message[:100]}...")
+
+                return {
+                    "response": ai_response,
+                    "usage": result.get("usage", {}),
+                    "success": True
+                }
+
+        except httpx.TimeoutException:
+            logger.error("DeepSeek API timeout")
+            raise HTTPException(status_code=504, detail="AI service timeout")
+        except httpx.RequestError as e:
+            logger.error(f"DeepSeek API connection error: {str(e)}")
+            raise HTTPException(status_code=503, detail="Cannot connect to AI service")
+        except KeyError as e:
+            logger.error(f"Unexpected response format from DeepSeek API: {str(e)}")
+            raise HTTPException(status_code=500, detail="Unexpected response from AI service")
+        except Exception as e:
+            logger.error(f"Unexpected error in AI direct chat: {str(e)}")
+            raise HTTPException(status_code=500, detail="Internal server error in AI service")
+
+
+
 class GenerateAIQuestionRepository:
 
     def __init__(self):

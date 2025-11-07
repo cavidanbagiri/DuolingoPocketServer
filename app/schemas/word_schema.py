@@ -31,6 +31,25 @@ class TranslateSchema(BaseModel):
     alternatives: int = 3
 
 
+# class AiDirectChatSchema(BaseModel):
+#     message: str
+#     native_language: str = "English"
+
+
+class AiDirectChatSchema(BaseModel):
+    message: str = Field(..., min_length=1, max_length=1000, description="User's message to AI tutor")
+    native_language: str = Field(default="English", description="User's native language for better explanations")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "message": "Can you explain the difference between ser and estar in Spanish?",
+                "native_language": "English"
+            }
+        }
+
+
+
 
 class AIWordResponse(BaseModel):
     word: str
