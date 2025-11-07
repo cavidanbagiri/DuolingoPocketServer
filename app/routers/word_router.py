@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, status, Query, BackgroundTasks
 from fastapi.responses import Response
 from fastapi.params import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi.responses import StreamingResponse
 
 from app.auth.token_handler import TokenHandler
 from app.database.setup import get_db
@@ -220,27 +221,33 @@ async def generate_ai_chat(data: GenerateAIChatSchema, repo: GenerateAIQuestionR
 
 
 
-@router.post('/ai_direct_chat', status_code=200)
-async def ai_direct_chat(data: AiDirectChatSchema, db_session: AsyncSession = Depends(get_db)):
+
+
+@router.post('/ai_direct_chat_stream')
+async def ai_direct_chat_stream(data: AiDirectChatSchema):
     """
-    AI Direct Chat Endpoint
-    Provides language learning assistance through AI
+    Streaming AI Direct Chat Endpoint
+    Returns responses as they're generated
     """
-    logger.info(f"AI direct chat request received: {data.message[:50]}...")
+    logger.info(f"Streaming AI chat request: {data.message[:50]}...")
 
     try:
         repo = GenerateDirectAIChat()
-        result = await repo.ai_direct_chat(data)
 
-        logger.info("AI direct chat completed successfully")
-        return result
+        return StreamingResponse(
+            repo.ai_direct_chat_stream(data),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "*",
+            }
+        )
 
-    except HTTPException as ex:
-        logger.error(f"HTTP error in AI direct chat: {ex.detail}")
-        raise ex
     except Exception as ex:
-        logger.exception(f"Unexpected error in AI direct chat: {str(ex)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.exception(f"Streaming chat error: {str(ex)}")
+        raise HTTPException(status_code=500, detail="Streaming service error")
 
 
 
