@@ -199,25 +199,37 @@ async def generate_ai_for_word(
             detail="We're having trouble generating content right now. Please try again in a moment."
         )
 
-
-
-
-@router.post('/aichat', status_code=200)
-async def generate_ai_chat(data: GenerateAIChatSchema, repo: GenerateAIQuestionRepository = Depends()):
+@router.post('/aichat_stream')
+async def generate_ai_chat_stream(data: GenerateAIChatSchema, repo: GenerateAIQuestionRepository = Depends()):
     try:
-        # The repo method now needs to handle a conversational prompt
-        result = await repo.generate_ai_chat(data)
-
-        return result
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error in AI chat for word '{data.word}': {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail="We're having trouble processing your question. Please try again in a moment."
+        return StreamingResponse(
+            repo.generate_ai_chat_stream(data),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+            }
         )
+    except Exception as e:
+        logger.error(f"Streaming chat error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Streaming service error")
+
+
+
+# @router.post('/aichat', status_code=200)
+# async def generate_ai_chat(data: GenerateAIChatSchema, repo: GenerateAIQuestionRepository = Depends()):
+#     try:
+#         # The repo method now needs to handle a conversational prompt
+#         result = await repo.generate_ai_chat(data)
+#         return result
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.error(f"Unexpected error in AI chat for word '{data.word}': {str(e)}")
+#         raise HTTPException(
+#             status_code=500,
+#             detail="We're having trouble processing your question. Please try again in a moment."
+#         )
 
 
 

@@ -823,7 +823,7 @@ class GenerateDirectAIChat:
 
 
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
-                print("Sending streaming request to DeepSeek API...")
+                # print("Sending streaming request to DeepSeek API...")
 
                 async with session.post(
                         self.api_url,
@@ -842,14 +842,14 @@ class GenerateDirectAIChat:
 
                     if response.status != 200:
                         error_text = await response.text()
-                        print(f"DeepSeek API error: {response.status} - {error_text}")
+                        # print(f"DeepSeek API error: {response.status} - {error_text}")
                         yield f"data: {json.dumps({'error': f'AI service error: {response.status}'})}\n\n"
                         return
 
-                    print("Starting to stream response from DeepSeek...")
+                    # print("Starting to stream response from DeepSeek...")
                     async for line in response.content:
                         line = line.decode('utf-8').strip()
-                        print(f"Raw line from DeepSeek: {line}")
+                        # print(f"Raw line from DeepSeek: {line}")
 
                         if line.startswith('data: '):
                             data_line = line[6:]
@@ -875,106 +875,243 @@ class GenerateDirectAIChat:
 
 
 
-
-
 class GenerateAIQuestionRepository:
 
     def __init__(self):
-        self.headers = {
-            "Authorization": f"Api-Key {os.getenv('YANDEX_LANGMODEL_API_SECRET_KEY')}", # Renamed for clarity
-            "Content-Type": "application/json"
-        }
-        self.model = 'yandexgpt' # or 'yandexgpt', choose based on needs
-        self.folder_id = os.getenv('YANDEX_FOLDER_ID')
-        self.api_url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
+        self.deepseek_api_key = os.getenv('DEEPSEEK_API_KEY')
+        self.api_url = "https://api.deepseek.com/v1/chat/completions"
         self.max_tokens = 1500  # Prevent overly long responses
 
-
-    async def _call_yandex_gpt(self, messages: list) -> str:
-        """Generic method to call YandexGPT Completion API."""
-        print('[_call_yandex_gpt] Method called. Preparing payload...')
+    async def _call_deepseek_api(self, messages: list) -> str:
+        """Generic method to call DeepSeek API."""
+        print('[_call_deepseek_api] Method called. Preparing payload...')
 
         payload = {
-            "modelUri": f"gpt://{self.folder_id}/{self.model}",
-            "completionOptions": {
-                "stream": False,
-                "temperature": 0.2,
-                "maxTokens": self.max_tokens
-            },
-            "messages": messages
+            "model": "deepseek-chat",
+            "messages": messages,
+            "temperature": 0.2,
+            "max_tokens": self.max_tokens,
+            "stream": False  # Set to True if you want streaming
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.deepseek_api_key}"
         }
 
         async with aiohttp.ClientSession() as session:
             try:
-                print('[DEBUG] Making request to Yandex API...')
-                async with session.post(self.api_url, json=payload, headers=self.headers,
-                                        timeout=aiohttp.ClientTimeout(total=30)) as response:
+                print('[DEBUG] Making request to DeepSeek API...')
+                async with session.post(
+                        self.api_url,
+                        json=payload,
+                        headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
 
-                    # CRITICAL: Get the response text regardless of the status code
+                    # Get the response text for debugging
                     response_text = await response.text()
-                    print(f'[DEBUG] Yandex API Response Status: {response.status}')
-                    print(f'[DEBUG] Yandex API Response Body: {response_text}')
+                    print(f'[DEBUG] DeepSeek API Response Status: {response.status}')
+                    print(f'[DEBUG] DeepSeek API Response Body: {response_text}')
 
-                    # Now check for errors
+                    # Check for errors
                     response.raise_for_status()
 
-                    # If successful, try to parse JSON
+                    # Parse JSON response
                     data = await response.json()
                     print(f'[DEBUG] Parsed JSON Response: {data}')
-                    return data['result']['alternatives'][0]['message']['text']
+
+                    # Extract the response text from DeepSeek format
+                    return data['choices'][0]['message']['content']
 
             except aiohttp.ClientResponseError as e:
-                # This will now print the actual error message from Yandex
-                logger.error(f"YandexGPT API error: {e.status} - {e.message}. Response: {response_text}")
-                raise HTTPException(status_code=502,
-                                    detail=f"AI service error: {e.status}. Please check the request parameters.")
+                logger.error(f"DeepSeek API error: {e.status} - {e.message}. Response: {response_text}")
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"AI service error: {e.status}. Please check the request parameters."
+                )
             except aiohttp.ClientConnectorError as e:
-                logger.error(f"Connection to YandexGPT failed: {str(e)}")
+                logger.error(f"Connection to DeepSeek API failed: {str(e)}")
                 raise HTTPException(status_code=503, detail="Cannot connect to AI service. Check your network.")
             except asyncio.TimeoutError:
-                logger.error("Request to YandexGPT timed out.")
+                logger.error("Request to DeepSeek API timed out.")
                 raise HTTPException(status_code=504, detail="AI service request timed out.")
             except (aiohttp.ClientError, KeyError) as e:
-                logger.error(f"Unexpected error during YandexGPT call: {str(e)}")
+                logger.error(f"Unexpected error during DeepSeek API call: {str(e)}")
                 raise HTTPException(status_code=500, detail="An unexpected error occurred with the AI service.")
 
+    async def generate_ai_chat_stream(self, data: GenerateAIChatSchema):
+        """Streaming version of AI chat"""
+        try:
+            system_prompt = (
+                f"You are a helpful, precise, and enthusiastic language learning assistant. "
+                f"The user is learning the {data.language} word '{data.word}'. "
+                f"Their native language is {data.native}. "
+                f"Answer the user's question specifically about this word. "
+                f"Be concise, pedagogical, and provide clear examples. "
+                f"Your answer must be in {data.native} to ensure the user understands. "
+                f"Focus on explaining usage, grammar, nuances, or cultural context related to '{data.word}'."
+            )
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": data.message
+                }
+            ]
+
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+                async with session.post(
+                        self.api_url,
+                        headers={
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {self.deepseek_api_key}"
+                        },
+                        json={
+                            "model": "deepseek-chat",
+                            "messages": messages,
+                            "temperature": 0.2,
+                            "max_tokens": self.max_tokens,
+                            "stream": True  # Enable streaming
+                        }
+                ) as response:
+
+                    if response.status != 200:
+                        error_text = await response.text()
+                        yield f"data: {json.dumps({'error': f'AI service error: {response.status}'})}\n\n"
+                        return
+
+                    async for line in response.content:
+                        line = line.decode('utf-8').strip()
+
+                        if line.startswith('data: '):
+                            data_line = line[6:]
+
+                            if data_line.strip() == '[DONE]':
+                                yield f"data: {json.dumps({'done': True})}\n\n"
+                                return
+
+                            try:
+                                chunk_data = json.loads(data_line)
+                                if 'choices' in chunk_data and chunk_data['choices']:
+                                    delta = chunk_data['choices'][0].get('delta', {})
+                                    content = delta.get('content', '')
+
+                                    if content:
+                                        yield f"data: {json.dumps({'content': content})}\n\n"
+                            except json.JSONDecodeError:
+                                continue
+
+        except Exception as e:
+            logger.error(f"Streaming error: {str(e)}")
+            yield f"data: {json.dumps({'error': f'Streaming failed: {str(e)}'})}\n\n"
 
 
-    async def generate_ai_chat(self, data: GenerateAIChatSchema) -> dict:
-        """
-        Generates a conversational response about a specific word.
-        Returns a dict with the AI's reply.
-        """
 
-        # 1. Construct a detailed system prompt to guide the AI's behavior.
-        system_prompt = (
-            f"You are a helpful, precise, and enthusiastic language learning assistant. "
-            f"The user is learning the {data.language} word '{data.word}'. "
-            f"Their native language is {data.native}. "
-            f"Answer the user's question specifically about this word. "
-            f"Be concise, pedagogical, and provide clear examples. "
-            f"Your answer must be in {data.native} to ensure the user understands. "
-            f"Focus on explaining usage, grammar, nuances, or cultural context related to '{data.word}'."
-            f"If the user's question is not related to the word, politely steer the conversation back to language learning."
-        )
 
-        # 2. Structure the messages for the API
-        messages = [
-            {
-                "role": "system",
-                "text": system_prompt
-            },
-            {
-                "role": "user",
-                "text": data.message
-            }
-        ]
-
-        # 3. Call the API
-        ai_response_text = await self._call_yandex_gpt(messages)
-
-        # 4. Return the response in a structured format for the frontend
-        return {"reply": ai_response_text.strip()}
+#
+# class GenerateAIQuestionRepository:
+#
+#     def __init__(self):
+#         self.headers = {
+#             "Authorization": f"Api-Key {os.getenv('YANDEX_LANGMODEL_API_SECRET_KEY')}", # Renamed for clarity
+#             "Content-Type": "application/json"
+#         }
+#         self.model = 'yandexgpt' # or 'yandexgpt', choose based on needs
+#         self.folder_id = os.getenv('YANDEX_FOLDER_ID')
+#         self.api_url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
+#         self.max_tokens = 1500  # Prevent overly long responses
+#
+#
+#     async def _call_yandex_gpt(self, messages: list) -> str:
+#         """Generic method to call YandexGPT Completion API."""
+#         print('[_call_yandex_gpt] Method called. Preparing payload...')
+#
+#         payload = {
+#             "modelUri": f"gpt://{self.folder_id}/{self.model}",
+#             "completionOptions": {
+#                 "stream": False,
+#                 "temperature": 0.2,
+#                 "maxTokens": self.max_tokens
+#             },
+#             "messages": messages
+#         }
+#
+#         async with aiohttp.ClientSession() as session:
+#             try:
+#                 print('[DEBUG] Making request to Yandex API...')
+#                 async with session.post(self.api_url, json=payload, headers=self.headers,
+#                                         timeout=aiohttp.ClientTimeout(total=30)) as response:
+#
+#                     # CRITICAL: Get the response text regardless of the status code
+#                     response_text = await response.text()
+#                     print(f'[DEBUG] Yandex API Response Status: {response.status}')
+#                     print(f'[DEBUG] Yandex API Response Body: {response_text}')
+#
+#                     # Now check for errors
+#                     response.raise_for_status()
+#
+#                     # If successful, try to parse JSON
+#                     data = await response.json()
+#                     print(f'[DEBUG] Parsed JSON Response: {data}')
+#                     return data['result']['alternatives'][0]['message']['text']
+#
+#             except aiohttp.ClientResponseError as e:
+#                 # This will now print the actual error message from Yandex
+#                 logger.error(f"YandexGPT API error: {e.status} - {e.message}. Response: {response_text}")
+#                 raise HTTPException(status_code=502,
+#                                     detail=f"AI service error: {e.status}. Please check the request parameters.")
+#             except aiohttp.ClientConnectorError as e:
+#                 logger.error(f"Connection to YandexGPT failed: {str(e)}")
+#                 raise HTTPException(status_code=503, detail="Cannot connect to AI service. Check your network.")
+#             except asyncio.TimeoutError:
+#                 logger.error("Request to YandexGPT timed out.")
+#                 raise HTTPException(status_code=504, detail="AI service request timed out.")
+#             except (aiohttp.ClientError, KeyError) as e:
+#                 logger.error(f"Unexpected error during YandexGPT call: {str(e)}")
+#                 raise HTTPException(status_code=500, detail="An unexpected error occurred with the AI service.")
+#
+#
+#
+#     async def generate_ai_chat(self, data: GenerateAIChatSchema) -> dict:
+#         """
+#         Generates a conversational response about a specific word.
+#         Returns a dict with the AI's reply.
+#         """
+#
+#         # 1. Construct a detailed system prompt to guide the AI's behavior.
+#         system_prompt = (
+#             f"You are a helpful, precise, and enthusiastic language learning assistant. "
+#             f"The user is learning the {data.language} word '{data.word}'. "
+#             f"Their native language is {data.native}. "
+#             f"Answer the user's question specifically about this word. "
+#             f"Be concise, pedagogical, and provide clear examples. "
+#             f"Your answer must be in {data.native} to ensure the user understands. "
+#             f"Focus on explaining usage, grammar, nuances, or cultural context related to '{data.word}'."
+#             f"If the user's question is not related to the word, politely steer the conversation back to language learning."
+#         )
+#
+#         # 2. Structure the messages for the API
+#         messages = [
+#             {
+#                 "role": "system",
+#                 "text": system_prompt
+#             },
+#             {
+#                 "role": "user",
+#                 "text": data.message
+#             }
+#         ]
+#
+#         # 3. Call the API
+#         ai_response_text = await self._call_yandex_gpt(messages)
+#
+#         # 4. Return the response in a structured format for the frontend
+#         return {"reply": ai_response_text.strip()}
 
 
 
