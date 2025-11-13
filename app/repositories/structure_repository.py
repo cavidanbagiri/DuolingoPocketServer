@@ -11,11 +11,16 @@ import requests
 from enum import Enum
 from pathlib import Path
 from collections import defaultdict
-
 import httpx
 import json
 import re
 from typing import List, Dict, Any, Optional
+
+from google.oauth2 import service_account
+from google.cloud import translate_v2 as translate
+
+
+
 
 from app.models.ai_models import WordAnalysisResponse
 
@@ -829,6 +834,8 @@ class TranslateSpanishSentences:
         return results
 
 
+
+# Yandex translate version
 class TranslateSpanishWord:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -1012,6 +1019,221 @@ class TranslateSpanishWord:
             await asyncio.sleep(0.1)  # Avoid rate limits
 
         return results
+
+
+class GoogleTranslateSpanishWord:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+        # Google Translate setup
+        self.translate_client = self._setup_google_client()
+
+        # Target languages to translate INTO
+        self.target_langs = ["en", "ru", "tr"]  # English, Russian, Turkish
+
+    def _setup_google_client(self):
+        """Setup Google Translate client using service account credentials"""
+        try:
+            credentials = self._create_credentials()
+            client = translate.Client(credentials=credentials)
+            logger.info("✅ Google Translate client initialized successfully for Spanish words")
+            return client
+        except Exception as e:
+            logger.error(f"💥 Failed to initialize Google Translate client: {str(e)}")
+            raise RuntimeError(f"Google Translate client initialization failed: {str(e)}")
+
+    def _create_credentials(self):
+        """Create credentials from environment variables"""
+        try:
+            credentials_info = {
+                "type": "service_account",
+                "project_id": os.getenv("GOOGLE_PROJECT_ID"),
+                "private_key_id": os.getenv("GOOGLE_PRIVATE_KEY_ID"),
+                "private_key": os.getenv("GOOGLE_PRIVATE_KEY", "").replace('\\n', '\n'),
+                "client_email": os.getenv("GOOGLE_CLIENT_EMAIL"),
+                "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            }
+
+            credentials = service_account.Credentials.from_service_account_info(credentials_info)
+            return credentials
+        except Exception as e:
+            logger.error(f"💥 Failed to create credentials: {str(e)}")
+            raise
+
+    async def translate_spanish_word(self, min_id: int = None, max_id: int = None) -> Dict[str, any]:
+        """
+        Translate Spanish words (es) into English, Russian, and Turkish.
+        Only translates words missing one or more of the target translations.
+        Processes all eligible words in [min_id, max_id], one by one.
+        Commits after each word.
+        """
+        # Validate min/max limits
+        if min_id is not None and max_id is not None:
+            if min_id > max_id:
+                raise ValueError("min_id cannot be greater than max_id")
+            if max_id - min_id > 1000:
+                raise ValueError("Range too large. Maximum 1000 words per request")
+
+        # Step 1: Ensure required languages exist
+        lang_map = await self._load_languages(["es"] + self.target_langs)
+        es_lang = lang_map.get("es")
+        if not es_lang:
+            raise RuntimeError("Spanish language (es) not found in DB")
+
+        # Step 2: Query Spanish words in range
+        query = select(Word).where(Word.language_code == "es")
+
+        if min_id is not None:
+            query = query.where(Word.id >= min_id)
+        if max_id is not None:
+            query = query.where(Word.id <= max_id)
+
+        # Exclude words already fully translated
+        subquery = (
+            select(Translation.source_word_id)
+            .where(Translation.target_language_code.in_(self.target_langs))
+            .group_by(Translation.source_word_id)
+            .having(func.count(Translation.target_language_code) >= len(self.target_langs))
+        ).subquery()
+
+        query = query.where(Word.id.not_in(select(subquery.c.source_word_id)))
+        query = query.order_by(Word.id)
+
+        result = await self.db.execute(query)
+        words = result.scalars().all()
+
+        if not words:
+            logger.info(f"✅ No untranslated Spanish words found in range {min_id}–{max_id}")
+            return {
+                "status": "no_pending",
+                "range": {"min_id": min_id, "max_id": max_id},
+                "message": "No Spanish words need translation."
+            }
+
+        logger.info(f"🔍 Found {len(words)} Spanish words to translate in range {min_id}–{max_id}")
+
+        processed_count = 0
+        failed_count = 0
+
+        # Process one word at a time
+        for word in words:
+            try:
+                logger.info(f"📌 Translating Spanish word ID {word.id}: '{word.text}' (es)")
+
+                # Get existing translations
+                result_trans = await self.db.execute(
+                    select(Translation.target_language_code)
+                    .where(Translation.source_word_id == word.id)
+                )
+                existing_langs = {row[0] for row in result_trans.fetchall()}
+                missing_langs = [lang for lang in self.target_langs if lang not in existing_langs]
+
+                if not missing_langs:
+                    logger.debug(f"⏭️ All translations exist for word ID {word.id}")
+                    continue
+
+                logger.info(f"🌐 Translating to: {missing_langs}")
+
+                # Translate all missing languages
+                translations = await self._translate_text_batch(word.text, missing_langs)
+                saved_count = 0
+
+                for lang_code, translated_text in translations.items():
+                    if not translated_text:
+                        logger.warning(f"⚠️ Empty translation for word ID {word.id} → {lang_code}")
+                        continue
+
+                    trans_model = Translation(
+                        source_word_id=word.id,
+                        target_language_code=lang_code,
+                        translated_text=translated_text.strip().lower(),
+                    )
+                    self.db.add(trans_model)
+                    logger.debug(f"💾 Saved [{lang_code}] {translated_text}")
+                    saved_count += 1
+
+                # ✅ Commit after each word
+                await self.db.commit()
+                processed_count += 1
+                logger.info(f"✅ Translated Spanish word ID {word.id} → {saved_count} languages")
+
+            except Exception as e:
+                await self.db.rollback()
+                logger.error(f"💥 Failed to process Spanish word ID {word.id} ('{word.text}'): {str(e)}", exc_info=True)
+                failed_count += 1
+                continue  # Keep going
+
+            # Rate limiting
+            await asyncio.sleep(0.3)
+
+        logger.info(f"🎉 Spanish words translation completed: {processed_count} success, {failed_count} failed")
+        return {
+            "status": "completed",
+            "range": {"min_id": min_id, "max_id": max_id},
+            "total_found": len(words),
+            "translated": processed_count,
+            "failed": failed_count,
+            "message": f"Translated {processed_count}/{len(words)} Spanish words"
+        }
+
+    async def _load_languages(self, codes: List[str]) -> Dict[str, Language]:
+        """Load languages from DB, auto-create if missing."""
+        result = await self.db.execute(select(Language).where(Language.code.in_(codes)))
+        lang_map = {lang.code: lang for lang in result.scalars().all()}
+
+        names = {
+            "es": "Spanish",
+            "en": "English",
+            "ru": "Russian",
+            "tr": "Turkish"
+        }
+
+        for code in codes:
+            if code not in lang_map:
+                new_lang = Language(code=code, name=names.get(code, code.capitalize()))
+                self.db.add(new_lang)
+                lang_map[code] = new_lang
+                logger.info(f"🔧 Auto-added language: {code} ({new_lang.name})")
+
+        if lang_map:
+            await self.db.flush()
+
+        return lang_map
+
+    async def _translate_text_batch(self, text: str, target_languages: List[str]) -> Dict[str, str]:
+        """
+        Translate one Spanish word into multiple languages using Google Translate.
+        Returns primary translations only.
+        """
+        translations = {}
+
+        for lang_code in target_languages:
+            try:
+                # Google Translate request
+                result = self.translate_client.translate(
+                    text,
+                    target_language=lang_code,
+                    format_='text'
+                )
+
+                translated_text = result['translatedText'].strip()
+                translations[lang_code] = translated_text
+                logger.debug(f"🌐 [es→{lang_code}] {text} → {translated_text}")
+
+            except Exception as e:
+                logger.error(f"🚨 Translation failed for Spanish '{text}' → {lang_code}: {str(e)}")
+                translations[lang_code] = None
+
+            # Rate limiting between languages
+            await asyncio.sleep(0.2)
+
+        return translations
+
+
+
 
 
 class DefinePosCategorySpanishRepository:
@@ -1907,7 +2129,7 @@ class TranslateRussianSentences:
 
         return results
 
-
+# Yandex version
 class TranslateRussianWord:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -2091,6 +2313,219 @@ class TranslateRussianWord:
             await asyncio.sleep(0.1)  # Avoid rate limits
 
         return results
+
+
+class GoogleTranslateRussianWord:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+        # Google Translate setup
+        self.translate_client = self._setup_google_client()
+
+        # Target languages to translate INTO
+        self.target_langs = ["en", "es", "tr"]  # English, Spanish, Turkish
+
+    def _setup_google_client(self):
+        """Setup Google Translate client using service account credentials"""
+        try:
+            credentials = self._create_credentials()
+            client = translate.Client(credentials=credentials)
+            logger.info("✅ Google Translate client initialized successfully for Russian words")
+            return client
+        except Exception as e:
+            logger.error(f"💥 Failed to initialize Google Translate client: {str(e)}")
+            raise RuntimeError(f"Google Translate client initialization failed: {str(e)}")
+
+    def _create_credentials(self):
+        """Create credentials from environment variables"""
+        try:
+            credentials_info = {
+                "type": "service_account",
+                "project_id": os.getenv("GOOGLE_PROJECT_ID"),
+                "private_key_id": os.getenv("GOOGLE_PRIVATE_KEY_ID"),
+                "private_key": os.getenv("GOOGLE_PRIVATE_KEY", "").replace('\\n', '\n'),
+                "client_email": os.getenv("GOOGLE_CLIENT_EMAIL"),
+                "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            }
+
+            credentials = service_account.Credentials.from_service_account_info(credentials_info)
+            return credentials
+        except Exception as e:
+            logger.error(f"💥 Failed to create credentials: {str(e)}")
+            raise
+
+    async def translate_russian_word(self, min_id: int = None, max_id: int = None) -> Dict[str, any]:
+        """
+        Translate Russian words (ru) into English, Spanish, and Turkish.
+        Only translates words missing one or more of the target translations.
+        Processes all eligible words in [min_id, max_id], one by one.
+        Commits after each word.
+        """
+        # Validate min/max limits
+        if min_id is not None and max_id is not None:
+            if min_id > max_id:
+                raise ValueError("min_id cannot be greater than max_id")
+            if max_id - min_id > 1000:
+                raise ValueError("Range too large. Maximum 1000 words per request")
+
+        # Step 1: Ensure required languages exist
+        lang_map = await self._load_languages(["ru"] + self.target_langs)
+        ru_lang = lang_map.get("ru")
+        if not ru_lang:
+            raise RuntimeError("Russian language (ru) not found in DB")
+
+        # Step 2: Query Russian words in range
+        query = select(Word).where(Word.language_code == "ru")
+
+        if min_id is not None:
+            query = query.where(Word.id >= min_id)
+        if max_id is not None:
+            query = query.where(Word.id <= max_id)
+
+        # Exclude words already fully translated
+        subquery = (
+            select(Translation.source_word_id)
+            .where(Translation.target_language_code.in_(self.target_langs))
+            .group_by(Translation.source_word_id)
+            .having(func.count(Translation.target_language_code) >= len(self.target_langs))
+        ).subquery()
+
+        query = query.where(Word.id.not_in(select(subquery.c.source_word_id)))
+        query = query.order_by(Word.id)
+
+        result = await self.db.execute(query)
+        words = result.scalars().all()
+
+        if not words:
+            logger.info(f"✅ No untranslated Russian words found in range {min_id}–{max_id}")
+            return {
+                "status": "no_pending",
+                "range": {"min_id": min_id, "max_id": max_id},
+                "message": "No Russian words need translation."
+            }
+
+        logger.info(f"🔍 Found {len(words)} Russian words to translate in range {min_id}–{max_id}")
+
+        processed_count = 0
+        failed_count = 0
+
+        # Process one word at a time
+        for word in words:
+            try:
+                logger.info(f"📌 Translating Russian word ID {word.id}: '{word.text}' (ru)")
+
+                # Get existing translations
+                result_trans = await self.db.execute(
+                    select(Translation.target_language_code)
+                    .where(Translation.source_word_id == word.id)
+                )
+                existing_langs = {row[0] for row in result_trans.fetchall()}
+                missing_langs = [lang for lang in self.target_langs if lang not in existing_langs]
+
+                if not missing_langs:
+                    logger.debug(f"⏭️ All translations exist for word ID {word.id}")
+                    continue
+
+                logger.info(f"🌐 Translating to: {missing_langs}")
+
+                # Translate all missing languages
+                translations = await self._translate_text_batch(word.text, missing_langs)
+                saved_count = 0
+
+                for lang_code, translated_text in translations.items():
+                    if not translated_text:
+                        logger.warning(f"⚠️ Empty translation for word ID {word.id} → {lang_code}")
+                        continue
+
+                    trans_model = Translation(
+                        source_word_id=word.id,
+                        target_language_code=lang_code,
+                        translated_text=translated_text.strip().lower(),
+                    )
+                    self.db.add(trans_model)
+                    logger.debug(f"💾 Saved [{lang_code}] {translated_text}")
+                    saved_count += 1
+
+                # ✅ Commit after each word
+                await self.db.commit()
+                processed_count += 1
+                logger.info(f"✅ Translated Russian word ID {word.id} → {saved_count} languages")
+
+            except Exception as e:
+                await self.db.rollback()
+                logger.error(f"💥 Failed to process Russian word ID {word.id} ('{word.text}'): {str(e)}", exc_info=True)
+                failed_count += 1
+                continue  # Keep going
+
+            # Rate limiting
+            await asyncio.sleep(0.3)
+
+        logger.info(f"🎉 Russian words translation completed: {processed_count} success, {failed_count} failed")
+        return {
+            "status": "completed",
+            "range": {"min_id": min_id, "max_id": max_id},
+            "total_found": len(words),
+            "translated": processed_count,
+            "failed": failed_count,
+            "message": f"Translated {processed_count}/{len(words)} Russian words"
+        }
+
+    async def _load_languages(self, codes: List[str]) -> Dict[str, Language]:
+        """Load languages from DB, auto-create if missing."""
+        result = await self.db.execute(select(Language).where(Language.code.in_(codes)))
+        lang_map = {lang.code: lang for lang in result.scalars().all()}
+
+        names = {
+            "ru": "Russian",
+            "en": "English",
+            "es": "Spanish",
+            "tr": "Turkish"
+        }
+
+        for code in codes:
+            if code not in lang_map:
+                new_lang = Language(code=code, name=names.get(code, code.capitalize()))
+                self.db.add(new_lang)
+                lang_map[code] = new_lang
+                logger.info(f"🔧 Auto-added language: {code} ({new_lang.name})")
+
+        if lang_map:
+            await self.db.flush()
+
+        return lang_map
+
+    async def _translate_text_batch(self, text: str, target_languages: List[str]) -> Dict[str, str]:
+        """
+        Translate one Russian word into multiple languages using Google Translate.
+        Returns primary translations only.
+        """
+        translations = {}
+
+        for lang_code in target_languages:
+            try:
+                # Google Translate request
+                result = self.translate_client.translate(
+                    text,
+                    target_language=lang_code,
+                    format_='text'
+                )
+
+                translated_text = result['translatedText'].strip()
+                translations[lang_code] = translated_text
+                logger.debug(f"🌐 [ru→{lang_code}] {text} → {translated_text}")
+
+            except Exception as e:
+                logger.error(f"🚨 Translation failed for Russian '{text}' → {lang_code}: {str(e)}")
+                translations[lang_code] = None
+
+            # Rate limiting between languages
+            await asyncio.sleep(0.2)
+
+        return translations
+
 
 
 class DefinePosCategoryRussianRepository:
@@ -3009,6 +3444,7 @@ class TranslateEnglishSentencesRepository:
         return results
 
 
+# This is yandex translate
 class TranslateEnglishWord:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -3192,6 +3628,219 @@ class TranslateEnglishWord:
             await asyncio.sleep(0.1)  # Avoid rate limits
 
         return results
+
+
+
+class GoogleTranslateEnglishWord:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+        # Google Translate setup
+        self.translate_client = self._setup_google_client()
+
+        # Target languages
+        self.target_langs = ["tr", "es", "ru"]  # Turkish, Spanish, Russian
+
+    def _setup_google_client(self):
+        """Setup Google Translate client using service account credentials"""
+        try:
+            credentials = self._create_credentials()
+            client = translate.Client(credentials=credentials)
+            logger.info("✅ Google Translate client initialized successfully")
+            return client
+        except Exception as e:
+            logger.error(f"💥 Failed to initialize Google Translate client: {str(e)}")
+            raise RuntimeError(f"Google Translate client initialization failed: {str(e)}")
+
+    def _create_credentials(self):
+        """Create credentials from environment variables"""
+        try:
+            credentials_info = {
+                "type": "service_account",
+                "project_id": os.getenv("GOOGLE_PROJECT_ID"),
+                "private_key_id": os.getenv("GOOGLE_PRIVATE_KEY_ID"),
+                "private_key": os.getenv("GOOGLE_PRIVATE_KEY", "").replace('\\n', '\n'),
+                "client_email": os.getenv("GOOGLE_CLIENT_EMAIL"),
+                "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            }
+
+            credentials = service_account.Credentials.from_service_account_info(credentials_info)
+            return credentials
+        except Exception as e:
+            logger.error(f"💥 Failed to create credentials: {str(e)}")
+            raise
+
+    async def translate_english_word(self, min_id: int = None, max_id: int = None) -> Dict[str, any]:
+        """
+        Translate English words into Spanish, Russian, and Turkish.
+        Saves only primary translations to database.
+        """
+        # Validate min/max limits
+        if min_id is not None and max_id is not None:
+            if min_id > max_id:
+                raise ValueError("min_id cannot be greater than max_id")
+            if max_id - min_id > 10001:  # Limit range to 1000 words
+                raise ValueError("Range too large. Maximum 10000 words per request")
+
+        # Step 1: Ensure required languages exist
+        lang_map = await self._load_languages(["en"] + self.target_langs)
+        en_lang = lang_map.get("en")
+        if not en_lang:
+            raise RuntimeError("English language (en) not found in DB")
+
+        # Step 2: Query English words in range
+        query = select(Word).where(Word.language_code == "en")
+
+        if min_id is not None:
+            query = query.where(Word.id >= min_id)
+        if max_id is not None:
+            query = query.where(Word.id <= max_id)
+
+        # Exclude words already fully translated
+        subquery = (
+            select(Translation.source_word_id)
+            .where(Translation.target_language_code.in_(self.target_langs))
+            .group_by(Translation.source_word_id)
+            .having(func.count(Translation.target_language_code) >= len(self.target_langs))
+        ).subquery()
+
+        query = query.where(Word.id.not_in(select(subquery.c.source_word_id)))
+        query = query.order_by(Word.id)
+
+        result = await self.db.execute(query)
+        words = result.scalars().all()
+
+        if not words:
+            logger.info(f"✅ No untranslated English words found in range {min_id}–{max_id}")
+            return {
+                "status": "no_pending",
+                "range": {"min_id": min_id, "max_id": max_id},
+                "message": "No English words need translation."
+            }
+
+        logger.info(f"🔍 Found {len(words)} English words to translate in range {min_id}–{max_id}")
+
+        processed_count = 0
+        failed_count = 0
+
+        # Process one word at a time
+        for word in words:
+            try:
+                logger.info(f"📌 Translating word ID {word.id}: '{word.text}' (en)")
+
+                # Get existing translations for this word
+                result_trans = await self.db.execute(
+                    select(Translation.target_language_code)
+                    .where(Translation.source_word_id == word.id)
+                )
+                existing_langs = {row[0] for row in result_trans.fetchall()}
+                missing_langs = [lang for lang in self.target_langs if lang not in existing_langs]
+
+                if not missing_langs:
+                    logger.debug(f"⏭️ All translations exist for word ID {word.id}")
+                    continue
+
+                logger.info(f"🌐 Translating to: {missing_langs}")
+
+                # Translate all missing languages
+                translations = await self._translate_text_batch(word.text, missing_langs)
+                saved_count = 0
+
+                for lang_code, translated_text in translations.items():
+                    if not translated_text:
+                        logger.warning(f"⚠️ Empty translation for word ID {word.id} → {lang_code}")
+                        continue
+
+                    # Create translation record
+                    trans_model = Translation(
+                        source_word_id=word.id,
+                        target_language_code=lang_code,
+                        translated_text=translated_text.strip().lower(),
+                    )
+                    self.db.add(trans_model)
+                    logger.debug(f"💾 Saved [{lang_code}] {translated_text}")
+                    saved_count += 1
+
+                # ✅ Commit after each word
+                await self.db.commit()
+                processed_count += 1
+                logger.info(f"✅ Translated word ID {word.id} → {saved_count} languages")
+
+            except Exception as e:
+                await self.db.rollback()
+                logger.error(f"💥 Failed to process word ID {word.id} ('{word.text}'): {str(e)}", exc_info=True)
+                failed_count += 1
+                continue  # Keep going with next word
+
+            # Small delay to avoid rate limits
+            await asyncio.sleep(0.3)
+
+        logger.info(f"🎉 Translation completed: {processed_count} successful, {failed_count} failed")
+        return {
+            "status": "completed",
+            "range": {"min_id": min_id, "max_id": max_id},
+            "total_found": len(words),
+            "translated": processed_count,
+            "failed": failed_count,
+            "message": f"Translated {processed_count}/{len(words)} English words"
+        }
+
+    async def _load_languages(self, codes: List[str]) -> Dict[str, Language]:
+        """Load languages from DB, auto-create if missing."""
+        result = await self.db.execute(select(Language).where(Language.code.in_(codes)))
+        lang_map = {lang.code: lang for lang in result.scalars().all()}
+
+        names = {
+            "en": "English",
+            "es": "Spanish",
+            "ru": "Russian",
+            "tr": "Turkish"
+        }
+
+        for code in codes:
+            if code not in lang_map:
+                new_lang = Language(code=code, name=names.get(code, code.capitalize()))
+                self.db.add(new_lang)
+                lang_map[code] = new_lang
+                logger.info(f"🔧 Auto-added language: {code} ({new_lang.name})")
+
+        if lang_map:
+            await self.db.flush()
+
+        return lang_map
+
+    async def _translate_text_batch(self, text: str, target_languages: List[str]) -> Dict[str, str]:
+        """
+        Translate one English word into multiple languages.
+        Returns only primary translations (no alternatives).
+        """
+        translations = {}
+
+        for lang_code in target_languages:
+            try:
+                # Single translation request per language
+                result = self.translate_client.translate(
+                    text,
+                    target_language=lang_code,
+                    format_='text'
+                )
+
+                translated_text = result['translatedText'].strip()
+                translations[lang_code] = translated_text
+                logger.debug(f"🌐 [{lang_code}] {text} → {translated_text}")
+
+            except Exception as e:
+                logger.error(f"🚨 Translation failed for '{text}' → {lang_code}: {str(e)}")
+                translations[lang_code] = None
+
+            # Rate limiting
+            await asyncio.sleep(0.2)
+
+        return translations
+
 
 
 class DefinePosCategoryEnglishRepository:

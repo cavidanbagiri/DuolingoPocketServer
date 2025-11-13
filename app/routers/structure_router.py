@@ -8,6 +8,11 @@ from fastapi.responses import Response
 from fastapi.params import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# router.py
+from pydantic import BaseModel
+from typing import Optional
+
+
 from app.auth.token_handler import TokenHandler
 from app.database.setup import get_db
 from app.repositories.word_repository import FetchWordRepository, \
@@ -23,13 +28,15 @@ from app.schemas.favorite_schemas import (FavoriteWordBase, FavoriteWordResponse
 
 from app.repositories.structure_repository import (CreateMainStructureRepository,
                                                     DefineCommonCategories,
-                                                    GenerateEnglishSentence, TranslateEnglishSentencesRepository, TranslateEnglishWord, DefinePosCategoryEnglishRepository,
-                                                    CreateMainStructureForRussianRepository, GenerateRussianSentences, TranslateRussianSentences,TranslateRussianWord, DefinePosCategoryRussianRepository,
-                                                    CreateMainStructureForSpanishRepository, GenerateSpanishSentences, TranslateSpanishSentences, TranslateSpanishWord, DefinePosCategorySpanishRepository)
+                                                    GenerateEnglishSentence, TranslateEnglishSentencesRepository, TranslateEnglishWord, DefinePosCategoryEnglishRepository, GoogleTranslateEnglishWord,
+                                                    CreateMainStructureForRussianRepository, GenerateRussianSentences, TranslateRussianSentences,TranslateRussianWord, DefinePosCategoryRussianRepository, GoogleTranslateRussianWord,
+                                                    CreateMainStructureForSpanishRepository, GenerateSpanishSentences, TranslateSpanishSentences, TranslateSpanishWord, DefinePosCategorySpanishRepository, GoogleTranslateSpanishWord)
 
 from app.services.ai_service import AIService
 
 
+from app.logging_config import setup_logger
+logger = setup_logger(__name__, "word.log")
 
 
 router = APIRouter()
@@ -125,6 +132,42 @@ async def translate_spanish_words(
         repo = TranslateSpanishWord(db)
         result = await repo.translate_spanish_word(min_id=min_id, max_id=max_id)
         return {"success": True, "data": result}
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"💥 Spanish word translation failed: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+
+
+
+class TranslationRange(BaseModel):
+    min_id: Optional[int] = None
+    max_id: Optional[int] = None
+
+
+@router.post("/spanish/translate_spanish_words_google", status_code=200)
+async def translate_spanish_words(
+        params: TranslationRange = None,
+        db: AsyncSession = Depends(get_db)
+):
+    """
+    Translate Spanish words into English, Russian, and Turkish.
+    Saves to `Translation` table using Google Translate API.
+    Processes all eligible words in the given ID range.
+    Commits after each word.
+    """
+    try:
+        min_id = params.min_id if params else None
+        max_id = params.max_id if params else None
+
+        repo = GoogleTranslateSpanishWord(db)
+        result = await repo.translate_spanish_word(min_id=min_id, max_id=max_id)
+        return {"success": True, "data": result}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except HTTPException:
+        raise
     except Exception as ex:
         await db.rollback()
         logger.error(f"💥 Spanish word translation failed: {str(ex)}", exc_info=True)
@@ -230,6 +273,40 @@ async def translate_russian_words(
 
 
 
+class TranslationRange(BaseModel):
+    min_id: Optional[int] = None
+    max_id: Optional[int] = None
+
+
+@router.post("/russian/translate_russian_words_google", status_code=200)
+async def translate_russian_words(
+        params: TranslationRange = None,
+        db: AsyncSession = Depends(get_db)
+):
+    """
+    Translate Russian words into English, Spanish, and Turkish.
+    Saves to `Translation` table using Google Translate API.
+    Processes all eligible words in the given ID range.
+    Commits after each word.
+    """
+    try:
+        min_id = params.min_id if params else None
+        max_id = params.max_id if params else None
+
+        repo = GoogleTranslateRussianWord(db)
+        result = await repo.translate_russian_word(min_id=min_id, max_id=max_id)
+        return {"success": True, "data": result}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except HTTPException:
+        raise
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"💥 Russian word translation failed: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+
 @router.post("/russian/define_pos_category_russian_words", status_code=200)
 async def define_pos_category_english_word(
     min_id: int = None,
@@ -294,7 +371,7 @@ async def translate_english_sentences(
         logger.error(f"💥 Sentence translation failed: {str(ex)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
 
-
+# This is yandex translation api
 @router.post("/translate_english_words", status_code=200)
 async def translate_english_word(
     min_id: int = None,
@@ -311,6 +388,37 @@ async def translate_english_word(
         repo = TranslateEnglishWord(db)
         result = await repo.translate_english_word(min_id=min_id, max_id=max_id)
         return {"success": True, "data": result}
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"💥 Word translation failed: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+class TranslationRange(BaseModel):
+    min_id: Optional[int] = None
+    max_id: Optional[int] = None
+
+
+@router.post("/translate_english_words_google", status_code=200)
+async def translate_english_word(
+        params: TranslationRange = None,
+        db: AsyncSession = Depends(get_db)
+):
+    """
+    Translate English words into Spanish, Russian, and Turkish.
+    Saves primary translations to database.
+    """
+    try:
+        min_id = params.min_id if params else None
+        max_id = params.max_id if params else None
+
+        repo = GoogleTranslateEnglishWord(db)
+        result = await repo.translate_english_word(min_id=min_id, max_id=max_id)
+        return {"success": True, "data": result}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except HTTPException:
+        raise
     except Exception as ex:
         await db.rollback()
         logger.error(f"💥 Word translation failed: {str(ex)}", exc_info=True)
