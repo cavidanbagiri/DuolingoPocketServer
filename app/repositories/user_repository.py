@@ -80,23 +80,89 @@ class RefreshTokenRepository:
             raise HTTPException(status_code=404, detail=f'Refresh Token can\'t save {str(ex)}')
 
 
-class UserRegisterRepository:
+# class UserRegisterRepository:
+#
+#     def __init__(self, db: AsyncSession):
+#         self.db = db
+#         self.refresh_token_repo = RefreshTokenRepository(self.db)
+#         self.h_password = PasswordHash()
+#
+#     async def register(self, register_data):
+#
+#         try:
+#             # 1 - Check user email is available or not
+#             data = await self.db.execute(select(UserModel).where(UserModel.email == register_data.email))
+#             user = data.scalar()
+#             if user:
+#                 raise HTTPException(status_code=409, detail="This email already available")
+#
+#             # 1 - Check user username is available or not
+#             if register_data.username:
+#                 data = await self.db.execute(select(UserModel).where(UserModel.username == register_data.username))
+#                 user = data.scalar()
+#                 if user:
+#                     raise HTTPException(status_code=409, detail="This username already available")
+#
+#             register_data.password = self.h_password.hash_password(register_data.password)
+#             return_data = await self.save_user(register_data)
+#             return return_data
+#
+#         except HTTPException as ex:
+#             raise
+#
+#         except Exception as ex:
+#             raise HTTPException(status_code=404, detail=f"Registration error {ex}")
+#
+#     async def save_user(self, register_data):
+#         user = UserModel(
+#             email=register_data.email,
+#             password=register_data.password,
+#             username=register_data.username,
+#             native = register_data.native,
+#         )
+#         self.db.add(user)
+#         await self.db.commit()
+#         await self.db.refresh(user)
+#
+#         token_data = {
+#             'sub': str(user.id),
+#             'username': user.username,
+#         }
+#
+#         access_token = TokenHandler.generate_access_token(token_data)
+#         refresh_token = TokenHandler.generate_refresh_token(token_data)
+#
+#         await self.refresh_token_repo.manage_refresh_token(user.id, refresh_token)
+#
+#         return {
+#             'user': {
+#                 'sub': str(user.id),
+#                 'email': user.email,
+#                 'username': user.username,
+#                 'native': user.native,
+#             },
+#             'access_token': access_token,
+#             'refresh_token': refresh_token
+#         }
+#
 
+class UserRegisterRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.refresh_token_repo = RefreshTokenRepository(self.db)
         self.h_password = PasswordHash()
 
     async def register(self, register_data):
-
         try:
+            logger.info(f"🔍 REPOSITORY - Checking email: {register_data.email}, Native: '{register_data.native}'")
+
             # 1 - Check user email is available or not
-            data = await self.db.execute(select(UserModel).where(UserModel.email == register_data.email))
+            data = await self.db.execute(select(UserModel).where(UserModel.email == register_data.email.lower()))
             user = data.scalar()
             if user:
                 raise HTTPException(status_code=409, detail="This email already available")
 
-            # 1 - Check user username is available or not
+            # 2 - Check user username is available or not
             if register_data.username:
                 data = await self.db.execute(select(UserModel).where(UserModel.username == register_data.username))
                 user = data.scalar()
@@ -109,20 +175,28 @@ class UserRegisterRepository:
 
         except HTTPException as ex:
             raise
-
         except Exception as ex:
             raise HTTPException(status_code=404, detail=f"Registration error {ex}")
 
     async def save_user(self, register_data):
+        # LOG EXACTLY WHAT WE'RE SAVING
+        logger.info(f"🔍 SAVE_USER - Creating user with native: '{register_data.native}'")
+
         user = UserModel(
-            email=register_data.email,
+            email=register_data.email.lower(),
             password=register_data.password,
             username=register_data.username,
-            native = register_data.native,
+            native=register_data.native,
         )
+
+        logger.info(f"🔍 SAVE_USER - UserModel object created with native: '{user.native}'")
+
         self.db.add(user)
         await self.db.commit()
         await self.db.refresh(user)
+
+        # VERIFY WHAT WAS ACTUALLY SAVED IN DATABASE
+        logger.info(f"🔍 SAVE_USER - User saved to DB - ID: {user.id}, Native: '{user.native}'")
 
         token_data = {
             'sub': str(user.id),
@@ -139,11 +213,14 @@ class UserRegisterRepository:
                 'sub': str(user.id),
                 'email': user.email,
                 'username': user.username,
-                'native': user.native,
+                'native': user.native,  # This should match what was saved
             },
             'access_token': access_token,
             'refresh_token': refresh_token
         }
+
+
+
 
 
 class CheckUserAvailable:
@@ -153,7 +230,7 @@ class CheckUserAvailable:
         self.h_password = PasswordHash()
 
     async def check_user_exists(self, login_data: UserLoginSchema) -> UserModel:
-        data = await self.db.execute(select(UserModel).where(UserModel.email==login_data.email))
+        data = await self.db.execute(select(UserModel).where(UserModel.email==login_data.email.lower()))
         user = data.scalar()
         if user:
             logger.info(f'{login_data.email} find in database')
@@ -482,6 +559,36 @@ class SetNativeRepository:
         except Exception as e:
             await self.db.rollback()
             return {'error': str(e)}
+
+
+
+class GetNativeRepository:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+
+    async def get_native(self, user_id: int):
+        try:
+
+            # user_id = int(user_id)
+
+            result = await self.db.execute(
+                select(UserModel.native).where(UserModel.id == user_id)
+            )
+            native_language = result.scalar_one_or_none()
+
+            data =  {
+                'has_native': native_language is not None and native_language != '',
+                'native_language': native_language
+            }
+
+
+            return data
+
+
+        except Exception as ex:
+            logger.error(f"Error checking native language: {str(ex)}")
+            raise HTTPException(status_code=500, detail="Internal server error")
 
 
 

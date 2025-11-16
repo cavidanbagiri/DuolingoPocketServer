@@ -13,7 +13,7 @@ from app.database.setup import get_db
 
 from app.repositories.user_repository import (UserRegisterRepository, UserLoginRepository, UserLogoutRepository,
                                               CheckUserAvailable, RefreshTokenRepository, DeleteRefreshTokenRepository,
-                                              SetNativeRepository, ChooseLangTargetRepository, GoogleAuthRepository)
+                                              SetNativeRepository, ChooseLangTargetRepository, GoogleAuthRepository, GetNativeRepository)
 
 from app.schemas.user_schema import UserLoginSchema, UserTokenSchema, UserRegisterSchema, NativeLangSchema, \
     ChooseLangSchema
@@ -23,6 +23,34 @@ logger = setup_logger(__name__, "user.log")
 
 router = APIRouter()
 
+#
+# @router.post('/register', status_code=201)
+# async def register(response: Response, register_data: UserRegisterSchema,
+#                    db_session: Annotated[AsyncSession, Depends(get_db)]):
+#     repository = UserRegisterRepository(db_session)
+#
+#     try:
+#         data = await repository.register(register_data)
+#
+#         response.headers["X-Content-Type-Options"] = "nosniff"
+#         response.headers["X-Frame-Options"] = "DENY"
+#
+#         response.set_cookie('refresh_token', data.get('refresh_token'),
+#                             httponly=True,
+#                             secure=True,
+#                             samesite="none"
+#                             )
+#
+#         return {
+#             'user': data.get('user'),
+#             'access_token': data.get('access_token')
+#         }
+#
+#     except HTTPException as ex:
+#         raise ex
+#     except Exception as ex:  # Catch all other exceptions
+#         logger.exception("Unexpected error login user: %s", ex)
+#         raise HTTPException(500, 'Internal server error')
 
 @router.post('/register', status_code=201)
 async def register(response: Response, register_data: UserRegisterSchema,
@@ -30,6 +58,9 @@ async def register(response: Response, register_data: UserRegisterSchema,
     repository = UserRegisterRepository(db_session)
 
     try:
+        # ADD DETAILED LOGGING
+        logger.info(f"🔍 REGISTRATION START - User: {register_data.email}, Selected Native: '{register_data.native}'")
+
         data = await repository.register(register_data)
 
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -41,16 +72,25 @@ async def register(response: Response, register_data: UserRegisterSchema,
                             samesite="none"
                             )
 
+        logger.info(
+            f"🔍 REGISTRATION COMPLETE - User: {register_data.email}, Saved Native: '{data.get('user', {}).get('native')}'")
+
         return {
             'user': data.get('user'),
             'access_token': data.get('access_token')
         }
 
     except HTTPException as ex:
+        logger.error(f"🔍 REGISTRATION HTTP ERROR - User: {register_data.email}, Error: {ex}")
         raise ex
-    except Exception as ex:  # Catch all other exceptions
-        logger.exception("Unexpected error login user: %s", ex)
+    except Exception as ex:
+        logger.exception(f"🔍 REGISTRATION UNEXPECTED ERROR - User: {register_data.email}, Error: {ex}")
         raise HTTPException(500, 'Internal server error')
+
+
+
+
+
 
 
 @router.post('/login', status_code=201)
@@ -268,6 +308,38 @@ async def set_native(
     except Exception as ex:
         return {'error': str(ex)}
 
+
+
+@router.get('/getnative')
+async def get_native_language(
+        db: AsyncSession = Depends(get_db),
+        user_info=Depends(TokenHandler.verify_access_token)
+):
+    """
+    Check if user has set their native language
+    """
+    try:
+        user_id = int(user_info.get('sub'))
+
+        repo = GetNativeRepository(db)
+
+        result = await repo.get_native(user_id)
+
+        return result
+
+        # result = await db.execute(
+        #     select(UserModel.native).where(UserModel.id == user_id)
+        # )
+        # native_language = result.scalar_one_or_none()
+        #
+        # return {
+        #     'has_native': native_language is not None and native_language != '',
+        #     'native_language': native_language
+        # }
+
+    except Exception as ex:
+        logger.error(f"Error checking native language: {str(ex)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 
