@@ -1,12 +1,28 @@
 import os
-from datetime import datetime
 from typing import Any, Coroutine, Union
 
 from fastapi import HTTPException
 
-from sqlalchemy import insert, select, delete
+from sqlalchemy import insert, select, delete, select
 from sqlalchemy.exc import NoResultFound, DBAPIError
+
+
+
+# services/reset_password_service.py
+import secrets
+import hashlib
+from datetime import datetime, timedelta
+from fastapi import HTTPException, status, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_
+from sqlalchemy.orm import selectinload
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import logging
+
+
+
 
 # New added for Google sign in
 import httpx
@@ -17,12 +33,14 @@ from jose.exceptions import JWTError
 from app.auth.refresh_token_handler import DeleteRefreshTokenRepository
 from app.schemas.user_schema import UserLoginSchema
 
-from app.models.user_model import UserModel, TokenModel, UserLanguage
+from app.models.user_model import UserModel, TokenModel, UserLanguage, PasswordResetToken
 
 from app.utils.hash_password import PasswordHash
 
 from app.auth.token_handler import TokenHandler
 
+# Initialize your Argon2 password hasher
+password_hasher = PasswordHash()
 
 
 from app.logging_config import setup_logger
@@ -218,9 +236,6 @@ class UserRegisterRepository:
             'access_token': access_token,
             'refresh_token': refresh_token
         }
-
-
-
 
 
 class CheckUserAvailable:
@@ -633,3 +648,255 @@ class ChooseLangTargetRepository:
             "msg": "New language added.",
             "target_language_code": self.target_lang_code
         }
+
+
+
+
+
+
+
+
+class ResetPasswordService:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def request_password_reset(self, email: str):
+        """Handle password reset request"""
+        try:
+
+            if await self._is_rate_limited(email):
+                logger.warning(f"Rate limit exceeded for email: {email}")
+                return self._success_response()  # Still return success for security
+
+            # Find user by email
+            user = await self._get_user_by_email(email)
+            if not user:
+                # For security, don't reveal if email exists
+                return self._success_response()
+
+            # Create reset token
+            reset_token_obj, plain_token = await self._create_reset_token(user.id)
+
+            # Send reset email
+            await self._send_reset_email(user.email, plain_token)
+
+            return self._success_response()
+
+        except Exception as e:
+            logger.error(f"Error in request_password_reset: {str(e)}")
+            # Still return success for security
+            return self._success_response()
+
+    async def confirm_password_reset(self, token: str, new_password: str):
+        """Confirm password reset with token"""
+        try:
+            # Validate token
+            reset_token = await self._validate_reset_token(token)
+            if not reset_token:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid or expired reset token"
+                )
+
+            # Get user
+            user = reset_token.user
+
+            # Validate new password
+            self._validate_password(new_password)
+
+            # Update user password using Argon2
+            user.password = password_hasher.hash_password(new_password)
+
+            # Mark token as used
+            reset_token.used = True
+            reset_token.used_at = datetime.utcnow()
+
+            await self.db.commit()
+
+            return {
+                "message": "Password reset successfully",
+                "detail": "You can now login with your new password"
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error in confirm_password_reset: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to reset password. Please try again."
+            )
+
+    async def _get_user_by_email(self, email: str) -> UserModel:
+        """Find user by email using SQLAlchemy 2.0 style"""
+        query = select(UserModel).where(UserModel.email == email)
+        result = await self.db.execute(query)
+        return result.scalar_one_or_none()
+
+    async def _create_reset_token(self, user_id: int):
+        """Create a new reset token"""
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        expires_at = datetime.utcnow() + timedelta(hours=1)
+
+        # Create token object
+        reset_token = PasswordResetToken(
+            user_id=user_id,
+            token_hash=token_hash,
+            expires_at=expires_at
+        )
+
+        # Save to database
+        self.db.add(reset_token)
+        await self.db.commit()
+
+        return reset_token, token
+
+    async def _validate_reset_token(self, token: str) -> PasswordResetToken:
+        """Validate reset token and return token object if valid"""
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+        query = select(PasswordResetToken).where(
+            and_(
+                PasswordResetToken.token_hash == token_hash,
+                PasswordResetToken.used == False,
+                PasswordResetToken.expires_at > datetime.utcnow()
+            )
+        ).options(selectinload(PasswordResetToken.user))
+
+        result = await self.db.execute(query)
+        return result.scalar_one_or_none()
+
+    def _validate_password(self, password: str):
+        """Validate new password strength"""
+        if len(password) < 8:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password must be at least 8 characters long"
+            )
+        # Add more password strength checks as needed
+
+    def _success_response(self):
+        """Standard success response for security"""
+        return {
+            "message": "If an account with that email exists, a reset link has been sent",
+            "detail": "Check your email for the reset link"
+        }
+
+    async def _send_reset_email(self, email: str, token: str):
+        """Send password reset email with improved error handling"""
+        try:
+            # Email configuration
+            smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
+            smtp_port = int(os.getenv('SMTP_PORT', 587))
+            smtp_username = os.getenv('SMTP_USERNAME')
+            smtp_password = os.getenv('SMTP_PASSWORD')
+            from_email = os.getenv('FROM_EMAIL', 'noreply@w9999.com')
+
+            # Validate required environment variables
+            if not all([smtp_username, smtp_password]):
+                logger.error("SMTP credentials not configured properly")
+                return  # Don't raise exception - fail silently for security
+
+            # Create reset link
+            frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+            reset_link = f"{frontend_url}/reset-password-confirm?token={token}"
+
+            # Create email message
+            msg = MIMEMultipart('alternative')
+            msg['Subject'] = "Reset Your Password - W9999"
+            msg['From'] = from_email
+            msg['To'] = email
+
+            # HTML email content
+            html = self._create_email_html(reset_link)
+            msg.attach(MIMEText(html, 'html'))
+
+            # Send email with timeout
+            logger.info(f"Attempting to send reset email to {email}")
+
+            with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
+                server.ehlo()  # Identify ourselves to SMTP server
+                server.starttls()  # Secure the connection
+                server.ehlo()  # Re-identify ourselves over TLS connection
+
+                # Login and send
+                server.login(smtp_username, smtp_password)
+                server.send_message(msg)
+
+            logger.info(f"Password reset email successfully sent to {email}")
+
+        except smtplib.SMTPAuthenticationError as e:
+            logger.error(f"SMTP Authentication failed: {str(e)}")
+            logger.error("Please check your SMTP credentials and app password")
+        except smtplib.SMTPException as e:
+            logger.error(f"SMTP error occurred: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error sending email: {str(e)}")
+
+    def _create_email_html(self, reset_link: str) -> str:
+        """Create beautiful HTML email template"""
+        return f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <style>
+                body {{ font-family: 'Arial', sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
+                .container {{ max-width: 600px; margin: 0 auto; background: #ffffff; }}
+                .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px; text-align: center; color: white; }}
+                .content {{ padding: 40px; background: #f8f9fa; }}
+                .button {{ display: inline-block; padding: 14px 35px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                         color: white; text-decoration: none; border-radius: 25px; font-weight: bold; font-size: 16px; margin: 20px 0; }}
+                .footer {{ padding: 20px; text-align: center; color: #666; font-size: 12px; background: #f1f3f4; }}
+                .code {{ background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #667eea; margin: 20px 0; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>🔐 W9999</h1>
+                    <p>Password Reset Request</p>
+                </div>
+                <div class="content">
+                    <h2>Hello!</h2>
+                    <p>We received a request to reset your password for your W9999 account.</p>
+                    <p>Click the button below to reset your password:</p>
+                    <p style="text-align: center;">
+                        <a href="{reset_link}" class="button">Reset Password</a>
+                    </p>
+                    <p>Or copy and paste this link in your browser:</p>
+                    <div class="code">
+                        {reset_link}
+                    </div>
+                    <p><strong>⚠️ This link will expire in 1 hour.</strong></p>
+                    <p>If you didn't request a password reset, please ignore this email.</p>
+                    <p>Happy learning!<br>The W9999 Team</p>
+                </div>
+                <div class="footer">
+                    <p>© 2024 W9999. All rights reserved.</p>
+                    <p>If you're having trouble, contact us at cavidanbagiri@gmail.com</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+
+    async def _is_rate_limited(self, email: str) -> bool:
+        """Check if too many reset requests for this email (last hour)"""
+        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+
+        query = select(PasswordResetToken).join(UserModel).where(
+            and_(
+                UserModel.email == email,
+                PasswordResetToken.created_at >= one_hour_ago
+            )
+        )
+
+        result = await self.db.execute(query)
+        recent_requests = result.scalars().all()
+
+        # Allow max 3 reset requests per hour
+        return len(recent_requests) >= 3

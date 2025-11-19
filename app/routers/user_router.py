@@ -13,7 +13,8 @@ from app.database.setup import get_db
 
 from app.repositories.user_repository import (UserRegisterRepository, UserLoginRepository, UserLogoutRepository,
                                               CheckUserAvailable, RefreshTokenRepository, DeleteRefreshTokenRepository,
-                                              SetNativeRepository, ChooseLangTargetRepository, GoogleAuthRepository, GetNativeRepository)
+                                              SetNativeRepository, ChooseLangTargetRepository, GoogleAuthRepository, GetNativeRepository,
+                                              ResetPasswordService)
 
 from app.schemas.user_schema import UserLoginSchema, UserTokenSchema, UserRegisterSchema, NativeLangSchema, \
     ChooseLangSchema
@@ -356,3 +357,42 @@ async def choose_target_lang(
     except Exception as ex:
         return {'error': str(ex)}
 
+
+
+
+
+
+
+
+
+
+
+
+
+from pydantic import BaseModel, EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordConfirmRequest(BaseModel):
+    token: str
+    new_password: str
+
+@router.post("/reset-password", status_code=200)
+async def reset_password(
+    request: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Request password reset"""
+    print('............. here is working')
+    service = ResetPasswordService(db)
+    return await service.request_password_reset(request.email)
+
+@router.post("/reset-password-confirm", status_code=200)
+async def reset_password_confirm(
+    request: ResetPasswordConfirmRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Confirm password reset"""
+    service = ResetPasswordService(db)
+    return await service.confirm_password_reset(request.token, request.new_password)

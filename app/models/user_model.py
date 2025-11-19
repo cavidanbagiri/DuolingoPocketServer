@@ -8,6 +8,16 @@ from app.models.language_model import Language
 
 from app.models.base_model import Base
 
+# models.py
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey
+from sqlalchemy.orm import relationship
+from sqlalchemy.ext.declarative import declarative_base
+from datetime import datetime, timedelta
+import secrets
+import hashlib
+
+
+
 class UserModel(Base):
     __tablename__ = "users"
 
@@ -28,6 +38,9 @@ class UserModel(Base):
 
     favorite_categories = relationship("FavoriteCategory", back_populates="user")
     favorite_words = relationship("FavoriteWord", back_populates="user")
+
+
+    password_reset_tokens = relationship("PasswordResetToken", back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f'UserModel(id:{self.id}, username:{self.username}, email: {self.email}, native: {self.native})'
@@ -126,4 +139,36 @@ class DefaultCategory(Base):
 
     # Users can copy these to their personal categories
 
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    used = Column(Boolean, default=False, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+
+    # Relationship
+    user = relationship("UserModel", back_populates="password_reset_tokens")
+
+    @classmethod
+    def create_reset_token(cls, user_id: int, expires_hours: int = 1):
+        """Create a new reset token"""
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        expires_at = datetime.utcnow() + timedelta(hours=expires_hours)
+
+        return cls(
+            user_id=user_id,
+            token_hash=token_hash,
+            expires_at=expires_at
+        ), token
+
+    def is_valid(self):
+        """Check if token is still valid"""
+        return not self.used and datetime.utcnow() < self.expires_at
 
