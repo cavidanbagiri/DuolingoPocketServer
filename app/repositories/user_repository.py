@@ -794,11 +794,8 @@ class ResetPasswordService:
             smtp_password = os.getenv('SMTP_PASSWORD')
             from_email = os.getenv('FROM_EMAIL', 'noreply@w9999.com')
 
-            print('the username uis ...........................', smtp_username)
-
             # Validate required environment variables
             if not all([smtp_username, smtp_password]):
-                print(".................................SMTP credentials not configured properly")
                 logger.error("SMTP credentials not configured properly")
                 return  # Don't raise exception - fail silently for security
 
