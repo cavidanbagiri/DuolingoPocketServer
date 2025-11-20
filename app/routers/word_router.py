@@ -10,12 +10,13 @@ from fastapi.responses import StreamingResponse
 
 from app.auth.token_handler import TokenHandler
 from app.database.setup import get_db
-from app.repositories.word_repository import FetchWordRepository, \
+from app.repositories.word_repository import (FetchWordRepository, \
     ChangeWordStatusRepository, DetailWordRepository, GetStatisticsForDashboardRepository, GetPosStatisticsRepository, \
     VoiceHandleRepository, GenerateAIWordRepository, GenerateAIQuestionRepository, SearchRepository, \
     TranslateRepository, AddFavoritesRepository, CreateNewFavoriteCategoryRepository, FavoriteCategoryRepository, \
     CategoryWordsRepository, DeleteFavoriteWordRepository, MoveFavoriteWordRepository, DeleteCategoryRepository, \
-    SearchFavoriteRepository, FetchStatisticsForProfileRepository, DailyStreakRepository, GenerateDirectAIChat
+    SearchFavoriteRepository, FetchStatisticsForProfileRepository, DailyStreakRepository, GenerateDirectAIChat,FetchWordCategoriesRepository,
+                                              FetchWordByCategoryIdRepository)
 from app.schemas.user_schema import ChangeWordStatusSchema
 from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, GenerateAIChatSchema, TranslateSchema, \
     AiDirectChatSchema
@@ -31,7 +32,6 @@ router = APIRouter()
 
 from app.logging_config import setup_logger
 logger = setup_logger(__name__, "word.log")
-
 
 
 @router.get('/get_statistics', status_code=200)
@@ -213,25 +213,6 @@ async def generate_ai_chat_stream(data: GenerateAIChatSchema, repo: GenerateAIQu
     except Exception as e:
         logger.error(f"Streaming chat error: {str(e)}")
         raise HTTPException(status_code=500, detail="Streaming service error")
-
-
-
-# @router.post('/aichat', status_code=200)
-# async def generate_ai_chat(data: GenerateAIChatSchema, repo: GenerateAIQuestionRepository = Depends()):
-#     try:
-#         # The repo method now needs to handle a conversational prompt
-#         result = await repo.generate_ai_chat(data)
-#         return result
-#     except HTTPException:
-#         raise
-#     except Exception as e:
-#         logger.error(f"Unexpected error in AI chat for word '{data.word}': {str(e)}")
-#         raise HTTPException(
-#             status_code=500,
-#             detail="We're having trouble processing your question. Please try again in a moment."
-#         )
-
-
 
 
 
@@ -568,4 +549,59 @@ async def search_statistics_for_profile(
         raise HTTPException(
             status_code=500,
             detail="We're having trouble with the header fetch daily streak"
+        )
+
+
+@router.get('/main/words_categories', status_code=200)
+async def fetch_words_categories(
+    lang_code: Optional[str] = Query(),
+    user_info: dict = Depends(TokenHandler.verify_access_token),
+    db: AsyncSession = Depends(get_db),
+):
+
+    try:
+        repo = FetchWordCategoriesRepository(db, user_id=int(user_info.get('sub')), lang_code= lang_code)
+        data = await repo.fetch_words_categories()
+        return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during word categories fetching: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="We're having trouble with the word categories fetching"
+        )
+
+
+@router.get('/main/fetch_words_by_categories', status_code=200)
+async def fetch_words_by_category_id(
+        category_id: int = Query(..., description="Filter by category ID"),  # Required now
+        lang_code: str = Query(..., description="Language code for the words"),  # Added language code
+        only_starred: bool = Query(False, description="Filter only starred words"),
+        only_learned: bool = Query(False, description="Filter only learned words"),
+        skip: int = Query(0, description="Pagination offset"),
+        limit: int = Query(50, description="Pagination limit"),
+        db: AsyncSession = Depends(get_db),
+        user_info: dict = Depends(TokenHandler.verify_access_token)
+):
+    try:
+        repo = FetchWordByCategoryIdRepository(
+            db,
+            user_id=int(user_info.get('sub')),
+            category_id=category_id,
+            lang_code=lang_code,
+            only_starred=only_starred,
+            only_learned=only_learned,
+            skip=skip,
+            limit=limit
+        )
+        data = await repo.fetch_words_by_category_id()
+        return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during fetching words by category id: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="We're having trouble with the fetching words by category id"
         )

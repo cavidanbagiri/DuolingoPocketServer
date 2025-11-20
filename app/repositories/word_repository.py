@@ -39,7 +39,7 @@ import aiohttp
 
 from app.logging_config import setup_logger
 from app.models.word_model import Word, Sentence, SentenceWord, WordMeaning, Translation, SentenceTranslation, \
-    LearnedWord
+    LearnedWord, word_category_association, Category
 from app.models.user_model import Language, UserModel, UserLanguage, UserWord
 from app.schemas.word_schema import GenerateAIChatSchema, GenerateAIWordSchema, TranslateSchema
 from app.schemas.favorite_schemas import FavoriteWordBase, FavoriteCategoryBase, FavoriteCategoryResponse, FavoriteFetchWordResponse
@@ -655,122 +655,6 @@ class GenerateAIWordRepository:
 
 
 
-# class GenerateDirectAIChat:
-#
-#     def __init__(self):
-#         self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
-#
-#     async def ai_direct_chat(self, data):
-#         print(f'coming data is {data}')
-#
-#         return {'msg': 'AIChat returning'}
-
-#
-# class GenerateDirectAIChat:
-#     def __init__(self):
-#         self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
-#         self.api_url = "https://api.deepseek.com/v1/chat/completions"
-#
-#         # System prompt to enforce language learning context
-#         self.system_prompt = """You are an AI language learning tutor. Your role is strictly limited to helping users learn languages.
-#
-# CORE RESPONSIBILITIES:
-# - Answer questions about vocabulary, grammar, pronunciation, and language usage
-# - Provide language practice exercises and conversations
-# - Explain cultural aspects related to languages
-# - Help with translation and language comprehension
-# - Create learning activities and study plans
-#
-# STRICT BOUNDARIES:
-# - ONLY discuss language learning topics
-# - If asked about unrelated topics (cars, sports, politics, etc.), politely redirect to language learning
-# - Do not provide information outside of language education
-# - Maintain a professional, educational tone
-#
-# RESPONSE GUIDELINES:
-# - Be encouraging and supportive
-# - Provide clear, structured explanations
-# - Include practical examples when possible
-# - Adapt to the user's native language for better understanding
-# - Keep responses focused and educational"""
-#
-#     async def ai_direct_chat(self, data):
-#         try:
-#
-#             # Validate API key
-#             if not self.deepseek_api_key:
-#                 logger.error("DeepSeek API key not configured")
-#                 raise HTTPException(status_code=500, detail="AI service not configured")
-#
-#             # Prepare the messages for DeepSeek API
-#             messages = [
-#                 {
-#                     "role": "system",
-#                     "content": self.system_prompt
-#                 },
-#                 {
-#                     "role": "user",
-#                     "content": f"User's native language: {data.native_language}. User question: {data.message}"
-#                 }
-#             ]
-#
-#             # Call DeepSeek API
-#             async with httpx.AsyncClient(timeout=30.0) as client:
-#                 response = await client.post(
-#                     self.api_url,
-#                     headers={
-#                         "Content-Type": "application/json",
-#                         "Authorization": f"Bearer {self.deepseek_api_key}"
-#                     },
-#                     json={
-#                         "model": "deepseek-chat",
-#                         "messages": messages,
-#                         "temperature": 0.7,
-#                         "max_tokens": 2000,
-#                         "stream": False
-#                     }
-#                 )
-#
-#                 if response.status_code != 200:
-#                     logger.error(f"DeepSeek API error: {response.status_code} - {response.text}")
-#                     raise HTTPException(
-#                         status_code=response.status_code,
-#                         detail="AI service temporarily unavailable"
-#                     )
-#
-#                 result = response.json()
-#
-#                 # Extract the AI response
-#                 ai_response = result["choices"][0]["message"]["content"]
-#
-#                 # Log successful response
-#                 logger.info(f"AI response generated for user query: {data.message[:100]}...")
-#
-#                 return {
-#                     "response": ai_response,
-#                     "usage": result.get("usage", {}),
-#                     "success": True
-#                 }
-#
-#         except httpx.TimeoutException:
-#             logger.error("DeepSeek API timeout")
-#             raise HTTPException(status_code=504, detail="AI service timeout")
-#         except httpx.RequestError as e:
-#             logger.error(f"DeepSeek API connection error: {str(e)}")
-#             raise HTTPException(status_code=503, detail="Cannot connect to AI service")
-#         except KeyError as e:
-#             logger.error(f"Unexpected response format from DeepSeek API: {str(e)}")
-#             raise HTTPException(status_code=500, detail="Unexpected response from AI service")
-#         except Exception as e:
-#             logger.error(f"Unexpected error in AI direct chat: {str(e)}")
-#             raise HTTPException(status_code=500, detail="Internal server error in AI service")
-#
-
-
-# New version with streaming
-
-
-
 class GenerateDirectAIChat:
 
     def __init__(self):
@@ -1012,109 +896,6 @@ class GenerateAIQuestionRepository:
 
 
 
-
-#
-# class GenerateAIQuestionRepository:
-#
-#     def __init__(self):
-#         self.headers = {
-#             "Authorization": f"Api-Key {os.getenv('YANDEX_LANGMODEL_API_SECRET_KEY')}", # Renamed for clarity
-#             "Content-Type": "application/json"
-#         }
-#         self.model = 'yandexgpt' # or 'yandexgpt', choose based on needs
-#         self.folder_id = os.getenv('YANDEX_FOLDER_ID')
-#         self.api_url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
-#         self.max_tokens = 1500  # Prevent overly long responses
-#
-#
-#     async def _call_yandex_gpt(self, messages: list) -> str:
-#         """Generic method to call YandexGPT Completion API."""
-#         print('[_call_yandex_gpt] Method called. Preparing payload...')
-#
-#         payload = {
-#             "modelUri": f"gpt://{self.folder_id}/{self.model}",
-#             "completionOptions": {
-#                 "stream": False,
-#                 "temperature": 0.2,
-#                 "maxTokens": self.max_tokens
-#             },
-#             "messages": messages
-#         }
-#
-#         async with aiohttp.ClientSession() as session:
-#             try:
-#                 print('[DEBUG] Making request to Yandex API...')
-#                 async with session.post(self.api_url, json=payload, headers=self.headers,
-#                                         timeout=aiohttp.ClientTimeout(total=30)) as response:
-#
-#                     # CRITICAL: Get the response text regardless of the status code
-#                     response_text = await response.text()
-#                     print(f'[DEBUG] Yandex API Response Status: {response.status}')
-#                     print(f'[DEBUG] Yandex API Response Body: {response_text}')
-#
-#                     # Now check for errors
-#                     response.raise_for_status()
-#
-#                     # If successful, try to parse JSON
-#                     data = await response.json()
-#                     print(f'[DEBUG] Parsed JSON Response: {data}')
-#                     return data['result']['alternatives'][0]['message']['text']
-#
-#             except aiohttp.ClientResponseError as e:
-#                 # This will now print the actual error message from Yandex
-#                 logger.error(f"YandexGPT API error: {e.status} - {e.message}. Response: {response_text}")
-#                 raise HTTPException(status_code=502,
-#                                     detail=f"AI service error: {e.status}. Please check the request parameters.")
-#             except aiohttp.ClientConnectorError as e:
-#                 logger.error(f"Connection to YandexGPT failed: {str(e)}")
-#                 raise HTTPException(status_code=503, detail="Cannot connect to AI service. Check your network.")
-#             except asyncio.TimeoutError:
-#                 logger.error("Request to YandexGPT timed out.")
-#                 raise HTTPException(status_code=504, detail="AI service request timed out.")
-#             except (aiohttp.ClientError, KeyError) as e:
-#                 logger.error(f"Unexpected error during YandexGPT call: {str(e)}")
-#                 raise HTTPException(status_code=500, detail="An unexpected error occurred with the AI service.")
-#
-#
-#
-#     async def generate_ai_chat(self, data: GenerateAIChatSchema) -> dict:
-#         """
-#         Generates a conversational response about a specific word.
-#         Returns a dict with the AI's reply.
-#         """
-#
-#         # 1. Construct a detailed system prompt to guide the AI's behavior.
-#         system_prompt = (
-#             f"You are a helpful, precise, and enthusiastic language learning assistant. "
-#             f"The user is learning the {data.language} word '{data.word}'. "
-#             f"Their native language is {data.native}. "
-#             f"Answer the user's question specifically about this word. "
-#             f"Be concise, pedagogical, and provide clear examples. "
-#             f"Your answer must be in {data.native} to ensure the user understands. "
-#             f"Focus on explaining usage, grammar, nuances, or cultural context related to '{data.word}'."
-#             f"If the user's question is not related to the word, politely steer the conversation back to language learning."
-#         )
-#
-#         # 2. Structure the messages for the API
-#         messages = [
-#             {
-#                 "role": "system",
-#                 "text": system_prompt
-#             },
-#             {
-#                 "role": "user",
-#                 "text": data.message
-#             }
-#         ]
-#
-#         # 3. Call the API
-#         ai_response_text = await self._call_yandex_gpt(messages)
-#
-#         # 4. Return the response in a structured format for the frontend
-#         return {"reply": ai_response_text.strip()}
-
-
-
 class SearchRepository:
 
     def __init__(self, db: AsyncSession, user_id: int):
@@ -1330,7 +1111,6 @@ class DetailWordRepository:
         else:
             print(f'User with ID {user_id} not found.')
             return None
-
 
 
 
@@ -2239,3 +2019,310 @@ class DailyStreakRepository:
         except Exception as e:
             logger.error(f"Error getting today's learned words: {str(e)}")
             return 0
+
+
+
+class FetchWordCategoriesRepository:
+
+    def __init__(self, db, user_id: int, lang_code: str):
+        self.db = db
+        self.user_id = user_id
+        self.lang_code = lang_code
+
+    async def fetch_words_categories(self):
+        if not self.lang_code:
+            raise HTTPException(status_code=400, detail="Language code is required")
+
+        # Query to get categories with word counts
+        query = (
+            select(
+                Category.id,
+                Category.name,
+                func.count(Word.id).label('word_count')
+            )
+            .select_from(Category)
+            .join(word_category_association, Category.id == word_category_association.c.category_id)
+            .join(Word, word_category_association.c.word_id == Word.id)
+            .where(Word.language_code == self.lang_code)
+            .group_by(Category.id, Category.name)
+        )
+
+        result = await self.db.execute(query)
+        categories_with_counts = result.all()
+
+        # Fix: The result is (name, count) tuples, not (Category object, count)
+        # return {category_name: count for category_name, count in categories_with_counts}
+        return [
+            {
+                "id": category_id,
+                "name": category_name,
+                "word_count": count
+            }
+            for category_id, category_name, count in categories_with_counts
+        ]
+
+
+
+
+
+class FetchWordByCategoryIdRepository:
+    def __init__(self, db, user_id: int, category_id: int, lang_code: str,
+                 only_starred: bool = False, only_learned: bool = False,
+                 skip: int = 0, limit: int = 50):
+        self.db = db
+        self.user_id = user_id
+        self.category_id = category_id
+        self.lang_code = lang_code
+        self.only_starred = only_starred
+        self.only_learned = only_learned
+        self.skip = skip
+        self.limit = limit
+
+    async def fetch_words_by_category_id(self) -> List[Dict[Any, Any]]:
+        """Fetch words for a specific category — following same standard as fetch_words_for_language"""
+
+        # 1. Get user's native language
+        user_result = await self.db.execute(
+            select(UserModel).where(UserModel.id == self.user_id)
+        )
+        user = user_result.scalar_one_or_none()
+        if not user:
+            return []
+
+        native_language = user.native
+        lang_code_map = {"Russian": "ru", "English": "en", "Spanish": "es", "Turkish": "tr"}
+        native_code = lang_code_map.get(native_language)
+
+        if not native_code:
+            raise ValueError("User's native language not supported")
+
+        # 2. Build query
+        stmt = (
+            select(Word, WordMeaning, Translation, UserWord.is_starred, UserWord.is_learned)
+            .join(word_category_association, Word.id == word_category_association.c.word_id)
+            .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
+            .outerjoin(
+                Translation,
+                and_(
+                    Translation.source_word_id == Word.id,
+                    Translation.target_language_code == native_code,
+                ),
+            )
+            .outerjoin(
+                UserWord,
+                and_(
+                    UserWord.word_id == Word.id,
+                    UserWord.user_id == self.user_id,
+                ),
+            )
+            .where(
+                Word.language_code == self.lang_code,
+                word_category_association.c.category_id == self.category_id
+            )
+        )
+
+        # 3. Apply filters - SIMPLIFIED: Only apply positive filters, don't exclude
+        if self.only_starred:
+            stmt = stmt.where(UserWord.is_starred == True)
+        elif self.only_learned:
+            stmt = stmt.where(UserWord.is_learned == True)
+        # REMOVED: The else clause that excludes learned/starred words
+
+        # 4. Pagination
+        stmt = stmt.offset(self.skip).limit(self.limit)
+
+        # 5. Execute and process results (same as before)
+        result = await self.db.execute(stmt)
+        rows = result.all()
+
+        # 6. Group by Word.id (same as before)
+        word_map = defaultdict(lambda: {
+            "id": None,
+            "text": None,
+            "frequency_rank": None,
+            "level": None,
+            "pos": set(),
+            "translations": set(),
+            "language_code": self.lang_code,
+            "is_starred": False,
+            "is_learned": False,
+        })
+
+        for word, meaning, translation, is_starred, is_learned in rows:
+            word_id = word.id
+            if word_id not in word_map:
+                word_map[word_id].update({
+                    "id": word.id,
+                    "text": word.text,
+                    "frequency_rank": word.frequency_rank,
+                    "level": word.level,
+                })
+
+            # Merge POS
+            if meaning and meaning.pos:
+                word_map[word_id]["pos"].add(meaning.pos)
+
+            # Merge translations
+            if translation and translation.translated_text:
+                word_map[word_id]["translations"].add(translation.translated_text)
+
+            # Aggregate user flags
+            if is_starred:
+                word_map[word_id]["is_starred"] = True
+            if is_learned:
+                word_map[word_id]["is_learned"] = True
+
+        # 7. Convert to list and clean up
+        words_list = []
+        for data in word_map.values():
+            words_list.append({
+                "id": data["id"],
+                "text": data["text"],
+                "frequency_rank": data["frequency_rank"],
+                "level": data["level"],
+                "pos": sorted(list(data["pos"])) if data["pos"] else [],
+                "translation_to_native": list(data["translations"])[0] if data["translations"] else None,
+                "language_code": self.lang_code,
+                "is_starred": data["is_starred"],
+                "is_learned": data["is_learned"],
+            })
+
+        return words_list
+
+
+
+
+# class FetchWordByCategoryIdRepository:
+#     def __init__(self, db, user_id: int, category_id: int, lang_code: str,
+#                  only_starred: bool = False, only_learned: bool = False,
+#                  skip: int = 0, limit: int = 50):
+#         self.db = db
+#         self.user_id = user_id
+#         self.category_id = category_id
+#         self.lang_code = lang_code
+#         self.only_starred = only_starred
+#         self.only_learned = only_learned
+#         self.skip = skip
+#         self.limit = limit
+#
+#     async def fetch_words_by_category_id(self) -> List[Dict[Any, Any]]:
+#         """Fetch words for a specific category — following same standard as fetch_words_for_language"""
+#
+#         # 1. Get user's native language (EXACTLY like your existing code)
+#         user_result = await self.db.execute(
+#             select(UserModel).where(UserModel.id == self.user_id)
+#         )
+#         user = user_result.scalar_one_or_none()
+#         if not user:
+#             return []
+#
+#         native_language = user.native
+#         lang_code_map = {"Russian": "ru", "English": "en", "Spanish": "es", "Turkish": "tr"}
+#         native_code = lang_code_map.get(native_language)
+#
+#         if not native_code:
+#             raise ValueError("User's native language not supported")
+#
+#         # 2. Build query - SAME as your existing query but with category join
+#         stmt = (
+#             select(Word, WordMeaning, Translation, UserWord.is_starred, UserWord.is_learned)
+#             .join(word_category_association, Word.id == word_category_association.c.word_id)  # Join categories
+#             .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
+#             .outerjoin(
+#                 Translation,
+#                 and_(
+#                     Translation.source_word_id == Word.id,
+#                     Translation.target_language_code == native_code,
+#                 ),
+#             )
+#             .outerjoin(
+#                 UserWord,
+#                 and_(
+#                     UserWord.word_id == Word.id,
+#                     UserWord.user_id == self.user_id,
+#                 ),
+#             )
+#             .where(
+#                 Word.language_code == self.lang_code,
+#                 word_category_association.c.category_id == self.category_id  # Category filter
+#             )
+#         )
+#
+#         # 3. Apply filters - EXACTLY like your existing code
+#         if self.only_starred:
+#             stmt = stmt.where(UserWord.is_starred == True)
+#         elif self.only_learned:
+#             stmt = stmt.where(UserWord.is_learned == True)
+#         else:
+#             learned_or_starred_subq = (
+#                 select(UserWord.word_id)
+#                 .where(
+#                     UserWord.user_id == self.user_id,
+#                     or_(UserWord.is_learned == True, UserWord.is_starred == True),
+#                 )
+#                 .subquery()
+#             )
+#             stmt = stmt.where(Word.id.notin_(select(learned_or_starred_subq.c.word_id)))
+#
+#         # 4. Pagination - EXACTLY like your existing code
+#         stmt = stmt.offset(self.skip).limit(self.limit)
+#
+#         # 5. Execute
+#         result = await self.db.execute(stmt)
+#         rows = result.all()
+#
+#         # 6. Group by Word.id - EXACTLY like your existing code
+#         word_map = defaultdict(lambda: {
+#             "id": None,
+#             "text": None,
+#             "frequency_rank": None,
+#             "level": None,
+#             "pos": set(),
+#             "translations": set(),  # Use set to avoid dupes
+#             "language_code": self.lang_code,
+#             "is_starred": False,
+#             "is_learned": False,
+#         })
+#
+#         for word, meaning, translation, is_starred, is_learned in rows:
+#             word_id = word.id
+#             if word_id not in word_map:
+#                 word_map[word_id].update({
+#                     "id": word.id,
+#                     "text": word.text,
+#                     "frequency_rank": word.frequency_rank,
+#                     "level": word.level,
+#                 })
+#
+#             # Merge POS
+#             if meaning and meaning.pos:
+#                 word_map[word_id]["pos"].add(meaning.pos)
+#
+#             # Merge translations
+#             if translation and translation.translated_text:
+#                 word_map[word_id]["translations"].add(translation.translated_text)
+#
+#             # Aggregate user flags (if any row is starred/learned, mark it)
+#             if is_starred:
+#                 word_map[word_id]["is_starred"] = True
+#             if is_learned:
+#                 word_map[word_id]["is_learned"] = True
+#
+#         # 7. Convert to list and clean up - EXACTLY like your existing code
+#         words_list = []
+#         for data in word_map.values():
+#             words_list.append({
+#                 "id": data["id"],
+#                 "text": data["text"],
+#                 "frequency_rank": data["frequency_rank"],
+#                 "level": data["level"],
+#                 "pos": sorted(list(data["pos"])) if data["pos"] else [],  # sorted for consistency
+#                 "translation_to_native": list(data["translations"])[0] if data["translations"] else None,
+#                 "language_code": self.lang_code,
+#                 "is_starred": data["is_starred"],
+#                 "is_learned": data["is_learned"],
+#             })
+#
+#         print(f'...................... the word list is {words_list}')
+#
+#         return words_list
