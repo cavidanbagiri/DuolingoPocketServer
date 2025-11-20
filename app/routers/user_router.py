@@ -384,7 +384,6 @@ async def reset_password(
     db: AsyncSession = Depends(get_db)
 ):
     """Request password reset"""
-    print('............. here is working')
     service = ResetPasswordService(db)
     return await service.request_password_reset(request.email)
 

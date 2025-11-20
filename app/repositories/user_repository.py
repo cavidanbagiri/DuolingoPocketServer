@@ -794,13 +794,16 @@ class ResetPasswordService:
             smtp_password = os.getenv('SMTP_PASSWORD')
             from_email = os.getenv('FROM_EMAIL', 'noreply@w9999.com')
 
+            print('the username uis ...........................', smtp_username)
+
             # Validate required environment variables
             if not all([smtp_username, smtp_password]):
+                print(".................................SMTP credentials not configured properly")
                 logger.error("SMTP credentials not configured properly")
                 return  # Don't raise exception - fail silently for security
 
             # Create reset link
-            frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+            frontend_url = os.getenv('FRONTEND_URL', 'https://www.w9999.tech')
             reset_link = f"{frontend_url}/reset-password-confirm?token={token}"
 
             # Create email message
