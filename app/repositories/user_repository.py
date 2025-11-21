@@ -3,7 +3,7 @@ from typing import Any, Coroutine, Union
 
 from fastapi import HTTPException
 
-from sqlalchemy import insert, select, delete, select
+from sqlalchemy import insert, select, delete, select, func
 from sqlalchemy.exc import NoResultFound, DBAPIError
 
 
@@ -33,7 +33,7 @@ from jose.exceptions import JWTError
 from app.auth.refresh_token_handler import DeleteRefreshTokenRepository
 from app.schemas.user_schema import UserLoginSchema
 
-from app.models.user_model import UserModel, TokenModel, UserLanguage, PasswordResetToken
+from app.models.user_model import UserModel, TokenModel, UserLanguage, PasswordResetToken, UserWord
 
 from app.utils.hash_password import PasswordHash
 
@@ -651,8 +651,24 @@ class ChooseLangTargetRepository:
 
 
 
+class GetTotalLearnedRepository:
+    def __init__(self, db: AsyncSession, user_id: int):
+        self.db = db
+        self.user_id = user_id
 
+    async def get_total_learned_words(self):
+        # Simple count query for learned words
+        stmt = (
+            select(func.count(UserWord.id))
+            .where(
+                UserWord.user_id == self.user_id,
+                UserWord.is_learned == True
+            )
+        )
 
+        result = await self.db.execute(stmt)
+        total_learned = result.scalar_one()
+        return {"total_learned_words": total_learned}
 
 
 

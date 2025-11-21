@@ -13,8 +13,9 @@ from app.database.setup import get_db
 
 from app.repositories.user_repository import (UserRegisterRepository, UserLoginRepository, UserLogoutRepository,
                                               CheckUserAvailable, RefreshTokenRepository, DeleteRefreshTokenRepository,
-                                              SetNativeRepository, ChooseLangTargetRepository, GoogleAuthRepository, GetNativeRepository,
-                                              ResetPasswordService)
+                                              SetNativeRepository, ChooseLangTargetRepository, GoogleAuthRepository,
+                                              GetNativeRepository,
+                                              ResetPasswordService, GetTotalLearnedRepository)
 
 from app.schemas.user_schema import UserLoginSchema, UserTokenSchema, UserRegisterSchema, NativeLangSchema, \
     ChooseLangSchema
@@ -359,7 +360,24 @@ async def choose_target_lang(
 
 
 
-
+@router.get('/total-learned-words')
+async def get_total_learned_words(
+        db: AsyncSession = Depends(get_db),
+        user_info = Depends(TokenHandler.verify_access_token)
+):
+    print('............................. l am total learned words and l am working')
+    try:
+        repo = GetTotalLearnedRepository(db=db, user_id=int(user_info.get('sub')))
+        result = await repo.get_total_learned_words()
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during fetching total learned words size: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="We're having trouble with the fetching total learned words size"
+        )
 
 
 
