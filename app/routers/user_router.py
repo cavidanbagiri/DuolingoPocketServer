@@ -365,7 +365,6 @@ async def get_total_learned_words(
         db: AsyncSession = Depends(get_db),
         user_info = Depends(TokenHandler.verify_access_token)
 ):
-    print('............................. l am total learned words and l am working')
     try:
         repo = GetTotalLearnedRepository(db=db, user_id=int(user_info.get('sub')))
         result = await repo.get_total_learned_words()

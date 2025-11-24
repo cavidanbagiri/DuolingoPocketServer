@@ -2022,6 +2022,49 @@ class DailyStreakRepository:
 
 
 
+# class FetchWordCategoriesRepository:
+#
+#     def __init__(self, db, user_id: int, lang_code: str):
+#         self.db = db
+#         self.user_id = user_id
+#         self.lang_code = lang_code
+#
+#     async def fetch_words_categories(self):
+#         if not self.lang_code:
+#             raise HTTPException(status_code=400, detail="Language code is required")
+#
+#         # Query to get categories with word counts
+#         query = (
+#             select(
+#                 Category.id,
+#                 Category.name,
+#                 func.count(Word.id).label('word_count')
+#             )
+#             .select_from(Category)
+#             .join(word_category_association, Category.id == word_category_association.c.category_id)
+#             .join(Word, word_category_association.c.word_id == Word.id)
+#             .where(Word.language_code == self.lang_code)
+#             .group_by(Category.id, Category.name)
+#         )
+#
+#         result = await self.db.execute(query)
+#         categories_with_counts = result.all()
+#
+#         # Fix: The result is (name, count) tuples, not (Category object, count)
+#         # return {category_name: count for category_name, count in categories_with_counts}
+#         return [
+#             {
+#                 "id": category_id,
+#                 "name": category_name,
+#                 "word_count": count
+#             }
+#             for category_id, category_name, count in categories_with_counts
+#         ]
+
+
+
+
+
 class FetchWordCategoriesRepository:
 
     def __init__(self, db, user_id: int, lang_code: str):
@@ -2033,33 +2076,75 @@ class FetchWordCategoriesRepository:
         if not self.lang_code:
             raise HTTPException(status_code=400, detail="Language code is required")
 
-        # Query to get categories with word counts
+        # Subquery for total words per category
+        total_words_subquery = (
+            select(
+                word_category_association.c.category_id,
+                func.count(Word.id).label('total_words')
+            )
+            .select_from(word_category_association)
+            .join(Word, word_category_association.c.word_id == Word.id)
+            .where(Word.language_code == self.lang_code)
+            .group_by(word_category_association.c.category_id)
+            .subquery()
+        )
+
+        # Subquery for learned words per category
+        learned_words_subquery = (
+            select(
+                word_category_association.c.category_id,
+                func.count(Word.id).label('learned_words')
+            )
+            .select_from(word_category_association)
+            .join(Word, word_category_association.c.word_id == Word.id)
+            .join(UserWord, and_(
+                UserWord.word_id == Word.id,
+                UserWord.user_id == self.user_id,
+                UserWord.is_learned == True
+            ))
+            .where(Word.language_code == self.lang_code)
+            .group_by(word_category_association.c.category_id)
+            .subquery()
+        )
+
+        # Main query
         query = (
             select(
                 Category.id,
                 Category.name,
-                func.count(Word.id).label('word_count')
+                func.coalesce(total_words_subquery.c.total_words, 0).label('total_words'),
+                func.coalesce(learned_words_subquery.c.learned_words, 0).label('learned_words')
             )
             .select_from(Category)
-            .join(word_category_association, Category.id == word_category_association.c.category_id)
-            .join(Word, word_category_association.c.word_id == Word.id)
-            .where(Word.language_code == self.lang_code)
-            .group_by(Category.id, Category.name)
+            .outerjoin(
+                total_words_subquery,
+                Category.id == total_words_subquery.c.category_id
+            )
+            .outerjoin(
+                learned_words_subquery,
+                Category.id == learned_words_subquery.c.category_id
+            )
+            .where(total_words_subquery.c.total_words > 0)  # Only categories with words
+            .order_by(Category.name)
         )
 
         result = await self.db.execute(query)
-        categories_with_counts = result.all()
+        categories_data = result.all()
 
-        # Fix: The result is (name, count) tuples, not (Category object, count)
-        # return {category_name: count for category_name, count in categories_with_counts}
-        return [
+        return_data = [
             {
                 "id": category_id,
                 "name": category_name,
-                "word_count": count
+                "total_words": total_words,
+                "learned_words": learned_words,
+                "progress_percentage": round((learned_words / total_words) * 100) if total_words > 0 else 0
             }
-            for category_id, category_name, count in categories_with_counts
+            for category_id, category_name, total_words, learned_words in categories_data
         ]
+
+        return return_data
+
+
 
 
 
