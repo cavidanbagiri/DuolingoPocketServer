@@ -46,7 +46,16 @@ async def get_statistics(db: AsyncSession = Depends(get_db),
 
 
 
-# endpoints.py
+# @router.get("/user/languages")
+# async def get_user_languages(
+#     user_info: int = Depends(TokenHandler.verify_access_token),
+#     db: AsyncSession = Depends(get_db)
+# ):
+#     repo = FetchWordRepository(db, user_id=int(user_info.get('sub')))
+#     languages = await repo.get_available_languages()
+#     return languages
+
+
 @router.get("/user/languages")
 async def get_user_languages(
     user_info: int = Depends(TokenHandler.verify_access_token),
@@ -55,6 +64,70 @@ async def get_user_languages(
     repo = FetchWordRepository(db, user_id=int(user_info.get('sub')))
     languages = await repo.get_available_languages()
     return languages
+
+@router.get("/main/words")
+async def get_words(
+    language_code: str = Query(..., description="Language code"),
+    only_starred: bool = Query(False, description="Filter only starred words"),
+    only_learned: bool = Query(False, description="Filter only learned words"),
+    skip: int = Query(0, description="Pagination offset"),
+    limit: int = Query(20, description="Pagination limit"),
+    user_info: dict = Depends(TokenHandler.verify_access_token),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        repo = FetchWordRepository(db, user_id=int(user_info.get('sub')))
+        result = await repo.fetch_words_for_language(
+            lang_code=language_code,
+            only_starred=only_starred,
+            only_learned=only_learned,
+            skip=skip,
+            limit=limit
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during words fetching: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="We're having trouble with the words fetching"
+        )
+
+@router.get('/main/fetch_words_by_categories')
+async def fetch_words_by_category_id(
+    category_id: int = Query(..., description="Filter by category ID"),
+    lang_code: str = Query(..., description="Language code for the words"),
+    only_starred: bool = Query(False, description="Filter only starred words"),
+    only_learned: bool = Query(False, description="Filter only learned words"),
+    skip: int = Query(0, description="Pagination offset"),
+    limit: int = Query(20, description="Pagination limit"),
+    db: AsyncSession = Depends(get_db),
+    user_info: dict = Depends(TokenHandler.verify_access_token)
+):
+    try:
+        repo = FetchWordByCategoryIdRepository(
+            db,
+            user_id=int(user_info.get('sub')),
+            category_id=category_id,
+            lang_code=lang_code,
+            only_starred=only_starred,
+            only_learned=only_learned,
+            skip=skip,
+            limit=limit
+        )
+        data = await repo.fetch_words_by_category_id()
+        return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during fetching words by category id: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="We're having trouble with the fetching words by category id"
+        )
+
+
 
 
 
@@ -573,35 +646,35 @@ async def fetch_words_categories(
         )
 
 
-@router.get('/main/fetch_words_by_categories', status_code=200)
-async def fetch_words_by_category_id(
-        category_id: int = Query(..., description="Filter by category ID"),  # Required now
-        lang_code: str = Query(..., description="Language code for the words"),  # Added language code
-        only_starred: bool = Query(False, description="Filter only starred words"),
-        only_learned: bool = Query(False, description="Filter only learned words"),
-        skip: int = Query(0, description="Pagination offset"),
-        limit: int = Query(50, description="Pagination limit"),
-        db: AsyncSession = Depends(get_db),
-        user_info: dict = Depends(TokenHandler.verify_access_token)
-):
-    try:
-        repo = FetchWordByCategoryIdRepository(
-            db,
-            user_id=int(user_info.get('sub')),
-            category_id=category_id,
-            lang_code=lang_code,
-            only_starred=only_starred,
-            only_learned=only_learned,
-            skip=skip,
-            limit=limit
-        )
-        data = await repo.fetch_words_by_category_id()
-        return data
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error during fetching words by category id: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail="We're having trouble with the fetching words by category id"
-        )
+# @router.get('/main/fetch_words_by_categories', status_code=200)
+# async def fetch_words_by_category_id(
+#         category_id: int = Query(..., description="Filter by category ID"),  # Required now
+#         lang_code: str = Query(..., description="Language code for the words"),  # Added language code
+#         only_starred: bool = Query(False, description="Filter only starred words"),
+#         only_learned: bool = Query(False, description="Filter only learned words"),
+#         skip: int = Query(0, description="Pagination offset"),
+#         limit: int = Query(50, description="Pagination limit"),
+#         db: AsyncSession = Depends(get_db),
+#         user_info: dict = Depends(TokenHandler.verify_access_token)
+# ):
+#     try:
+#         repo = FetchWordByCategoryIdRepository(
+#             db,
+#             user_id=int(user_info.get('sub')),
+#             category_id=category_id,
+#             lang_code=lang_code,
+#             only_starred=only_starred,
+#             only_learned=only_learned,
+#             skip=skip,
+#             limit=limit
+#         )
+#         data = await repo.fetch_words_by_category_id()
+#         return data
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.error(f"Unexpected error during fetching words by category id: {str(e)}")
+#         raise HTTPException(
+#             status_code=500,
+#             detail="We're having trouble with the fetching words by category id"
+#         )

@@ -165,6 +165,29 @@ class FetchWordRepository:
         self.user_id = user_id
 
 
+    # async def get_available_languages(self):
+    #     """Return just the available languages with counts"""
+    #     # Get user's target languages
+    #     lang_result = await self.db.execute(
+    #         select(UserLanguage.target_language_code).where(UserLanguage.user_id == self.user_id)
+    #     )
+    #     target_lang_codes = [row[0] for row in lang_result.fetchall()]
+    #     if not target_lang_codes:
+    #         return []
+    #     # Get word counts for each language
+    #     lang_data = []
+    #     for lang_code in target_lang_codes:
+    #         count_stmt = select(func.count(Word.id)).where(Word.language_code == lang_code)
+    #         count_result = await self.db.execute(count_stmt)
+    #         total_count = count_result.scalar_one()
+    #         lang_data.append({
+    #             "lang": lang_code,
+    #             "total_words": total_count,
+    #             "language_name": self._get_language_name(lang_code)
+    #         })
+    #
+    #     return lang_data
+
     async def get_available_languages(self):
         """Return just the available languages with counts"""
         # Get user's target languages
@@ -174,32 +197,49 @@ class FetchWordRepository:
         target_lang_codes = [row[0] for row in lang_result.fetchall()]
         if not target_lang_codes:
             return []
+
         # Get word counts for each language
         lang_data = []
         for lang_code in target_lang_codes:
-            count_stmt = select(func.count(Word.id)).where(Word.language_code == lang_code)
-            count_result = await self.db.execute(count_stmt)
-            total_count = count_result.scalar_one()
+            # Total words count
+            total_count_stmt = select(func.count(Word.id)).where(Word.language_code == lang_code)
+            total_count_result = await self.db.execute(total_count_stmt)
+            total_count = total_count_result.scalar_one()
+
+            # Learned words count
+            learned_count_stmt = (
+                select(func.count(Word.id))
+                .join(UserWord, and_(
+                    UserWord.word_id == Word.id,
+                    UserWord.user_id == self.user_id,
+                    UserWord.is_learned == True
+                ))
+                .where(Word.language_code == lang_code)
+            )
+            learned_count_result = await self.db.execute(learned_count_stmt)
+            learned_count = learned_count_result.scalar_one() or 0
+
             lang_data.append({
                 "lang": lang_code,
+                "language_code": lang_code,  # Add this for consistency
                 "total_words": total_count,
+                "learned_words": learned_count,  # Add learned count
                 "language_name": self._get_language_name(lang_code)
             })
 
         return lang_data
 
-
     async def fetch_words_for_language(self, lang_code: str, only_starred: bool = False,
-                                       only_learned: bool = False, skip: int = 0, limit: int = 50) -> List[Dict[Any, Any]]:
-        """Fetch words for a specific language — deduplicated by word, with multiple POS merged"""
+                                       only_learned: bool = False, skip: int = 0, limit: int = 50) -> Dict[str, Any]:
+        """Fetch words for a specific language with pagination support"""
 
-        # 1. Get user's native language
+        # 1. Get user's native language (your existing code)
         user_result = await self.db.execute(
             select(UserModel).where(UserModel.id == self.user_id)
         )
         user = user_result.scalar_one_or_none()
         if not user:
-            return []
+            return {"words": [], "total_count": 0, "has_more": False}
 
         native_language = user.native
         lang_code_map = {"Russian": "ru", "English": "en", "Spanish": "es", "Turkish": "tr"}
@@ -208,7 +248,41 @@ class FetchWordRepository:
         if not native_code:
             raise ValueError("User's native language not supported")
 
-        # 2. Build query
+        # 2. Build base query for counting total
+        base_stmt = (
+            select(Word.id)
+            .outerjoin(
+                UserWord,
+                and_(
+                    UserWord.word_id == Word.id,
+                    UserWord.user_id == self.user_id,
+                ),
+            )
+            .where(Word.language_code == lang_code)
+        )
+
+        # Apply the same filters for counting
+        if only_starred:
+            base_stmt = base_stmt.where(UserWord.is_starred == True)
+        elif only_learned:
+            base_stmt = base_stmt.where(UserWord.is_learned == True)
+        else:
+            learned_or_starred_subq = (
+                select(UserWord.word_id)
+                .where(
+                    UserWord.user_id == self.user_id,
+                    or_(UserWord.is_learned == True, UserWord.is_starred == True),
+                )
+                .subquery()
+            )
+            base_stmt = base_stmt.where(Word.id.notin_(select(learned_or_starred_subq.c.word_id)))
+
+        # Get total count
+        total_count_stmt = select(func.count()).select_from(base_stmt.subquery())
+        total_count_result = await self.db.execute(total_count_stmt)
+        total_count = total_count_result.scalar_one()
+
+        # 3. Build main query for fetching words (your existing query)
         stmt = (
             select(Word, WordMeaning, Translation, UserWord.is_starred, UserWord.is_learned)
             .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
@@ -229,7 +303,7 @@ class FetchWordRepository:
             .where(Word.language_code == lang_code)
         )
 
-        # 3. Apply filters
+        # Apply filters (same as above)
         if only_starred:
             stmt = stmt.where(UserWord.is_starred == True)
         elif only_learned:
@@ -245,21 +319,26 @@ class FetchWordRepository:
             )
             stmt = stmt.where(Word.id.notin_(select(learned_or_starred_subq.c.word_id)))
 
-        # 4. Pagination
+        # If learned screen, fetch order desc
+        if only_learned:
+            stmt = stmt.order_by(UserWord.updated_at.desc())
+
+        # 4. Apply pagination
         stmt = stmt.offset(skip).limit(limit)
 
-        # 5. Execute
+
+        # 5. Execute and process (your existing code)
         result = await self.db.execute(stmt)
         rows = result.all()
 
-        # 6. Group by Word.id
+        # 6. Group by Word.id (your existing code)
         word_map = defaultdict(lambda: {
             "id": None,
             "text": None,
             "frequency_rank": None,
             "level": None,
             "pos": set(),
-            "translations": set(),  # Use set to avoid dupes
+            "translations": set(),
             "language_code": lang_code,
             "is_starred": False,
             "is_learned": False,
@@ -275,24 +354,18 @@ class FetchWordRepository:
                     "level": word.level,
                 })
 
-            # Merge POS
             if meaning and meaning.pos:
                 word_map[word_id]["pos"].add(meaning.pos)
 
-            # Merge translations
             if translation and translation.translated_text:
                 word_map[word_id]["translations"].add(translation.translated_text)
 
-            # OR: Keep only one translation (first one)
-            # → if you don't want a list
-
-            # Aggregate user flags (if any row is starred/learned, mark it)
             if is_starred:
                 word_map[word_id]["is_starred"] = True
             if is_learned:
                 word_map[word_id]["is_learned"] = True
 
-        # 7. Convert to list and clean up
+        # 7. Convert to list
         words_list = []
         for data in word_map.values():
             words_list.append({
@@ -300,16 +373,144 @@ class FetchWordRepository:
                 "text": data["text"],
                 "frequency_rank": data["frequency_rank"],
                 "level": data["level"],
-                "pos": sorted(list(data["pos"])) if data["pos"] else [],  # sorted for consistency
+                "pos": sorted(list(data["pos"])) if data["pos"] else [],
                 "translation_to_native": list(data["translations"])[0] if data["translations"] else None,
-                # Or: "translations": list(data["translations"]) if you want multiple
                 "language_code": lang_code,
                 "is_starred": data["is_starred"],
                 "is_learned": data["is_learned"],
             })
 
+        # 8. Return with pagination info
+        return {
+            "words": words_list,
+            "total_count": total_count,
+            "has_more": (skip + len(words_list)) < total_count,
+            "skip": skip,
+            "limit": limit
+        }
 
-        return words_list
+
+    # async def fetch_words_for_language(self, lang_code: str, only_starred: bool = False,
+    #                                    only_learned: bool = False, skip: int = 0, limit: int = 50) -> List[Dict[Any, Any]]:
+    #     """Fetch words for a specific language — deduplicated by word, with multiple POS merged"""
+    #
+    #     # 1. Get user's native language
+    #     user_result = await self.db.execute(
+    #         select(UserModel).where(UserModel.id == self.user_id)
+    #     )
+    #     user = user_result.scalar_one_or_none()
+    #     if not user:
+    #         return []
+    #
+    #     native_language = user.native
+    #     lang_code_map = {"Russian": "ru", "English": "en", "Spanish": "es", "Turkish": "tr"}
+    #     native_code = lang_code_map.get(native_language)
+    #
+    #     if not native_code:
+    #         raise ValueError("User's native language not supported")
+    #
+    #     # 2. Build query
+    #     stmt = (
+    #         select(Word, WordMeaning, Translation, UserWord.is_starred, UserWord.is_learned)
+    #         .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
+    #         .outerjoin(
+    #             Translation,
+    #             and_(
+    #                 Translation.source_word_id == Word.id,
+    #                 Translation.target_language_code == native_code,
+    #             ),
+    #         )
+    #         .outerjoin(
+    #             UserWord,
+    #             and_(
+    #                 UserWord.word_id == Word.id,
+    #                 UserWord.user_id == self.user_id,
+    #             ),
+    #         )
+    #         .where(Word.language_code == lang_code)
+    #     )
+    #
+    #     # 3. Apply filters
+    #     if only_starred:
+    #         stmt = stmt.where(UserWord.is_starred == True)
+    #     elif only_learned:
+    #         stmt = stmt.where(UserWord.is_learned == True)
+    #     else:
+    #         learned_or_starred_subq = (
+    #             select(UserWord.word_id)
+    #             .where(
+    #                 UserWord.user_id == self.user_id,
+    #                 or_(UserWord.is_learned == True, UserWord.is_starred == True),
+    #             )
+    #             .subquery()
+    #         )
+    #         stmt = stmt.where(Word.id.notin_(select(learned_or_starred_subq.c.word_id)))
+    #
+    #     # 4. Pagination
+    #     stmt = stmt.offset(skip).limit(limit)
+    #
+    #     # 5. Execute
+    #     result = await self.db.execute(stmt)
+    #     rows = result.all()
+    #
+    #     # 6. Group by Word.id
+    #     word_map = defaultdict(lambda: {
+    #         "id": None,
+    #         "text": None,
+    #         "frequency_rank": None,
+    #         "level": None,
+    #         "pos": set(),
+    #         "translations": set(),  # Use set to avoid dupes
+    #         "language_code": lang_code,
+    #         "is_starred": False,
+    #         "is_learned": False,
+    #     })
+    #
+    #     for word, meaning, translation, is_starred, is_learned in rows:
+    #         word_id = word.id
+    #         if word_id not in word_map:
+    #             word_map[word_id].update({
+    #                 "id": word.id,
+    #                 "text": word.text,
+    #                 "frequency_rank": word.frequency_rank,
+    #                 "level": word.level,
+    #             })
+    #
+    #         # Merge POS
+    #         if meaning and meaning.pos:
+    #             word_map[word_id]["pos"].add(meaning.pos)
+    #
+    #         # Merge translations
+    #         if translation and translation.translated_text:
+    #             word_map[word_id]["translations"].add(translation.translated_text)
+    #
+    #         # OR: Keep only one translation (first one)
+    #         # → if you don't want a list
+    #
+    #         # Aggregate user flags (if any row is starred/learned, mark it)
+    #         if is_starred:
+    #             word_map[word_id]["is_starred"] = True
+    #         if is_learned:
+    #             word_map[word_id]["is_learned"] = True
+    #
+    #     # 7. Convert to list and clean up
+    #     words_list = []
+    #     for data in word_map.values():
+    #         words_list.append({
+    #             "id": data["id"],
+    #             "text": data["text"],
+    #             "frequency_rank": data["frequency_rank"],
+    #             "level": data["level"],
+    #             "pos": sorted(list(data["pos"])) if data["pos"] else [],  # sorted for consistency
+    #             "translation_to_native": list(data["translations"])[0] if data["translations"] else None,
+    #             # Or: "translations": list(data["translations"]) if you want multiple
+    #             "language_code": lang_code,
+    #             "is_starred": data["is_starred"],
+    #             "is_learned": data["is_learned"],
+    #         })
+    #
+    #
+    #     return words_list
 
     def _get_language_name(self, code: str) -> str:
         lang_map = {
@@ -386,7 +587,6 @@ class VoiceHandleRepository:
             return texttospeech.TextToSpeechClient(credentials=credentials)
 
         except Exception as e:
-            print(f"Failed to create Google TTS client: {str(e)}")
             raise HTTPException(
                 status_code=500,
                 detail="Google TTS service configuration error"
@@ -425,7 +625,6 @@ class VoiceHandleRepository:
             return response.audio_content
 
         except Exception as e:
-            print(f"Google TTS error: {str(e)}")
             raise HTTPException(
                 status_code=500,
                 detail=f"Google TTS service error: {str(e)}"
@@ -517,10 +716,8 @@ class GenerateAIWordRepository:
                 result = response.json()
                 return result['result']['alternatives'][0]['message']['text']
             except httpx.HTTPStatusError as e:
-                print(f"Yandex API HTTP error: {e.response.status_code} - {e.response.text}")
                 return None
             except (httpx.RequestError, KeyError, json.JSONDecodeError) as e:
-                print(f"Yandex API request error: {str(e)}")
                 return None
 
     @lru_cache(maxsize=100)
@@ -2161,6 +2358,8 @@ class FetchWordByCategoryIdRepository:
         self.skip = skip
         self.limit = limit
 
+        print('coming learned is ', only_learned)
+
     async def fetch_words_by_category_id(self) -> List[Dict[Any, Any]]:
         """Fetch words for a specific category — following same standard as fetch_words_for_language"""
 
@@ -2179,10 +2378,37 @@ class FetchWordByCategoryIdRepository:
         if not native_code:
             raise ValueError("User's native language not supported")
 
-        # 2. Build query - SAME as your existing query but with category join
+        base_stmt = (
+            select(Word.id)
+            .join(word_category_association, Word.id == word_category_association.c.word_id)
+            .outerjoin(
+                UserWord,
+                and_(
+                    UserWord.word_id == Word.id,
+                    UserWord.user_id == self.user_id,
+                ),
+            )
+            .where(
+                Word.language_code == self.lang_code,
+                word_category_association.c.category_id == self.category_id
+            )
+        )
+
+        # Apply filters for counting
+        if self.only_starred:
+            base_stmt = base_stmt.where(UserWord.is_starred == True)
+        elif self.only_learned:
+            base_stmt = base_stmt.where(UserWord.is_learned == True)
+
+        # Get total count
+        total_count_stmt = select(func.count()).select_from(base_stmt.subquery())
+        total_count_result = await self.db.execute(total_count_stmt)
+        total_count = total_count_result.scalar_one()
+
+        # Build main query (your existing query with filters)
         stmt = (
             select(Word, WordMeaning, Translation, UserWord.is_starred, UserWord.is_learned)
-            .join(word_category_association, Word.id == word_category_association.c.word_id)  # Join categories
+            .join(word_category_association, Word.id == word_category_association.c.word_id)
             .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
             .outerjoin(
                 Translation,
@@ -2200,11 +2426,11 @@ class FetchWordByCategoryIdRepository:
             )
             .where(
                 Word.language_code == self.lang_code,
-                word_category_association.c.category_id == self.category_id  # Category filter
+                word_category_association.c.category_id == self.category_id
             )
         )
 
-        # 3. Apply filters - EXACTLY like your existing code
+        # Apply filters
         if self.only_starred:
             stmt = stmt.where(UserWord.is_starred == True)
         elif self.only_learned:
@@ -2220,8 +2446,9 @@ class FetchWordByCategoryIdRepository:
             )
             stmt = stmt.where(Word.id.notin_(select(learned_or_starred_subq.c.word_id)))
 
-        # 4. Pagination - EXACTLY like your existing code
+        # Apply pagination
         stmt = stmt.offset(self.skip).limit(self.limit)
+
 
         # 5. Execute
         result = await self.db.execute(stmt)
@@ -2279,4 +2506,114 @@ class FetchWordByCategoryIdRepository:
                 "is_learned": data["is_learned"],
             })
 
-        return words_list
+        return {
+            "words": words_list,
+            "total_count": total_count,
+            "has_more": (self.skip + len(words_list)) < total_count,
+            "skip": self.skip,
+            "limit": self.limit
+        }
+
+
+
+        # 2. Build query - SAME as your existing query but with category join
+        # stmt = (
+        #     select(Word, WordMeaning, Translation, UserWord.is_starred, UserWord.is_learned)
+        #     .join(word_category_association, Word.id == word_category_association.c.word_id)  # Join categories
+        #     .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
+        #     .outerjoin(
+        #         Translation,
+        #         and_(
+        #             Translation.source_word_id == Word.id,
+        #             Translation.target_language_code == native_code,
+        #         ),
+        #     )
+        #     .outerjoin(
+        #         UserWord,
+        #         and_(
+        #             UserWord.word_id == Word.id,
+        #             UserWord.user_id == self.user_id,
+        #         ),
+        #     )
+        #     .where(
+        #         Word.language_code == self.lang_code,
+        #         word_category_association.c.category_id == self.category_id  # Category filter
+        #     )
+        # )
+        #
+        # # 3. Apply filters - EXACTLY like your existing code
+        # if self.only_starred:
+        #     stmt = stmt.where(UserWord.is_starred == True)
+        # elif self.only_learned:
+        #     stmt = stmt.where(UserWord.is_learned == True)
+        # else:
+        #     learned_or_starred_subq = (
+        #         select(UserWord.word_id)
+        #         .where(
+        #             UserWord.user_id == self.user_id,
+        #             or_(UserWord.is_learned == True, UserWord.is_starred == True),
+        #         )
+        #         .subquery()
+        #     )
+        #     stmt = stmt.where(Word.id.notin_(select(learned_or_starred_subq.c.word_id)))
+        #
+        # # 4. Pagination - EXACTLY like your existing code
+        # stmt = stmt.offset(self.skip).limit(self.limit)
+        #
+        # # 5. Execute
+        # result = await self.db.execute(stmt)
+        # rows = result.all()
+        #
+        # # 6. Group by Word.id - EXACTLY like your existing code
+        # word_map = defaultdict(lambda: {
+        #     "id": None,
+        #     "text": None,
+        #     "frequency_rank": None,
+        #     "level": None,
+        #     "pos": set(),
+        #     "translations": set(),  # Use set to avoid dupes
+        #     "language_code": self.lang_code,
+        #     "is_starred": False,
+        #     "is_learned": False,
+        # })
+        #
+        # for word, meaning, translation, is_starred, is_learned in rows:
+        #     word_id = word.id
+        #     if word_id not in word_map:
+        #         word_map[word_id].update({
+        #             "id": word.id,
+        #             "text": word.text,
+        #             "frequency_rank": word.frequency_rank,
+        #             "level": word.level,
+        #         })
+        #
+        #     # Merge POS
+        #     if meaning and meaning.pos:
+        #         word_map[word_id]["pos"].add(meaning.pos)
+        #
+        #     # Merge translations
+        #     if translation and translation.translated_text:
+        #         word_map[word_id]["translations"].add(translation.translated_text)
+        #
+        #     # Aggregate user flags (if any row is starred/learned, mark it)
+        #     if is_starred:
+        #         word_map[word_id]["is_starred"] = True
+        #     if is_learned:
+        #         word_map[word_id]["is_learned"] = True
+        #
+        # # 7. Convert to list and clean up - EXACTLY like your existing code
+        # words_list = []
+        # for data in word_map.values():
+        #     words_list.append({
+        #         "id": data["id"],
+        #         "text": data["text"],
+        #         "frequency_rank": data["frequency_rank"],
+        #         "level": data["level"],
+        #         "pos": sorted(list(data["pos"])) if data["pos"] else [],  # sorted for consistency
+        #         "translation_to_native": list(data["translations"])[0] if data["translations"] else None,
+        #         "language_code": self.lang_code,
+        #         "is_starred": data["is_starred"],
+        #         "is_learned": data["is_learned"],
+        #     })
+        #
+        # return words_list
