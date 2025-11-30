@@ -98,71 +98,6 @@ class RefreshTokenRepository:
             raise HTTPException(status_code=404, detail=f'Refresh Token can\'t save {str(ex)}')
 
 
-# class UserRegisterRepository:
-#
-#     def __init__(self, db: AsyncSession):
-#         self.db = db
-#         self.refresh_token_repo = RefreshTokenRepository(self.db)
-#         self.h_password = PasswordHash()
-#
-#     async def register(self, register_data):
-#
-#         try:
-#             # 1 - Check user email is available or not
-#             data = await self.db.execute(select(UserModel).where(UserModel.email == register_data.email))
-#             user = data.scalar()
-#             if user:
-#                 raise HTTPException(status_code=409, detail="This email already available")
-#
-#             # 1 - Check user username is available or not
-#             if register_data.username:
-#                 data = await self.db.execute(select(UserModel).where(UserModel.username == register_data.username))
-#                 user = data.scalar()
-#                 if user:
-#                     raise HTTPException(status_code=409, detail="This username already available")
-#
-#             register_data.password = self.h_password.hash_password(register_data.password)
-#             return_data = await self.save_user(register_data)
-#             return return_data
-#
-#         except HTTPException as ex:
-#             raise
-#
-#         except Exception as ex:
-#             raise HTTPException(status_code=404, detail=f"Registration error {ex}")
-#
-#     async def save_user(self, register_data):
-#         user = UserModel(
-#             email=register_data.email,
-#             password=register_data.password,
-#             username=register_data.username,
-#             native = register_data.native,
-#         )
-#         self.db.add(user)
-#         await self.db.commit()
-#         await self.db.refresh(user)
-#
-#         token_data = {
-#             'sub': str(user.id),
-#             'username': user.username,
-#         }
-#
-#         access_token = TokenHandler.generate_access_token(token_data)
-#         refresh_token = TokenHandler.generate_refresh_token(token_data)
-#
-#         await self.refresh_token_repo.manage_refresh_token(user.id, refresh_token)
-#
-#         return {
-#             'user': {
-#                 'sub': str(user.id),
-#                 'email': user.email,
-#                 'username': user.username,
-#                 'native': user.native,
-#             },
-#             'access_token': access_token,
-#             'refresh_token': refresh_token
-#         }
-#
 
 class UserRegisterRepository:
     def __init__(self, db: AsyncSession):
@@ -238,6 +173,7 @@ class UserRegisterRepository:
         }
 
 
+
 class CheckUserAvailable:
 
     def __init__(self, db: AsyncSession):
@@ -258,6 +194,7 @@ class CheckUserAvailable:
         else:
             logger.error(f'{login_data.email} email is wrong')
             raise HTTPException(status_code=404, detail="User not found")
+
 
 
 class UserLoginRepository:
@@ -312,7 +249,7 @@ class UserLoginRepository:
         }
 
 
-# This is new added
+
 class GoogleAuthRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -520,7 +457,7 @@ class GoogleAuthRepository:
         }
 
 
-# Checked - Wrong work
+
 class UserLogoutRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -545,6 +482,7 @@ class UserLogoutRepository:
         except Exception as e:
             logger.exception(f"Unexpected error during logout {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="An unexpected error occurred")
+
 
 
 class SetNativeRepository:

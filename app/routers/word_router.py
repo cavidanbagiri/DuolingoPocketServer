@@ -16,7 +16,7 @@ from app.repositories.word_repository import (FetchWordRepository, \
     TranslateRepository, AddFavoritesRepository, CreateNewFavoriteCategoryRepository, FavoriteCategoryRepository, \
     CategoryWordsRepository, DeleteFavoriteWordRepository, MoveFavoriteWordRepository, DeleteCategoryRepository, \
     SearchFavoriteRepository, FetchStatisticsForProfileRepository, DailyStreakRepository, GenerateDirectAIChat,FetchWordCategoriesRepository,
-                                              FetchWordByCategoryIdRepository)
+                                              FetchWordByCategoryIdRepository, FetchWordByPosRepository)
 from app.schemas.user_schema import ChangeWordStatusSchema
 from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, GenerateAIChatSchema, TranslateSchema, \
     AiDirectChatSchema
@@ -94,6 +94,7 @@ async def get_words(
             detail="We're having trouble with the words fetching"
         )
 
+
 @router.get('/main/fetch_words_by_categories')
 async def fetch_words_by_category_id(
     category_id: int = Query(..., description="Filter by category ID"),
@@ -126,6 +127,43 @@ async def fetch_words_by_category_id(
             status_code=500,
             detail="We're having trouble with the fetching words by category id"
         )
+
+
+
+
+@router.get('/main/fetch_words_by_posname')
+async def fetch_words_by_pos_name(
+    pos_name: str = Query(..., description="Filter by Pos name"),
+    lang_code: str = Query(..., description="Language code for the words"),
+    only_starred: bool = Query(False, description="Filter only starred words"),
+    only_learned: bool = Query(False, description="Filter only learned words"),
+    skip: int = Query(0, description="Pagination offset"),
+    limit: int = Query(20, description="Pagination limit"),
+    db: AsyncSession = Depends(get_db),
+    user_info: dict = Depends(TokenHandler.verify_access_token)
+):
+    try:
+        repo = FetchWordByPosRepository(
+            db=db,
+            user_id=int(user_info.get('sub')),
+            pos_name=pos_name,
+            lang_code=lang_code,
+            only_starred=only_starred,
+            only_learned=only_learned,
+            skip=skip,
+            limit=limit
+        )
+        data = await repo.fetch_words_by_pos()
+        return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during fetching words by pos name: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="We're having trouble with the fetching words by pos name"
+        )
+
 
 
 
@@ -332,18 +370,21 @@ async def get_detail_word(word_id: int,
 
 
 
-
-@router.get('/get_pos_statistics', status_code=200)
-async def get_pos_statistics(db: AsyncSession = Depends(get_db),
-                             user_info = Depends(TokenHandler.verify_access_token)):
+@router.get('/statistics/get_pos_statistics', status_code=200)
+async def get_pos_statistics(
+                            lang_code: str,
+                            db: AsyncSession = Depends(get_db),
+                            user_info = Depends(TokenHandler.verify_access_token)):
 
     try:
-        repo = GetPosStatisticsRepository(db=db, user_id=int(user_info.get('sub')))
+        repo = GetPosStatisticsRepository(db=db, user_id=int(user_info.get('sub')), lang_code=lang_code)
         result = await repo.get_pos_statistics()
         return result
 
     except Exception as ex:
         raise HTTPException(status_code=500, detail=str(ex))
+
+
 
 
 
