@@ -46,16 +46,6 @@ async def get_statistics(db: AsyncSession = Depends(get_db),
 
 
 
-# @router.get("/user/languages")
-# async def get_user_languages(
-#     user_info: int = Depends(TokenHandler.verify_access_token),
-#     db: AsyncSession = Depends(get_db)
-# ):
-#     repo = FetchWordRepository(db, user_id=int(user_info.get('sub')))
-#     languages = await repo.get_available_languages()
-#     return languages
-
-
 @router.get("/user/languages")
 async def get_user_languages(
     user_info: int = Depends(TokenHandler.verify_access_token),
