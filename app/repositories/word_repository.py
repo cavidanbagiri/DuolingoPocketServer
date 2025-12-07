@@ -2500,8 +2500,6 @@ class FetchWordCategoriesRepository:
         return return_data
 
 
-
-
 class FetchWordByCategoryIdRepository:
     def __init__(self, db, user_id: int, category_id: int, lang_code: str,
                  only_starred: bool = False, only_learned: bool = False,
@@ -2515,11 +2513,10 @@ class FetchWordByCategoryIdRepository:
         self.skip = skip
         self.limit = limit
 
-
     async def fetch_words_by_category_id(self) -> List[Dict[Any, Any]]:
         """Fetch words for a specific category — following same standard as fetch_words_for_language"""
 
-        # 1. Get user's native language (EXACTLY like your existing code)
+        # 1. Get user's native language
         user_result = await self.db.execute(
             select(UserModel).where(UserModel.id == self.user_id)
         )
@@ -2534,7 +2531,8 @@ class FetchWordByCategoryIdRepository:
         if not native_code:
             raise ValueError("User's native language not supported")
 
-        base_stmt = (
+        # ✅ FIX: Build counting query with EXACT SAME filters as main query
+        counting_stmt = (
             select(Word.id)
             .join(word_category_association, Word.id == word_category_association.c.word_id)
             .outerjoin(
@@ -2550,14 +2548,25 @@ class FetchWordByCategoryIdRepository:
             )
         )
 
-        # Apply filters for counting
+        # ✅ FIX: Apply the SAME filters to counting query
         if self.only_starred:
-            base_stmt = base_stmt.where(UserWord.is_starred == True)
+            counting_stmt = counting_stmt.where(UserWord.is_starred == True)
         elif self.only_learned:
-            base_stmt = base_stmt.where(UserWord.is_learned == True)
+            counting_stmt = counting_stmt.where(UserWord.is_learned == True)
+        else:
+            # For unlearned words (WordScreen) - exclude learned/starred words
+            learned_or_starred_subq = (
+                select(UserWord.word_id)
+                .where(
+                    UserWord.user_id == self.user_id,
+                    or_(UserWord.is_learned == True, UserWord.is_starred == True),
+                )
+                .subquery()
+            )
+            counting_stmt = counting_stmt.where(Word.id.notin_(select(learned_or_starred_subq.c.word_id)))
 
-        # Get total count
-        total_count_stmt = select(func.count()).select_from(base_stmt.subquery())
+        # Get total count of FILTERED words
+        total_count_stmt = select(func.count()).select_from(counting_stmt.subquery())
         total_count_result = await self.db.execute(total_count_stmt)
         total_count = total_count_result.scalar_one()
 
@@ -2605,19 +2614,18 @@ class FetchWordByCategoryIdRepository:
         # Apply pagination
         stmt = stmt.offset(self.skip).limit(self.limit)
 
-
-        # 5. Execute
+        # Execute
         result = await self.db.execute(stmt)
         rows = result.all()
 
-        # 6. Group by Word.id - EXACTLY like your existing code
+        # Group by Word.id
         word_map = defaultdict(lambda: {
             "id": None,
             "text": None,
             "frequency_rank": None,
             "level": None,
             "pos": set(),
-            "translations": set(),  # Use set to avoid dupes
+            "translations": set(),
             "language_code": self.lang_code,
             "is_starred": False,
             "is_learned": False,
@@ -2641,13 +2649,13 @@ class FetchWordByCategoryIdRepository:
             if translation and translation.translated_text:
                 word_map[word_id]["translations"].add(translation.translated_text)
 
-            # Aggregate user flags (if any row is starred/learned, mark it)
+            # Aggregate user flags
             if is_starred:
                 word_map[word_id]["is_starred"] = True
             if is_learned:
                 word_map[word_id]["is_learned"] = True
 
-        # 7. Convert to list and clean up - EXACTLY like your existing code
+        # Convert to list
         words_list = []
         for data in word_map.values():
             words_list.append({
@@ -2655,18 +2663,204 @@ class FetchWordByCategoryIdRepository:
                 "text": data["text"],
                 "frequency_rank": data["frequency_rank"],
                 "level": data["level"],
-                "pos": sorted(list(data["pos"])) if data["pos"] else [],  # sorted for consistency
+                "pos": sorted(list(data["pos"])) if data["pos"] else [],
                 "translation_to_native": list(data["translations"])[0] if data["translations"] else None,
                 "language_code": self.lang_code,
                 "is_starred": data["is_starred"],
                 "is_learned": data["is_learned"],
             })
 
-        return {
+        # ✅ FIX: Calculate has_more based on ACTUAL filtered total_count
+        current_loaded = self.skip + len(words_list)
+        has_more = current_loaded < total_count and len(words_list) > 0
+
+        result = {
             "words": words_list,
-            "total_count": total_count,
-            "has_more": (self.skip + len(words_list)) < total_count,
+            "total_count": total_count,  # This will now be 21, not 25
+            "has_more": has_more,
             "skip": self.skip,
             "limit": self.limit
         }
 
+        print(f'🔍 Category Debug: category_id={self.category_id}, total_words={total_count}, has_more={has_more}')
+
+        return result
+
+
+
+
+
+
+#
+#
+# class FetchWordByCategoryIdRepository:
+#     def __init__(self, db, user_id: int, category_id: int, lang_code: str,
+#                  only_starred: bool = False, only_learned: bool = False,
+#                  skip: int = 0, limit: int = 50):
+#         self.db = db
+#         self.user_id = user_id
+#         self.category_id = category_id
+#         self.lang_code = lang_code
+#         self.only_starred = only_starred
+#         self.only_learned = only_learned
+#         self.skip = skip
+#         self.limit = limit
+#
+#
+#     async def fetch_words_by_category_id(self) -> List[Dict[Any, Any]]:
+#         """Fetch words for a specific category — following same standard as fetch_words_for_language"""
+#
+#         # 1. Get user's native language (EXACTLY like your existing code)
+#         user_result = await self.db.execute(
+#             select(UserModel).where(UserModel.id == self.user_id)
+#         )
+#         user = user_result.scalar_one_or_none()
+#         if not user:
+#             return []
+#
+#         native_language = user.native
+#         lang_code_map = {"Russian": "ru", "English": "en", "Spanish": "es", "Turkish": "tr"}
+#         native_code = lang_code_map.get(native_language)
+#
+#         if not native_code:
+#             raise ValueError("User's native language not supported")
+#
+#         base_stmt = (
+#             select(Word.id)
+#             .join(word_category_association, Word.id == word_category_association.c.word_id)
+#             .outerjoin(
+#                 UserWord,
+#                 and_(
+#                     UserWord.word_id == Word.id,
+#                     UserWord.user_id == self.user_id,
+#                 ),
+#             )
+#             .where(
+#                 Word.language_code == self.lang_code,
+#                 word_category_association.c.category_id == self.category_id
+#             )
+#         )
+#
+#         # Apply filters for counting
+#         if self.only_starred:
+#             base_stmt = base_stmt.where(UserWord.is_starred == True)
+#         elif self.only_learned:
+#             base_stmt = base_stmt.where(UserWord.is_learned == True)
+#
+#         # Get total count
+#         total_count_stmt = select(func.count()).select_from(base_stmt.subquery())
+#         total_count_result = await self.db.execute(total_count_stmt)
+#         total_count = total_count_result.scalar_one()
+#
+#         # Build main query (your existing query with filters)
+#         stmt = (
+#             select(Word, WordMeaning, Translation, UserWord.is_starred, UserWord.is_learned)
+#             .join(word_category_association, Word.id == word_category_association.c.word_id)
+#             .outerjoin(WordMeaning, WordMeaning.word_id == Word.id)
+#             .outerjoin(
+#                 Translation,
+#                 and_(
+#                     Translation.source_word_id == Word.id,
+#                     Translation.target_language_code == native_code,
+#                 ),
+#             )
+#             .outerjoin(
+#                 UserWord,
+#                 and_(
+#                     UserWord.word_id == Word.id,
+#                     UserWord.user_id == self.user_id,
+#                 ),
+#             )
+#             .where(
+#                 Word.language_code == self.lang_code,
+#                 word_category_association.c.category_id == self.category_id
+#             )
+#         )
+#
+#         # Apply filters
+#         if self.only_starred:
+#             stmt = stmt.where(UserWord.is_starred == True)
+#         elif self.only_learned:
+#             stmt = stmt.where(UserWord.is_learned == True)
+#         else:
+#             learned_or_starred_subq = (
+#                 select(UserWord.word_id)
+#                 .where(
+#                     UserWord.user_id == self.user_id,
+#                     or_(UserWord.is_learned == True, UserWord.is_starred == True),
+#                 )
+#                 .subquery()
+#             )
+#             stmt = stmt.where(Word.id.notin_(select(learned_or_starred_subq.c.word_id)))
+#
+#         # Apply pagination
+#         stmt = stmt.offset(self.skip).limit(self.limit)
+#
+#
+#         # 5. Execute
+#         result = await self.db.execute(stmt)
+#         rows = result.all()
+#
+#         # 6. Group by Word.id - EXACTLY like your existing code
+#         word_map = defaultdict(lambda: {
+#             "id": None,
+#             "text": None,
+#             "frequency_rank": None,
+#             "level": None,
+#             "pos": set(),
+#             "translations": set(),  # Use set to avoid dupes
+#             "language_code": self.lang_code,
+#             "is_starred": False,
+#             "is_learned": False,
+#         })
+#
+#         for word, meaning, translation, is_starred, is_learned in rows:
+#             word_id = word.id
+#             if word_id not in word_map:
+#                 word_map[word_id].update({
+#                     "id": word.id,
+#                     "text": word.text,
+#                     "frequency_rank": word.frequency_rank,
+#                     "level": word.level,
+#                 })
+#
+#             # Merge POS
+#             if meaning and meaning.pos:
+#                 word_map[word_id]["pos"].add(meaning.pos)
+#
+#             # Merge translations
+#             if translation and translation.translated_text:
+#                 word_map[word_id]["translations"].add(translation.translated_text)
+#
+#             # Aggregate user flags (if any row is starred/learned, mark it)
+#             if is_starred:
+#                 word_map[word_id]["is_starred"] = True
+#             if is_learned:
+#                 word_map[word_id]["is_learned"] = True
+#
+#         # 7. Convert to list and clean up - EXACTLY like your existing code
+#         words_list = []
+#         for data in word_map.values():
+#             words_list.append({
+#                 "id": data["id"],
+#                 "text": data["text"],
+#                 "frequency_rank": data["frequency_rank"],
+#                 "level": data["level"],
+#                 "pos": sorted(list(data["pos"])) if data["pos"] else [],  # sorted for consistency
+#                 "translation_to_native": list(data["translations"])[0] if data["translations"] else None,
+#                 "language_code": self.lang_code,
+#                 "is_starred": data["is_starred"],
+#                 "is_learned": data["is_learned"],
+#             })
+#
+#         result = {
+#             "words": words_list,
+#             "total_count": total_count,
+#             "has_more": (self.skip + len(words_list)) < total_count,
+#             "skip": self.skip,
+#             "limit": self.limit
+#         }
+#         print(f'.....the coming words size is {result}')
+#
+#         return result
+#
