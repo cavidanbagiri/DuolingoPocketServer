@@ -1346,6 +1346,9 @@ class FetchWordByPosRepository:
             )
             stmt = stmt.where(Word.id.notin_(select(learned_subq.c.word_id)))
 
+        if self.only_learned:
+            stmt = stmt.order_by(UserWord.updated_at.desc())
+
         # Apply pagination
         stmt = stmt.offset(self.skip).limit(self.limit)
 
@@ -2478,6 +2481,9 @@ class FetchWordByCategoryIdRepository:
                 .subquery()
             )
             stmt = stmt.where(Word.id.notin_(select(learned_or_starred_subq.c.word_id)))
+
+        if self.only_learned:
+            stmt = stmt.order_by(UserWord.updated_at.desc())
 
         # Apply pagination
         stmt = stmt.offset(self.skip).limit(self.limit)
