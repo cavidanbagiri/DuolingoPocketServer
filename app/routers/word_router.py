@@ -18,8 +18,9 @@ from app.repositories.word_repository import (FetchWordRepository, \
     SearchFavoriteRepository, FetchStatisticsForProfileRepository, DailyStreakRepository, GenerateDirectAIChat,FetchWordCategoriesRepository,
                                               FetchWordByCategoryIdRepository, FetchWordByPosRepository)
 from app.schemas.user_schema import ChangeWordStatusSchema
-from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, GenerateAIChatSchema, TranslateSchema, \
-    AiDirectChatSchema
+from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, TranslateSchema, AiDirectChatSchema
+from app.schemas.conversation_contexts_schema import GenerateAIChatSchema
+
 from app.schemas.favorite_schemas import (FavoriteWordBase, FavoriteWordResponse, FavoriteCategoryBase, FavoriteCategoryResponse,
                                           FavoriteFetchWordResponse, CategoryWordsResponse, MoveWordResponse, MoveWordRequest)
 
@@ -300,20 +301,126 @@ async def generate_ai_for_word(
             detail="We're having trouble generating content right now. Please try again in a moment."
         )
 
+
+#
+# @router.post('/aichat_stream')
+# async def generate_ai_chat_stream(data: GenerateAIChatSchema, repo: GenerateAIQuestionRepository = Depends()):
+#     try:
+#         return StreamingResponse(
+#             repo.generate_ai_chat_stream(data),
+#             media_type="text/event-stream",
+#             headers={
+#                 "Cache-Control": "no-cache",
+#                 "Connection": "keep-alive",
+#             }
+#         )
+#     except Exception as e:
+#         logger.error(f"Streaming chat error: {str(e)}")
+#         raise HTTPException(status_code=500, detail="Streaming service error")
+
+
+
 @router.post('/aichat_stream')
-async def generate_ai_chat_stream(data: GenerateAIChatSchema, repo: GenerateAIQuestionRepository = Depends()):
+async def generate_ai_chat_stream(
+        data: GenerateAIChatSchema,
+        db: AsyncSession = Depends(get_db),
+        user_info=Depends(TokenHandler.verify_access_token)
+):
+    """
+    Stream AI chat response with context management.
+    The AI will remember previous conversations about the same word.
+    """
     try:
+        # Get user_id from token
+        user_id = int(user_info.get('sub'))
+
+        # Initialize repository with database session
+        repo = GenerateAIQuestionRepository(db)
+
+        print(f'User ID from token: {user_id}')
+        print(f'Processing word: {data.word}, language: {data.language}')
+
         return StreamingResponse(
-            repo.generate_ai_chat_stream(data),
+            repo.generate_ai_chat_stream(user_id, data),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"  # Important for streaming
             }
         )
     except Exception as e:
         logger.error(f"Streaming chat error: {str(e)}")
         raise HTTPException(status_code=500, detail="Streaming service error")
+
+
+@router.post('/clear_context')
+async def clear_context(
+        word: str,
+        language: str,
+        db: AsyncSession = Depends(get_db),
+        user_info=Depends(TokenHandler.verify_access_token)  # Add auth here too
+):
+    """
+    Clear context for a specific word.
+    Call this when user changes words or wants to start fresh.
+    """
+    try:
+        # Get user_id from token
+        user_id = int(user_info.get('sub'))
+
+        repo = GenerateAIQuestionRepository(db)
+        success = await repo.clear_word_context(user_id, word, language)
+
+        return {
+            "success": success,
+            "message": "Context cleared" if success else "No context to clear"
+        }
+
+    except Exception as e:
+        logger.error(f"Error clearing context: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to clear context")
+
+
+@router.get('/conversation_history')
+async def get_conversation_history(
+        word: str,
+        language: str,
+        db: AsyncSession = Depends(get_db),
+        user_info=Depends(TokenHandler.verify_access_token)
+):
+    """
+    Get conversation history for a specific word.
+    Useful for displaying previous conversation in UI.
+    """
+    try:
+        # Get user_id from token
+        user_id = int(user_info.get('sub'))
+
+        repo = GenerateAIQuestionRepository(db)
+        history = await repo.get_conversation_history(user_id, word, language)
+
+        return {
+            "word": word,
+            "language": language,
+            "history": history or []
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting conversation history: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get conversation history")
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

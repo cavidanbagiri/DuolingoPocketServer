@@ -14,16 +14,17 @@ import hashlib
 import time
 from pydantic import ValidationError
 from dataclasses import dataclass
+from typing import List, Dict, Any, Optional
+
 
 
 from fastapi import HTTPException, status
 from fastapi.responses import StreamingResponse
+
 from sqlalchemy import select, func, and_, update, or_, case, delete, text
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
-from datetime import datetime
-
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload, outerjoin
+from sqlalchemy.orm import selectinload, outerjoin, joinedload
 
 
 # New Added For GOOGLE
@@ -40,8 +41,9 @@ import aiohttp
 from app.logging_config import setup_logger
 from app.models.word_model import Word, Sentence, SentenceWord, WordMeaning, Translation, SentenceTranslation, \
     LearnedWord, word_category_association, Category
-from app.models.user_model import Language, UserModel, UserLanguage, UserWord
-from app.schemas.word_schema import GenerateAIChatSchema, GenerateAIWordSchema, TranslateSchema
+from app.models.user_model import Language, UserModel, UserLanguage, UserWord, ConversationContextModel
+from app.schemas.word_schema import GenerateAIWordSchema, TranslateSchema
+from app.schemas.conversation_contexts_schema import GenerateAIChatSchema
 from app.schemas.favorite_schemas import FavoriteWordBase, FavoriteCategoryBase, FavoriteCategoryResponse, FavoriteFetchWordResponse
 
 from app.models.user_model import FavoriteCategory, FavoriteWord, DefaultCategory
@@ -815,142 +817,142 @@ class GenerateDirectAIChat:
             yield f"data: {json.dumps({'error': f'Streaming failed: {str(e)}'})}\n\n"
 
 
-
-class GenerateAIQuestionRepository:
-
-    def __init__(self):
-        self.deepseek_api_key = os.getenv('DEEPSEEK_API_KEY')
-        self.api_url = "https://api.deepseek.com/v1/chat/completions"
-        self.max_tokens = 1500  # Prevent overly long responses
-
-    async def _call_deepseek_api(self, messages: list) -> str:
-        """Generic method to call DeepSeek API."""
-        print('[_call_deepseek_api] Method called. Preparing payload...')
-
-        payload = {
-            "model": "deepseek-chat",
-            "messages": messages,
-            "temperature": 0.2,
-            "max_tokens": self.max_tokens,
-            "stream": False  # Set to True if you want streaming
-        }
-
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.deepseek_api_key}"
-        }
-
-        async with aiohttp.ClientSession() as session:
-            try:
-                print('[DEBUG] Making request to DeepSeek API...')
-                async with session.post(
-                        self.api_url,
-                        json=payload,
-                        headers=headers,
-                        timeout=aiohttp.ClientTimeout(total=30)
-                ) as response:
-
-                    # Get the response text for debugging
-                    response_text = await response.text()
-                    print(f'[DEBUG] DeepSeek API Response Status: {response.status}')
-                    print(f'[DEBUG] DeepSeek API Response Body: {response_text}')
-
-                    # Check for errors
-                    response.raise_for_status()
-
-                    # Parse JSON response
-                    data = await response.json()
-                    print(f'[DEBUG] Parsed JSON Response: {data}')
-
-                    # Extract the response text from DeepSeek format
-                    return data['choices'][0]['message']['content']
-
-            except aiohttp.ClientResponseError as e:
-                logger.error(f"DeepSeek API error: {e.status} - {e.message}. Response: {response_text}")
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"AI service error: {e.status}. Please check the request parameters."
-                )
-            except aiohttp.ClientConnectorError as e:
-                logger.error(f"Connection to DeepSeek API failed: {str(e)}")
-                raise HTTPException(status_code=503, detail="Cannot connect to AI service. Check your network.")
-            except asyncio.TimeoutError:
-                logger.error("Request to DeepSeek API timed out.")
-                raise HTTPException(status_code=504, detail="AI service request timed out.")
-            except (aiohttp.ClientError, KeyError) as e:
-                logger.error(f"Unexpected error during DeepSeek API call: {str(e)}")
-                raise HTTPException(status_code=500, detail="An unexpected error occurred with the AI service.")
-
-    async def generate_ai_chat_stream(self, data: GenerateAIChatSchema):
-        """Streaming version of AI chat"""
-        try:
-            system_prompt = (
-                f"You are a helpful, precise, and enthusiastic language learning assistant. "
-                f"The user is learning the {data.language} word '{data.word}'. "
-                f"Their native language is {data.native}. "
-                f"Answer the user's question specifically about this word. "
-                f"Be concise, pedagogical, and provide clear examples. "
-                f"Your answer must be in {data.native} to ensure the user understands. "
-                f"Focus on explaining usage, grammar, nuances, or cultural context related to '{data.word}'."
-            )
-
-            messages = [
-                {
-                    "role": "system",
-                    "content": system_prompt
-                },
-                {
-                    "role": "user",
-                    "content": data.message
-                }
-            ]
-
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
-                async with session.post(
-                        self.api_url,
-                        headers={
-                            "Content-Type": "application/json",
-                            "Authorization": f"Bearer {self.deepseek_api_key}"
-                        },
-                        json={
-                            "model": "deepseek-chat",
-                            "messages": messages,
-                            "temperature": 0.2,
-                            "max_tokens": self.max_tokens,
-                            "stream": True  # Enable streaming
-                        }
-                ) as response:
-
-                    if response.status != 200:
-                        error_text = await response.text()
-                        yield f"data: {json.dumps({'error': f'AI service error: {response.status}'})}\n\n"
-                        return
-
-                    async for line in response.content:
-                        line = line.decode('utf-8').strip()
-
-                        if line.startswith('data: '):
-                            data_line = line[6:]
-
-                            if data_line.strip() == '[DONE]':
-                                yield f"data: {json.dumps({'done': True})}\n\n"
-                                return
-
-                            try:
-                                chunk_data = json.loads(data_line)
-                                if 'choices' in chunk_data and chunk_data['choices']:
-                                    delta = chunk_data['choices'][0].get('delta', {})
-                                    content = delta.get('content', '')
-
-                                    if content:
-                                        yield f"data: {json.dumps({'content': content})}\n\n"
-                            except json.JSONDecodeError:
-                                continue
-
-        except Exception as e:
-            logger.error(f"Streaming error: {str(e)}")
-            yield f"data: {json.dumps({'error': f'Streaming failed: {str(e)}'})}\n\n"
-
+# This class will be changed
+# class GenerateAIQuestionRepository:
+#
+#     def __init__(self):
+#         self.deepseek_api_key = os.getenv('DEEPSEEK_API_KEY')
+#         self.api_url = "https://api.deepseek.com/v1/chat/completions"
+#         self.max_tokens = 1500  # Prevent overly long responses
+#
+#     async def _call_deepseek_api(self, messages: list) -> str:
+#         """Generic method to call DeepSeek API."""
+#         print('[_call_deepseek_api] Method called. Preparing payload...')
+#
+#         payload = {
+#             "model": "deepseek-chat",
+#             "messages": messages,
+#             "temperature": 0.2,
+#             "max_tokens": self.max_tokens,
+#             "stream": False  # Set to True if you want streaming
+#         }
+#
+#         headers = {
+#             "Content-Type": "application/json",
+#             "Authorization": f"Bearer {self.deepseek_api_key}"
+#         }
+#
+#         async with aiohttp.ClientSession() as session:
+#             try:
+#                 print('[DEBUG] Making request to DeepSeek API...')
+#                 async with session.post(
+#                         self.api_url,
+#                         json=payload,
+#                         headers=headers,
+#                         timeout=aiohttp.ClientTimeout(total=30)
+#                 ) as response:
+#
+#                     # Get the response text for debugging
+#                     response_text = await response.text()
+#                     print(f'[DEBUG] DeepSeek API Response Status: {response.status}')
+#                     print(f'[DEBUG] DeepSeek API Response Body: {response_text}')
+#
+#                     # Check for errors
+#                     response.raise_for_status()
+#
+#                     # Parse JSON response
+#                     data = await response.json()
+#                     print(f'[DEBUG] Parsed JSON Response: {data}')
+#
+#                     # Extract the response text from DeepSeek format
+#                     return data['choices'][0]['message']['content']
+#
+#             except aiohttp.ClientResponseError as e:
+#                 logger.error(f"DeepSeek API error: {e.status} - {e.message}. Response: {response_text}")
+#                 raise HTTPException(
+#                     status_code=502,
+#                     detail=f"AI service error: {e.status}. Please check the request parameters."
+#                 )
+#             except aiohttp.ClientConnectorError as e:
+#                 logger.error(f"Connection to DeepSeek API failed: {str(e)}")
+#                 raise HTTPException(status_code=503, detail="Cannot connect to AI service. Check your network.")
+#             except asyncio.TimeoutError:
+#                 logger.error("Request to DeepSeek API timed out.")
+#                 raise HTTPException(status_code=504, detail="AI service request timed out.")
+#             except (aiohttp.ClientError, KeyError) as e:
+#                 logger.error(f"Unexpected error during DeepSeek API call: {str(e)}")
+#                 raise HTTPException(status_code=500, detail="An unexpected error occurred with the AI service.")
+#
+#     async def generate_ai_chat_stream(self, data: GenerateAIChatSchema):
+#         """Streaming version of AI chat"""
+#         try:
+#             system_prompt = (
+#                 f"You are a helpful, precise, and enthusiastic language learning assistant. "
+#                 f"The user is learning the {data.language} word '{data.word}'. "
+#                 f"Their native language is {data.native}. "
+#                 f"Answer the user's question specifically about this word. "
+#                 f"Be concise, pedagogical, and provide clear examples. "
+#                 f"Your answer must be in {data.native} to ensure the user understands. "
+#                 f"Focus on explaining usage, grammar, nuances, or cultural context related to '{data.word}'."
+#             )
+#
+#             messages = [
+#                 {
+#                     "role": "system",
+#                     "content": system_prompt
+#                 },
+#                 {
+#                     "role": "user",
+#                     "content": data.message
+#                 }
+#             ]
+#
+#             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+#                 async with session.post(
+#                         self.api_url,
+#                         headers={
+#                             "Content-Type": "application/json",
+#                             "Authorization": f"Bearer {self.deepseek_api_key}"
+#                         },
+#                         json={
+#                             "model": "deepseek-chat",
+#                             "messages": messages,
+#                             "temperature": 0.2,
+#                             "max_tokens": self.max_tokens,
+#                             "stream": True  # Enable streaming
+#                         }
+#                 ) as response:
+#
+#                     if response.status != 200:
+#                         error_text = await response.text()
+#                         yield f"data: {json.dumps({'error': f'AI service error: {response.status}'})}\n\n"
+#                         return
+#
+#                     async for line in response.content:
+#                         line = line.decode('utf-8').strip()
+#
+#                         if line.startswith('data: '):
+#                             data_line = line[6:]
+#
+#                             if data_line.strip() == '[DONE]':
+#                                 yield f"data: {json.dumps({'done': True})}\n\n"
+#                                 return
+#
+#                             try:
+#                                 chunk_data = json.loads(data_line)
+#                                 if 'choices' in chunk_data and chunk_data['choices']:
+#                                     delta = chunk_data['choices'][0].get('delta', {})
+#                                     content = delta.get('content', '')
+#
+#                                     if content:
+#                                         yield f"data: {json.dumps({'content': content})}\n\n"
+#                             except json.JSONDecodeError:
+#                                 continue
+#
+#         except Exception as e:
+#             logger.error(f"Streaming error: {str(e)}")
+#             yield f"data: {json.dumps({'error': f'Streaming failed: {str(e)}'})}\n\n"
+#
 
 
 class SearchRepository:
@@ -2569,3 +2571,694 @@ class FetchWordByCategoryIdRepository:
 
 
 
+
+
+
+# New code is here.
+
+    # In word_repository.py - ConversationContextRepository class
+
+class ConversationContextRepository:
+    """Repository for managing conversation context in database"""
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    @staticmethod
+    def _generate_context_hash(user_id: int, word: str, language: str) -> str:
+        """
+        Generate a unique hash for the conversation context.
+        This ensures we can quickly find context for a specific user-word-language combination.
+        """
+        # Create a consistent string representation
+        context_string = f"{user_id}|{word.lower().strip()}|{language.lower().strip()}"
+        # Generate SHA256 hash
+        return hashlib.sha256(context_string.encode('utf-8')).hexdigest()
+
+    async def get_context(
+            self,
+            user_id: int,
+            word: str,
+            language: str
+    ) -> Optional[ConversationContextModel]:
+        """
+        Get existing conversation context for a user and word.
+        Returns None if no context exists.
+        """
+        try:
+            # Generate hash for lookup
+            context_hash = self._generate_context_hash(user_id, word, language)
+            # Query the database
+            from sqlalchemy import select
+            stmt = (
+                select(ConversationContextModel)
+                .where(ConversationContextModel.context_hash == context_hash)
+                .where(ConversationContextModel.is_active == True)
+            )
+            result = await self.db.execute(stmt)
+            context = result.scalar_one_or_none()
+            if context:
+                logger.debug(f"Found context for user {user_id}, word '{word}'")
+            return context
+        except Exception as e:
+            logger.error(f"Error getting context for user {user_id}, word {word}: {str(e)}")
+            return None
+
+    async def get_or_create_context(
+            self,
+            user_id: int,
+            word: str,
+            language: str,
+            native_language: str,
+            initial_message: Optional[Dict[str, Any]] = None
+    ) -> ConversationContextModel:
+        """
+        Get existing context or create a new one if it doesn't exist.
+        This is the main method you'll use for word selection.
+        """
+        try:
+            # Try to get existing context
+            existing_context = await self.get_context(user_id, word, language)
+            if existing_context:
+                # Check if native language matches (in case user changed it)
+                if existing_context.native_language != native_language:
+                    # Update native language if changed
+                    existing_context.native_language = native_language
+                    await self.db.commit()
+                    await self.db.refresh(existing_context)
+                return existing_context
+            # No existing context - create a new one
+            context_hash = self._generate_context_hash(user_id, word, language)
+            # Prepare initial messages
+            messages_list = []
+            if initial_message:
+                messages_list.append(initial_message)
+            new_context = ConversationContextModel(
+                user_id=user_id,
+                word=word,
+                language=language,
+                native_language=native_language,
+                context_hash=context_hash,
+                messages=json.dumps(messages_list, ensure_ascii=False),
+                is_active=True,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc)
+            )
+            self.db.add(new_context)
+            await self.db.commit()
+            await self.db.refresh(new_context)
+            logger.info(f"Created new context for user {user_id}, word '{word}'")
+            return new_context
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error in get_or_create_context for user {user_id}: {str(e)}")
+            raise
+
+    async def update_context_messages(
+            self,
+            context_id: int,
+            messages: List[Dict[str, Any]],
+            max_messages: int = 20
+    ) -> Optional[ConversationContextModel]:
+        """
+        Update the messages in a conversation context.
+        Automatically limits the number of messages to prevent overflow.
+        """
+        try:
+            # Limit messages to prevent token overflow
+            if len(messages) > max_messages:
+                messages = messages[-max_messages:]
+                logger.debug(f"Trimmed messages to last {max_messages} entries")
+
+            # Get the context
+            stmt = select(ConversationContextModel).where(
+                ConversationContextModel.id == context_id,
+                ConversationContextModel.is_active == True
+            )
+
+            result = await self.db.execute(stmt)
+            context = result.scalar_one_or_none()
+
+            if not context:
+                logger.warning(f"Context {context_id} not found or inactive")
+                return None
+
+            # Update messages and timestamp
+            context.messages = json.dumps(messages, ensure_ascii=False)
+            context.updated_at = datetime.now(timezone.utc)
+
+            await self.db.commit()
+            await self.db.refresh(context)
+
+            logger.debug(f"Updated context {context_id} with {len(messages)} messages")
+            return context
+
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error updating context {context_id}: {str(e)}")
+            return None
+
+    async def add_message_to_context(
+            self,
+            context_id: int,
+            role: str,  # "user" or "assistant"
+            content: str
+    ) -> Optional[ConversationContextModel]:
+        """
+        Add a single message to an existing context.
+        """
+        try:
+            # Get current context
+            stmt = select(ConversationContextModel).where(
+                ConversationContextModel.id == context_id,
+                ConversationContextModel.is_active == True
+            )
+
+            result = await self.db.execute(stmt)
+            context = result.scalar_one_or_none()
+
+            if not context:
+                return None
+
+            # Parse existing messages
+            try:
+                messages = json.loads(context.messages)
+            except json.JSONDecodeError:
+                messages = []
+
+            # Add new message
+            new_message = {
+                "role": role,
+                "content": content,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            messages.append(new_message)
+
+            # Limit messages (keep last 20)
+            if len(messages) > 20:
+                messages = messages[-20:]
+
+            # Update context
+            context.messages = json.dumps(messages, ensure_ascii=False)
+            context.updated_at = datetime.now(timezone.utc)
+
+            await self.db.commit()
+            await self.db.refresh(context)
+
+            logger.debug(f"Added {role} message to context {context_id}")
+            return context
+
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error adding message to context {context_id}: {str(e)}")
+            return None
+
+    async def clear_context(
+            self,
+            user_id: int,
+            word: str,
+            language: str
+    ) -> bool:
+        """
+        Clear context for a specific word.
+        This is called when user changes words or wants to start fresh.
+        """
+        try:
+            context_hash = self._generate_context_hash(user_id, word, language)
+
+            stmt = (
+                update(ConversationContextModel)
+                .where(ConversationContextModel.context_hash == context_hash)
+                .values(
+                    messages="[]",
+                    updated_at=datetime.now(timezone.utc)
+                )
+            )
+
+            result = await self.db.execute(stmt)
+            await self.db.commit()
+
+            rows_affected = result.rowcount
+            if rows_affected > 0:
+                logger.info(f"Cleared context for user {user_id}, word '{word}'")
+                return True
+            else:
+                logger.debug(f"No context to clear for user {user_id}, word '{word}'")
+                return False
+
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error clearing context: {str(e)}")
+            return False
+
+    async def delete_context(
+            self,
+            user_id: int,
+            word: str,
+            language: str
+    ) -> bool:
+        """
+        Permanently delete context (mark as inactive).
+        Use this when you want to completely remove a context.
+        """
+        try:
+            context_hash = self._generate_context_hash(user_id, word, language)
+
+            stmt = (
+                update(ConversationContextModel)
+                .where(ConversationContextModel.context_hash == context_hash)
+                .values(is_active=False)
+            )
+
+            result = await self.db.execute(stmt)
+            await self.db.commit()
+
+            rows_affected = result.rowcount
+            return rows_affected > 0
+
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error deleting context: {str(e)}")
+            return False
+
+    async def get_user_contexts(
+            self,
+            user_id: int,
+            limit: int = 50
+    ) -> List[ConversationContextModel]:
+        """
+        Get all active contexts for a user (for debugging or admin purposes).
+        """
+        try:
+            stmt = (
+                select(ConversationContextModel)
+                .where(ConversationContextModel.user_id == user_id)
+                .where(ConversationContextModel.is_active == True)
+                .order_by(ConversationContextModel.updated_at.desc())
+                .limit(limit)
+            )
+
+            result = await self.db.execute(stmt)
+            contexts = result.scalars().all()
+
+            return list(contexts)
+
+        except Exception as e:
+            logger.error(f"Error getting contexts for user {user_id}: {str(e)}")
+            return []
+
+    async def cleanup_old_contexts(
+            self,
+            days_old: int = 30
+    ) -> int:
+        """
+        Clean up old contexts (mark as inactive).
+        This can be run as a periodic task.
+        """
+        try:
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_old)
+
+            stmt = (
+                update(ConversationContextModel)
+                .where(ConversationContextModel.updated_at < cutoff_date)
+                .where(ConversationContextModel.is_active == True)
+                .values(is_active=False)
+            )
+
+            result = await self.db.execute(stmt)
+            await self.db.commit()
+
+            rows_affected = result.rowcount
+            logger.info(f"Cleaned up {rows_affected} old contexts")
+            return rows_affected
+
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error cleaning up old contexts: {str(e)}")
+            return 0
+
+
+
+
+class GenerateAIQuestionRepository:
+    """
+    Main repository for AI chat with conversation context support.
+    Now includes memory of previous conversations per word.
+    """
+
+    def __init__(self, db: AsyncSession = None):
+        """
+        Initialize with optional database session for context persistence.
+        If no db is provided, context will not be saved (backward compatibility).
+        """
+        self.deepseek_api_key = os.getenv('DEEPSEEK_API_KEY')
+        self.api_url = "https://api.deepseek.com/v1/chat/completions"
+        self.max_tokens = 1500
+        self.max_context_messages = 10  # Keep last 10 messages for context
+        self.db = db
+
+        # Initialize context repository if db is provided
+        if db:
+            self.context_repo = ConversationContextRepository(db)
+        else:
+            self.context_repo = None
+
+    @staticmethod
+    def _generate_context_hash(user_id: int, word: str, language: str) -> str:
+        """Generate hash for context lookup"""
+        context_string = f"{user_id}|{word.lower().strip()}|{language.lower().strip()}"
+        return hashlib.sha256(context_string.encode('utf-8')).hexdigest()
+
+    def _get_system_prompt(self, word: str, language: str, native: str) -> str:
+        """
+        Generate system prompt with word context.
+        This helps the AI remember it's discussing a specific word.
+        """
+        return (
+            f"You are a helpful, precise, and enthusiastic language learning assistant. "
+            f"The user is learning the {language} word '{word}'. "
+            f"Their native language is {native}. "
+            f"Answer the user's question specifically about this word. "
+            f"Be concise, pedagogical, and provide clear examples. "
+            f"Your answer must be in {native} to ensure the user understands. "
+            f"Focus on explaining usage, grammar, nuances, or cultural context related to '{word}'. "
+            f"\n\nIMPORTANT: Remember we're discussing the word '{word}' in {language}. "
+            f"Keep all explanations focused on this word unless the user explicitly asks about something else."
+        )
+
+    async def _prepare_conversation_messages(
+            self,
+            user_id: int,
+            word: str,
+            language: str,
+            native: str,
+            message: str
+    ) -> tuple[List[Dict[str, str]], Optional[ConversationContextModel]]:
+        """
+        Prepare messages for AI with context from database.
+        Returns: (messages_list, context_object_or_none)
+        """
+        messages = []
+        context = None
+
+        # Add system prompt
+        system_prompt = self._get_system_prompt(word, language, native)
+        messages.append({"role": "system", "content": system_prompt})
+
+        # Try to load existing context if db is available
+        if self.context_repo and user_id:
+            try:
+                # Get or create context for this user/word combination
+                context = await self.context_repo.get_or_create_context(
+                    user_id=user_id,
+                    word=word,
+                    language=language,
+                    native_language=native
+                )
+
+                # Load previous messages from context
+                if context and context.messages:
+                    try:
+                        previous_messages = json.loads(context.messages)
+
+                        # Add previous conversation (excluding any system messages)
+                        for msg in previous_messages:
+                            if msg.get('role') != 'system':  # Don't include system messages from history
+                                messages.append({
+                                    "role": msg.get('role', 'user'),
+                                    "content": msg.get('content', '')
+                                })
+
+                        logger.debug(f"Loaded {len(previous_messages)} previous messages from context")
+
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse context messages: {str(e)}")
+                        # Start fresh if messages are corrupted
+                        context = None
+
+            except Exception as e:
+                logger.error(f"Error loading context: {str(e)}")
+                # Continue without context if there's an error
+
+        # Add current user message
+        messages.append({
+            "role": "user",
+            "content": message
+        })
+
+        return messages, context
+
+    async def _save_conversation_to_context(
+            self,
+            context: Optional[ConversationContextModel],
+            user_id: int,
+            word: str,
+            language: str,
+            native: str,
+            user_message: str,
+            ai_response: str
+    ) -> None:
+        """Save the conversation to database context"""
+        if not self.context_repo or not context:
+            return
+
+        try:
+            # Load existing messages
+            existing_messages = []
+            if context.messages:
+                try:
+                    existing_messages = json.loads(context.messages)
+                except json.JSONDecodeError:
+                    existing_messages = []
+
+            # Add the new exchange (user message + AI response)
+            exchange = [
+                {
+                    "role": "user",
+                    "content": user_message,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                },
+                {
+                    "role": "assistant",
+                    "content": ai_response,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+            ]
+
+            # Combine and limit messages
+            all_messages = existing_messages + exchange
+            if len(all_messages) > self.max_context_messages * 2:  # *2 because each exchange has 2 messages
+                # Keep only the most recent exchanges
+                all_messages = all_messages[-(self.max_context_messages * 2):]
+
+            # Update context
+            await self.context_repo.update_context_messages(
+                context_id=context.id,
+                messages=all_messages
+            )
+
+            logger.debug(f"Saved conversation to context {context.id}")
+
+        except Exception as e:
+            logger.error(f"Error saving conversation to context: {str(e)}")
+
+    async def _call_deepseek_api(self, messages: list) -> str:
+        """Generic method to call DeepSeek API."""
+        logger.info('[_call_deepseek_api] Method called. Preparing payload...')
+
+        payload = {
+            "model": "deepseek-chat",
+            "messages": messages,
+            "temperature": 0.2,
+            "max_tokens": self.max_tokens,
+            "stream": False
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.deepseek_api_key}"
+        }
+
+        async with aiohttp.ClientSession() as session:
+            try:
+                logger.debug('[DEBUG] Making request to DeepSeek API...')
+                async with session.post(
+                        self.api_url,
+                        json=payload,
+                        headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
+
+                    # Get the response text for debugging
+                    response_text = await response.text()
+                    logger.debug(f'[DEBUG] DeepSeek API Response Status: {response.status}')
+
+                    # Check for errors
+                    response.raise_for_status()
+
+                    # Parse JSON response
+                    data = await response.json()
+                    logger.debug(f'[DEBUG] Parsed JSON Response keys: {data.keys()}')
+
+                    # Extract the response text from DeepSeek format
+                    return data['choices'][0]['message']['content']
+
+            except aiohttp.ClientResponseError as e:
+                logger.error(f"DeepSeek API error: {e.status} - {e.message}")
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"AI service error: {e.status}. Please check the request parameters."
+                )
+            except aiohttp.ClientConnectorError as e:
+                logger.error(f"Connection to DeepSeek API failed: {str(e)}")
+                raise HTTPException(status_code=503, detail="Cannot connect to AI service. Check your network.")
+            except asyncio.TimeoutError:
+                logger.error("Request to DeepSeek API timed out.")
+                raise HTTPException(status_code=504, detail="AI service request timed out.")
+            except (aiohttp.ClientError, KeyError) as e:
+                logger.error(f"Unexpected error during DeepSeek API call: {str(e)}")
+                raise HTTPException(status_code=500, detail="An unexpected error occurred with the AI service.")
+
+    async def generate_ai_chat_stream(self, user_id: int, data):
+        """
+        Streaming version of AI chat with context support.
+        Now remembers previous conversations about the same word.
+
+        Args:
+            user_id: The authenticated user's ID
+            data: GenerateAIChatSchema object (without user_id)
+        """
+        try:
+            # Prepare messages with context
+            messages, context = await self._prepare_conversation_messages(
+                user_id=user_id,
+                word=data.word,
+                language=data.language,
+                native=data.native,
+                message=data.message
+            )
+
+            # Store messages for saving later
+            full_ai_response = ""
+
+            # Stream the response
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+                async with session.post(
+                        self.api_url,
+                        headers={
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {self.deepseek_api_key}"
+                        },
+                        json={
+                            "model": "deepseek-chat",
+                            "messages": messages,
+                            "temperature": 0.2,
+                            "max_tokens": self.max_tokens,
+                            "stream": True
+                        }
+                ) as response:
+
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error(f"DeepSeek API error: {response.status} - {error_text}")
+                        yield f"data: {json.dumps({'error': f'AI service error: {response.status}'})}\n\n"
+                        return
+
+                    async for line in response.content:
+                        line = line.decode('utf-8').strip()
+
+                        if line.startswith('data: '):
+                            data_line = line[6:]
+
+                            if data_line.strip() == '[DONE]':
+                                # Save conversation to context after streaming is complete
+                                if full_ai_response and context:
+                                    await self._save_conversation_to_context(
+                                        context=context,
+                                        user_id=user_id,
+                                        word=data.word,
+                                        language=data.language,
+                                        native=data.native,
+                                        user_message=data.message,
+                                        ai_response=full_ai_response
+                                    )
+
+                                yield f"data: {json.dumps({'done': True})}\n\n"
+                                return
+
+                            try:
+                                chunk_data = json.loads(data_line)
+                                if 'choices' in chunk_data and chunk_data['choices']:
+                                    delta = chunk_data['choices'][0].get('delta', {})
+                                    content = delta.get('content', '')
+
+                                    if content:
+                                        full_ai_response += content
+                                        yield f"data: {json.dumps({'content': content})}\n\n"
+                            except json.JSONDecodeError:
+                                continue
+
+        except Exception as e:
+            logger.error(f"Streaming error: {str(e)}")
+            yield f"data: {json.dumps({'error': f'Streaming failed: {str(e)}'})}\n\n"
+
+    async def clear_word_context(
+            self,
+            user_id: int,
+            word: str,
+            language: str
+    ) -> bool:
+        """
+        Clear context for a specific word.
+        Call this when user selects a new word or wants to start fresh.
+        """
+        if not self.context_repo:
+            logger.warning("Cannot clear context: No database session")
+            return False
+
+        try:
+            success = await self.context_repo.clear_context(
+                user_id=user_id,
+                word=word,
+                language=language
+            )
+
+            if success:
+                logger.info(f"Cleared context for user {user_id}, word '{word}'")
+            else:
+                logger.debug(f"No context to clear for user {user_id}, word '{word}'")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"Error clearing context: {str(e)}")
+            return False
+
+    async def get_conversation_history(
+            self,
+            user_id: int,
+            word: str,
+            language: str
+    ) -> Optional[List[Dict[str, Any]]]:
+        """
+        Get conversation history for a specific word.
+        Useful for displaying previous conversation in UI.
+        """
+        if not self.context_repo:
+            return None
+
+        try:
+            context = await self.context_repo.get_context(
+                user_id=user_id,
+                word=word,
+                language=language
+            )
+
+            if context and context.messages:
+                return json.loads(context.messages)
+
+            return []
+
+        except Exception as e:
+            logger.error(f"Error getting conversation history: {str(e)}")
+            return None

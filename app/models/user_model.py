@@ -1,20 +1,15 @@
-from datetime import datetime
 
-from sqlalchemy import String, Boolean, DateTime, ForeignKey, func, Integer, Column
-from sqlalchemy.orm import mapped_column, Mapped, relationship
-
-
-from app.models.language_model import Language
-
-from app.models.base_model import Base
-
-# models.py
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey
-from sqlalchemy.orm import relationship
-from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime, timedelta
+from typing import Optional
 import secrets
 import hashlib
+
+from sqlalchemy import String, Boolean, DateTime, ForeignKey, func, Integer, Column, Text
+from sqlalchemy.orm import mapped_column, Mapped, relationship
+from sqlalchemy.sql import func
+
+from app.models.language_model import Language
+from app.models.base_model import Base
 
 
 
@@ -42,8 +37,70 @@ class UserModel(Base):
 
     password_reset_tokens = relationship("PasswordResetToken", back_populates="user", cascade="all, delete-orphan")
 
+    conversation_contexts = relationship(
+        "ConversationContextModel",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
+
+
     def __repr__(self):
         return f'UserModel(id:{self.id}, username:{self.username}, email: {self.email}, native: {self.native})'
+
+
+
+
+class ConversationContextModel(Base):
+    """
+    Model to store AI conversation context per user per word.
+    Each time a user selects a new word, a new context is created.
+    """
+    __tablename__ = "conversation_contexts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    # User who owns this conversation
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+
+    # The word being discussed
+    word: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+
+    # The target language (language being learned)
+    language: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # User's native language
+    native_language: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # Context hash for quick lookups (user_id + word + language)
+    context_hash: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        unique=True,
+        index=True
+    )
+
+    # Store conversation history as JSON
+    messages: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+
+    # Active flag (useful for cleanup)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+    # Relationship with User
+    user: Mapped["UserModel"] = relationship(back_populates="conversation_contexts")
+
+    def __repr__(self):
+        return f"ConversationContextModel(id={self.id}, user_id={self.user_id}, word='{self.word}', language='{self.language}')"
 
 
 

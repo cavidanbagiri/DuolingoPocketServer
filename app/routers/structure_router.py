@@ -22,7 +22,7 @@ from app.repositories.word_repository import FetchWordRepository, \
     CategoryWordsRepository, DeleteFavoriteWordRepository, MoveFavoriteWordRepository, DeleteCategoryRepository, \
     SearchFavoriteRepository
 from app.schemas.user_schema import ChangeWordStatusSchema
-from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, GenerateAIChatSchema, TranslateSchema
+from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, TranslateSchema
 from app.schemas.favorite_schemas import (FavoriteWordBase, FavoriteWordResponse, FavoriteCategoryBase, FavoriteCategoryResponse,
                                           FavoriteFetchWordResponse, CategoryWordsResponse, MoveWordResponse, MoveWordRequest)
 
