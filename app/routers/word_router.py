@@ -411,8 +411,46 @@ async def get_conversation_history(
         raise HTTPException(status_code=500, detail="Failed to get conversation history")
 
 
+# In your router file
 
+@router.get('/active_context')
+async def get_active_context(
+        db: AsyncSession = Depends(get_db),
+        user_info=Depends(TokenHandler.verify_access_token)
+):
+    """
+    Get the current active context for the authenticated user.
+    Useful for frontend to know which word the user is currently discussing.
+    """
+    try:
+        # Get user_id from token
+        user_id = int(user_info.get('sub'))
 
+        repo = GenerateAIQuestionRepository(db)
+
+        # Get the current active context
+        active_context = None
+        if repo.context_repo:
+            active_context = await repo.context_repo.get_user_active_context(user_id)
+
+        if active_context:
+            return {
+                "has_active_context": True,
+                "word": active_context.word,
+                "language": active_context.language,
+                "native_language": active_context.native_language,
+                "last_updated": active_context.updated_at.isoformat(),
+                "message_count": len(json.loads(active_context.messages)) if active_context.messages else 0
+            }
+        else:
+            return {
+                "has_active_context": False,
+                "message": "No active conversation context"
+            }
+
+    except Exception as e:
+        logger.error(f"Error getting active context: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get active context")
 
 
 

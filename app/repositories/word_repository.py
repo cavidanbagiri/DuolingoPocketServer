@@ -2572,12 +2572,6 @@ class FetchWordByCategoryIdRepository:
 
 
 
-
-
-# New code is here.
-
-    # In word_repository.py - ConversationContextRepository class
-
 class ConversationContextRepository:
     """Repository for managing conversation context in database"""
 
@@ -2592,37 +2586,98 @@ class ConversationContextRepository:
         """
         # Create a consistent string representation
         context_string = f"{user_id}|{word.lower().strip()}|{language.lower().strip()}"
+
         # Generate SHA256 hash
         return hashlib.sha256(context_string.encode('utf-8')).hexdigest()
+
+    async def deactivate_other_contexts(
+            self,
+            user_id: int,
+            keep_word: str,
+            keep_language: str
+    ) -> int:
+        """
+        Deactivate all other contexts for this user except the current word.
+        This ensures only one active context per user at a time.
+
+        Returns: Number of contexts deactivated
+        """
+        try:
+            from sqlalchemy import update
+
+            # Generate hash for the context we want to keep
+            keep_hash = self._generate_context_hash(user_id, keep_word, keep_language)
+
+            # Deactivate all other ACTIVE contexts for this user
+            stmt = (
+                update(ConversationContextModel)
+                .where(ConversationContextModel.user_id == user_id)
+                .where(ConversationContextModel.context_hash != keep_hash)
+                .where(ConversationContextModel.is_active == True)  # Only deactivate active ones
+                .values(
+                    is_active=False,
+                    updated_at=datetime.now(timezone.utc)  # Update timestamp
+                )
+            )
+
+            result = await self.db.execute(stmt)
+            await self.db.commit()
+
+            rows_affected = result.rowcount
+            if rows_affected > 0:
+                logger.info(f"Deactivated {rows_affected} old contexts for user {user_id}")
+
+            return rows_affected
+
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error deactivating old contexts: {str(e)}")
+            return 0
 
     async def get_context(
             self,
             user_id: int,
             word: str,
-            language: str
+            language: str,
+            active_only: bool = True  # Default to only active contexts
     ) -> Optional[ConversationContextModel]:
         """
-        Get existing conversation context for a user and word.
-        Returns None if no context exists.
+        Get conversation context for a user and word.
+
+        Args:
+            user_id: User ID
+            word: The word
+            language: The language
+            active_only: If True, only return active contexts
         """
         try:
             # Generate hash for lookup
             context_hash = self._generate_context_hash(user_id, word, language)
-            # Query the database
+
             from sqlalchemy import select
             stmt = (
                 select(ConversationContextModel)
                 .where(ConversationContextModel.context_hash == context_hash)
-                .where(ConversationContextModel.is_active == True)
             )
+
+            if active_only:
+                stmt = stmt.where(ConversationContextModel.is_active == True)
+
             result = await self.db.execute(stmt)
             context = result.scalar_one_or_none()
+
             if context:
-                logger.debug(f"Found context for user {user_id}, word '{word}'")
+                status = "active" if context.is_active else "inactive"
+                logger.debug(f"Found {status} context for user {user_id}, word '{word}'")
+
             return context
+
         except Exception as e:
             logger.error(f"Error getting context for user {user_id}, word {word}: {str(e)}")
             return None
+
+
+    # In ConversationContextRepository class - Update get_or_create_context method
 
     async def get_or_create_context(
             self,
@@ -2634,25 +2689,61 @@ class ConversationContextRepository:
     ) -> ConversationContextModel:
         """
         Get existing context or create a new one if it doesn't exist.
-        This is the main method you'll use for word selection.
+        When creating/reactivating a context, deactivate all other contexts for this user.
+        This ensures only one active context per user at a time.
         """
         try:
-            # Try to get existing context
-            existing_context = await self.get_context(user_id, word, language)
-            if existing_context:
-                # Check if native language matches (in case user changed it)
-                if existing_context.native_language != native_language:
-                    # Update native language if changed
-                    existing_context.native_language = native_language
-                    await self.db.commit()
-                    await self.db.refresh(existing_context)
-                return existing_context
-            # No existing context - create a new one
+            # FIRST: Check if ANY context exists for this word (active or inactive)
             context_hash = self._generate_context_hash(user_id, word, language)
+
+            from sqlalchemy import select
+            stmt = (
+                select(ConversationContextModel)
+                .where(ConversationContextModel.context_hash == context_hash)
+            )
+
+            result = await self.db.execute(stmt)
+            existing_context = result.scalar_one_or_none()
+
+            if existing_context:
+                # Context exists (could be active or inactive)
+                logger.debug(
+                    f"Found existing context for user {user_id}, word '{word}' (active={existing_context.is_active})")
+
+                # Update native language if changed
+                if existing_context.native_language != native_language:
+                    existing_context.native_language = native_language
+
+                # If context is inactive, we need to reactivate it and deactivate others
+                if not existing_context.is_active:
+                    logger.info(f"Reactivating inactive context for user {user_id}, word '{word}'")
+
+                    # Deactivate all other contexts for this user
+                    await self.deactivate_other_contexts(user_id, word, language)
+
+                    # Reactivate this context
+                    existing_context.is_active = True
+                    existing_context.updated_at = datetime.now(timezone.utc)
+
+                # Update timestamp
+                existing_context.updated_at = datetime.now(timezone.utc)
+
+                await self.db.commit()
+                await self.db.refresh(existing_context)
+
+                return existing_context
+
+            # No context exists at all - create a new one
+
+            # Deactivate all other contexts for this user
+            await self.deactivate_other_contexts(user_id, word, language)
+
             # Prepare initial messages
             messages_list = []
             if initial_message:
                 messages_list.append(initial_message)
+
+            # Create new context (will be automatically active)
             new_context = ConversationContextModel(
                 user_id=user_id,
                 word=word,
@@ -2664,11 +2755,14 @@ class ConversationContextRepository:
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc)
             )
+
             self.db.add(new_context)
             await self.db.commit()
             await self.db.refresh(new_context)
-            logger.info(f"Created new context for user {user_id}, word '{word}'")
+
+            logger.info(f"Created new ACTIVE context for user {user_id}, word '{word}' (deactivated old contexts)")
             return new_context
+
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Error in get_or_create_context for user {user_id}: {str(e)}")
@@ -2685,6 +2779,8 @@ class ConversationContextRepository:
         Automatically limits the number of messages to prevent overflow.
         """
         try:
+            from sqlalchemy import select
+
             # Limit messages to prevent token overflow
             if len(messages) > max_messages:
                 messages = messages[-max_messages:]
@@ -2693,7 +2789,7 @@ class ConversationContextRepository:
             # Get the context
             stmt = select(ConversationContextModel).where(
                 ConversationContextModel.id == context_id,
-                ConversationContextModel.is_active == True
+                ConversationContextModel.is_active == True  # Only update active contexts
             )
 
             result = await self.db.execute(stmt)
@@ -2728,7 +2824,9 @@ class ConversationContextRepository:
         Add a single message to an existing context.
         """
         try:
-            # Get current context
+            from sqlalchemy import select
+
+            # Get current context (only if active)
             stmt = select(ConversationContextModel).where(
                 ConversationContextModel.id == context_id,
                 ConversationContextModel.is_active == True
@@ -2738,6 +2836,7 @@ class ConversationContextRepository:
             context = result.scalar_one_or_none()
 
             if not context:
+                logger.warning(f"Context {context_id} not found or inactive")
                 return None
 
             # Parse existing messages
@@ -2765,7 +2864,7 @@ class ConversationContextRepository:
             await self.db.commit()
             await self.db.refresh(context)
 
-            logger.debug(f"Added {role} message to context {context_id}")
+            logger.debug(f"Added {role} message to active context {context_id}")
             return context
 
         except Exception as e:
@@ -2780,17 +2879,18 @@ class ConversationContextRepository:
             language: str
     ) -> bool:
         """
-        Clear context for a specific word.
-        This is called when user changes words or wants to start fresh.
+        Clear context for a specific word (mark as inactive).
         """
         try:
+            from sqlalchemy import update
+
             context_hash = self._generate_context_hash(user_id, word, language)
 
             stmt = (
                 update(ConversationContextModel)
                 .where(ConversationContextModel.context_hash == context_hash)
                 .values(
-                    messages="[]",
+                    is_active=False,  # Mark as inactive instead of clearing messages
                     updated_at=datetime.now(timezone.utc)
                 )
             )
@@ -2800,10 +2900,10 @@ class ConversationContextRepository:
 
             rows_affected = result.rowcount
             if rows_affected > 0:
-                logger.info(f"Cleared context for user {user_id}, word '{word}'")
+                logger.info(f"Deactivated context for user {user_id}, word '{word}'")
                 return True
             else:
-                logger.debug(f"No context to clear for user {user_id}, word '{word}'")
+                logger.debug(f"No active context to deactivate for user {user_id}, word '{word}'")
                 return False
 
         except Exception as e:
@@ -2818,22 +2918,26 @@ class ConversationContextRepository:
             language: str
     ) -> bool:
         """
-        Permanently delete context (mark as inactive).
+        Permanently delete context (not just mark as inactive).
         Use this when you want to completely remove a context.
         """
         try:
+            from sqlalchemy import delete
+
             context_hash = self._generate_context_hash(user_id, word, language)
 
             stmt = (
-                update(ConversationContextModel)
+                delete(ConversationContextModel)
                 .where(ConversationContextModel.context_hash == context_hash)
-                .values(is_active=False)
             )
 
             result = await self.db.execute(stmt)
             await self.db.commit()
 
             rows_affected = result.rowcount
+            if rows_affected > 0:
+                logger.info(f"Permanently deleted context for user {user_id}, word '{word}'")
+
             return rows_affected > 0
 
         except Exception as e:
@@ -2841,60 +2945,104 @@ class ConversationContextRepository:
             logger.error(f"Error deleting context: {str(e)}")
             return False
 
-    async def get_user_contexts(
-            self,
-            user_id: int,
-            limit: int = 50
-    ) -> List[ConversationContextModel]:
+    async def get_user_active_context(self, user_id: int) -> Optional[ConversationContextModel]:
         """
-        Get all active contexts for a user (for debugging or admin purposes).
+        Get the current active context for a user.
+        Returns None if no active context exists.
         """
         try:
+            from sqlalchemy import select
+
             stmt = (
                 select(ConversationContextModel)
                 .where(ConversationContextModel.user_id == user_id)
                 .where(ConversationContextModel.is_active == True)
                 .order_by(ConversationContextModel.updated_at.desc())
-                .limit(limit)
             )
+
+            result = await self.db.execute(stmt)
+            context = result.scalar_one_or_none()
+
+            if context:
+                logger.debug(f"Found active context for user {user_id}: word '{context.word}'")
+
+            return context
+
+        except Exception as e:
+            logger.error(f"Error getting active context for user {user_id}: {str(e)}")
+            return None
+
+    async def get_user_contexts(
+            self,
+            user_id: int,
+            active_only: bool = True,
+            limit: int = 50
+    ) -> List[ConversationContextModel]:
+        """
+        Get all contexts for a user.
+
+        Args:
+            user_id: User ID
+            active_only: If True, only return active contexts
+            limit: Maximum number of contexts to return
+        """
+        try:
+            from sqlalchemy import select
+
+            stmt = (
+                select(ConversationContextModel)
+                .where(ConversationContextModel.user_id == user_id)
+            )
+
+            if active_only:
+                stmt = stmt.where(ConversationContextModel.is_active == True)
+
+            stmt = stmt.order_by(ConversationContextModel.updated_at.desc()).limit(limit)
 
             result = await self.db.execute(stmt)
             contexts = result.scalars().all()
 
+            logger.debug(f"Found {len(contexts)} contexts for user {user_id} (active_only={active_only})")
             return list(contexts)
 
         except Exception as e:
             logger.error(f"Error getting contexts for user {user_id}: {str(e)}")
             return []
 
-    async def cleanup_old_contexts(
+    async def cleanup_old_inactive_contexts(
             self,
-            days_old: int = 30
+            days_old: int = 1  # Delete inactive contexts older than 1 day (adjust as needed)
     ) -> int:
         """
-        Clean up old contexts (mark as inactive).
-        This can be run as a periodic task.
+        Permanently delete inactive contexts older than specified days.
+        This should be run as a periodic task.
+
+        Returns: Number of contexts deleted
         """
         try:
+            from sqlalchemy import delete
+            from datetime import timedelta
+
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_old)
 
             stmt = (
-                update(ConversationContextModel)
+                delete(ConversationContextModel)
+                .where(ConversationContextModel.is_active == False)
                 .where(ConversationContextModel.updated_at < cutoff_date)
-                .where(ConversationContextModel.is_active == True)
-                .values(is_active=False)
             )
 
             result = await self.db.execute(stmt)
             await self.db.commit()
 
             rows_affected = result.rowcount
-            logger.info(f"Cleaned up {rows_affected} old contexts")
+            if rows_affected > 0:
+                logger.info(f"Cleaned up {rows_affected} old inactive contexts (older than {days_old} days)")
+
             return rows_affected
 
         except Exception as e:
             await self.db.rollback()
-            logger.error(f"Error cleaning up old contexts: {str(e)}")
+            logger.error(f"Error cleaning up inactive contexts: {str(e)}")
             return 0
 
 
@@ -2937,7 +3085,7 @@ class GenerateAIQuestionRepository:
         return (
             f"You are a helpful, precise, and enthusiastic language learning assistant. "
             f"The user is learning the {language} word '{word}'. "
-            f"Their native language is {native}. "
+            f"Their native language is {native}. Your answer must be in {native}."
             f"Answer the user's question specifically about this word. "
             f"Be concise, pedagogical, and provide clear examples. "
             f"Your answer must be in {native} to ensure the user understands. "
@@ -3262,3 +3410,30 @@ class GenerateAIQuestionRepository:
         except Exception as e:
             logger.error(f"Error getting conversation history: {str(e)}")
             return None
+
+
+
+#
+#
+# async def cleanup_old_contexts_task():
+#     """
+#     Task to clean up old inactive contexts.
+#     Run this periodically (e.g., every hour or daily).
+#     """
+#     db: AsyncSession = SessionLocal()
+#     try:
+#         logger.info("Starting context cleanup task...")
+#
+#         repo = ConversationContextRepository(db)
+#
+#         # Delete inactive contexts older than 1 day
+#         deleted_count = await repo.cleanup_old_inactive_contexts(days_old=1)
+#
+#         logger.info(f"Context cleanup completed. Deleted {deleted_count} old inactive contexts.")
+#
+#         return deleted_count
+#     except Exception as e:
+#         logger.error(f"Context cleanup task failed: {str(e)}")
+#         return 0
+#     finally:
+#         await db.close()
