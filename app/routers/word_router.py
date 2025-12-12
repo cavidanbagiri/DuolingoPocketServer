@@ -302,23 +302,6 @@ async def generate_ai_for_word(
         )
 
 
-#
-# @router.post('/aichat_stream')
-# async def generate_ai_chat_stream(data: GenerateAIChatSchema, repo: GenerateAIQuestionRepository = Depends()):
-#     try:
-#         return StreamingResponse(
-#             repo.generate_ai_chat_stream(data),
-#             media_type="text/event-stream",
-#             headers={
-#                 "Cache-Control": "no-cache",
-#                 "Connection": "keep-alive",
-#             }
-#         )
-#     except Exception as e:
-#         logger.error(f"Streaming chat error: {str(e)}")
-#         raise HTTPException(status_code=500, detail="Streaming service error")
-
-
 
 @router.post('/aichat_stream')
 async def generate_ai_chat_stream(
@@ -411,7 +394,7 @@ async def get_conversation_history(
         raise HTTPException(status_code=500, detail="Failed to get conversation history")
 
 
-# In your router file
+
 
 @router.get('/active_context')
 async def get_active_context(
@@ -451,13 +434,6 @@ async def get_active_context(
     except Exception as e:
         logger.error(f"Error getting active context: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to get active context")
-
-
-
-
-
-
-
 
 
 
@@ -518,10 +494,6 @@ async def get_pos_statistics(
 
     except Exception as ex:
         raise HTTPException(status_code=500, detail=str(ex))
-
-
-
-
 
 
 
@@ -821,36 +793,3 @@ async def fetch_words_categories(
             detail="We're having trouble with the word categories fetching"
         )
 
-
-# @router.get('/main/fetch_words_by_categories', status_code=200)
-# async def fetch_words_by_category_id(
-#         category_id: int = Query(..., description="Filter by category ID"),  # Required now
-#         lang_code: str = Query(..., description="Language code for the words"),  # Added language code
-#         only_starred: bool = Query(False, description="Filter only starred words"),
-#         only_learned: bool = Query(False, description="Filter only learned words"),
-#         skip: int = Query(0, description="Pagination offset"),
-#         limit: int = Query(50, description="Pagination limit"),
-#         db: AsyncSession = Depends(get_db),
-#         user_info: dict = Depends(TokenHandler.verify_access_token)
-# ):
-#     try:
-#         repo = FetchWordByCategoryIdRepository(
-#             db,
-#             user_id=int(user_info.get('sub')),
-#             category_id=category_id,
-#             lang_code=lang_code,
-#             only_starred=only_starred,
-#             only_learned=only_learned,
-#             skip=skip,
-#             limit=limit
-#         )
-#         data = await repo.fetch_words_by_category_id()
-#         return data
-#     except HTTPException:
-#         raise
-#     except Exception as e:
-#         logger.error(f"Unexpected error during fetching words by category id: {str(e)}")
-#         raise HTTPException(
-#             status_code=500,
-#             detail="We're having trouble with the fetching words by category id"
-#         )
