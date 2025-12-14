@@ -4,12 +4,16 @@
 # ... existing imports ...
 import os
 import asyncio
+import datetime
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import user_router, word_router, structure_router, admin_router, status_router
 from app.tasks.background_worker import worker
+
+
+load_dotenv()
 
 
 @asynccontextmanager
@@ -70,25 +74,6 @@ app.include_router(router=admin_router.router, prefix='/api/admin', tags=['Admin
 app.include_router(router=status_router.router, prefix='/api/status', tags=['Status'])
 
 # ... existing endpoints ...
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 #
 # # main.py
