@@ -15,7 +15,7 @@ from app.repositories.word_repository import (FetchWordRepository, \
     VoiceHandleRepository, GenerateAIWordRepository, GenerateAIQuestionRepository, SearchRepository, \
     TranslateRepository, AddFavoritesRepository, CreateNewFavoriteCategoryRepository, FavoriteCategoryRepository, \
     CategoryWordsRepository, DeleteFavoriteWordRepository, MoveFavoriteWordRepository, DeleteCategoryRepository, \
-    SearchFavoriteRepository, FetchStatisticsForProfileRepository, DailyStreakRepository, GenerateDirectAIChat,FetchWordCategoriesRepository,
+    SearchFavoriteRepository, FetchStatisticsForProfileRepository, DailyStreakRepository, GenerateDirectAIChat, DirectChatContextRepository, FetchWordCategoriesRepository,
                                               FetchWordByCategoryIdRepository, FetchWordByPosRepository)
 from app.schemas.user_schema import ChangeWordStatusSchema
 from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, TranslateSchema, AiDirectChatSchema
@@ -438,16 +438,59 @@ async def get_active_context(
 
 
 
-@router.post('/ai_direct_chat_stream')
-async def ai_direct_chat_stream(data: AiDirectChatSchema):
-    """
-    Streaming AI Direct Chat Endpoint
-    Returns responses as they're generated
-    """
-    logger.info(f"Streaming AI chat request: {data.message[:50]}...")
+# @router.post('/ai_direct_chat_stream')
+# async def ai_direct_chat_stream(data: AiDirectChatSchema):
+#     """
+#     Streaming AI Direct Chat Endpoint
+#     Returns responses as they're generated
+#     """
+#     logger.info(f"Streaming AI chat request: {data.message[:50]}...")
+#
+#     try:
+#         repo = GenerateDirectAIChat()
+#
+#         return StreamingResponse(
+#             repo.ai_direct_chat_stream(data),
+#             media_type="text/event-stream",
+#             headers={
+#                 "Cache-Control": "no-cache",
+#                 "Connection": "keep-alive",
+#                 "Access-Control-Allow-Origin": "*",
+#                 "Access-Control-Allow-Headers": "*",
+#             }
+#         )
+#
+#     except Exception as ex:
+#         logger.exception(f"Streaming chat error: {str(ex)}")
+#         raise HTTPException(status_code=500, detail="Streaming service error")
 
+
+
+############################################################################################ Create new AI Direct chat stream and testing
+
+# word_router.py - Update endpoint
+
+@router.post('/ai_direct_chat_stream')
+async def ai_direct_chat_stream(
+        data: AiDirectChatSchema,
+        db: AsyncSession = Depends(get_db),  # Add database dependency
+        user_info=Depends(TokenHandler.verify_access_token)  # Add authentication
+):
+    """
+    Streaming AI Direct Chat Endpoint with context management
+    Returns responses as they're generated, remembers conversation history
+    """
     try:
-        repo = GenerateDirectAIChat()
+        # Get user_id from token
+        user_id = int(user_info.get('sub'))
+
+        # Add user_id to data
+        data.user_id = user_id
+
+        logger.info(f"Streaming AI chat request from user {user_id}: {data.message[:50]}...")
+
+        # Initialize repository with database
+        repo = GenerateDirectAIChat(db)
 
         return StreamingResponse(
             repo.ai_direct_chat_stream(data),
@@ -455,14 +498,78 @@ async def ai_direct_chat_stream(data: AiDirectChatSchema):
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Headers": "*",
+                "X-Accel-Buffering": "no"
             }
         )
 
     except Exception as ex:
         logger.exception(f"Streaming chat error: {str(ex)}")
         raise HTTPException(status_code=500, detail="Streaming service error")
+
+
+# word_router.py - Add these endpoints
+
+@router.post("/direct-chat/clear-history")
+async def clear_direct_chat_history(
+        db: AsyncSession = Depends(get_db),
+        user_info=Depends(TokenHandler.verify_access_token)
+):
+    """Clear user's direct chat conversation history (start fresh)"""
+    try:
+        user_id = int(user_info.get('sub'))
+
+        repo = DirectChatContextRepository(db)
+        success = await repo.clear_context_messages(user_id)
+
+        if success:
+            return {
+                "success": True,
+                "message": "Direct chat history cleared successfully"
+            }
+        else:
+            return {
+                "success": False,
+                "message": "No direct chat context found to clear"
+            }
+
+    except Exception as e:
+        logger.error(f"Error clearing direct chat history: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to clear chat history")
+
+
+@router.get("/direct-chat/stats")
+async def get_direct_chat_stats(
+        db: AsyncSession = Depends(get_db),
+        user_info=Depends(TokenHandler.verify_access_token)
+):
+    """Get statistics about user's direct chat"""
+    try:
+        user_id = int(user_info.get('sub'))
+
+        repo = DirectChatContextRepository(db)
+        stats = await repo.get_user_stats(user_id)
+
+        return {
+            "success": True,
+            "user_id": user_id,
+            "stats": stats
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting direct chat stats: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get chat stats")
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

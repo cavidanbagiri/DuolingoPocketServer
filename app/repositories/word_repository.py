@@ -41,7 +41,7 @@ import aiohttp
 from app.logging_config import setup_logger
 from app.models.word_model import Word, Sentence, SentenceWord, WordMeaning, Translation, SentenceTranslation, \
     LearnedWord, word_category_association, Category
-from app.models.user_model import Language, UserModel, UserLanguage, UserWord, ConversationContextModel
+from app.models.user_model import Language, UserModel, UserLanguage, UserWord, ConversationContextModel, DirectChatContextModel
 from app.schemas.word_schema import GenerateAIWordSchema, TranslateSchema
 from app.schemas.conversation_contexts_schema import GenerateAIChatSchema
 from app.schemas.favorite_schemas import FavoriteWordBase, FavoriteCategoryBase, FavoriteCategoryResponse, FavoriteFetchWordResponse
@@ -714,107 +714,107 @@ class GenerateAIWordRepository:
 
 
 
-class GenerateDirectAIChat:
-
-    def __init__(self):
-        self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
-        self.api_url = "https://api.deepseek.com/v1/chat/completions"
-
-        # System prompt to enforce language learning context
-        self.system_prompt = """You are an AI language learning tutor. Your role is strictly limited to helping users learn languages.
-
-    CORE RESPONSIBILITIES:
-    - Answer questions about vocabulary, grammar, pronunciation, and language usage
-    - Provide language practice exercises and conversations
-    - Explain cultural aspects related to languages
-    - Help with translation and language comprehension
-    - Create learning activities and study plans
-
-    STRICT BOUNDARIES:
-    - ONLY discuss language learning topics
-    - If asked about unrelated topics (cars, sports, politics, etc.), politely redirect to language learning
-    - Do not provide information outside of language education
-    - Maintain a professional, educational tone
-
-    RESPONSE GUIDELINES:
-    - Be encouraging and supportive
-    - Provide clear, structured explanations
-    - Include practical examples when possible
-    - Adapt to the user's native language for better understanding
-    - Keep responses focused and educational"""
-
-    async def ai_direct_chat_stream(self, data):
-        """Streaming version of AI chat with true streaming"""
-        try:
-            # print(f'Streaming chat request: {data.message}')
-
-            if not self.deepseek_api_key:
-                yield f"data: {json.dumps({'error': 'AI service not configured'})}\n\n"
-                return
-
-            messages = [
-                {
-                    "role": "system",
-                    "content": self.system_prompt
-                },
-                {
-                    "role": "user",
-                    "content": f"User's native language: {data.native_language}. User question: {data.message}"
-                }
-            ]
-
-
-
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
-                # print("Sending streaming request to DeepSeek API...")
-
-                async with session.post(
-                        self.api_url,
-                        headers={
-                            "Content-Type": "application/json",
-                            "Authorization": f"Bearer {self.deepseek_api_key}"
-                        },
-                        json={
-                            "model": "deepseek-chat",
-                            "messages": messages,
-                            "temperature": 0.7,
-                            "max_tokens": 2000,
-                            "stream": True
-                        }
-                ) as response:
-
-                    if response.status != 200:
-                        error_text = await response.text()
-                        # print(f"DeepSeek API error: {response.status} - {error_text}")
-                        yield f"data: {json.dumps({'error': f'AI service error: {response.status}'})}\n\n"
-                        return
-
-                    # print("Starting to stream response from DeepSeek...")
-                    async for line in response.content:
-                        line = line.decode('utf-8').strip()
-                        # print(f"Raw line from DeepSeek: {line}")
-
-                        if line.startswith('data: '):
-                            data_line = line[6:]
-
-                            if data_line.strip() == '[DONE]':
-                                yield f"data: {json.dumps({'done': True})}\n\n"
-                                return
-
-                            try:
-                                chunk_data = json.loads(data_line)
-                                if 'choices' in chunk_data and chunk_data['choices']:
-                                    delta = chunk_data['choices'][0].get('delta', {})
-                                    content = delta.get('content', '')
-
-                                    if content:
-                                        yield f"data: {json.dumps({'content': content})}\n\n"
-                            except json.JSONDecodeError:
-                                continue
-
-        except Exception as e:
-            print(f"Streaming error: {str(e)}")
-            yield f"data: {json.dumps({'error': f'Streaming failed: {str(e)}'})}\n\n"
+# class GenerateDirectAIChat:
+#
+#     def __init__(self):
+#         self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
+#         self.api_url = "https://api.deepseek.com/v1/chat/completions"
+#
+#         # System prompt to enforce language learning context
+#         self.system_prompt = """You are an AI language learning tutor. Your role is strictly limited to helping users learn languages.
+#
+#     CORE RESPONSIBILITIES:
+#     - Answer questions about vocabulary, grammar, pronunciation, and language usage
+#     - Provide language practice exercises and conversations
+#     - Explain cultural aspects related to languages
+#     - Help with translation and language comprehension
+#     - Create learning activities and study plans
+#
+#     STRICT BOUNDARIES:
+#     - ONLY discuss language learning topics
+#     - If asked about unrelated topics (cars, sports, politics, etc.), politely redirect to language learning
+#     - Do not provide information outside of language education
+#     - Maintain a professional, educational tone
+#
+#     RESPONSE GUIDELINES:
+#     - Be encouraging and supportive
+#     - Provide clear, structured explanations
+#     - Include practical examples when possible
+#     - Adapt to the user's native language for better understanding
+#     - Keep responses focused and educational"""
+#
+#     async def ai_direct_chat_stream(self, data):
+#         """Streaming version of AI chat with true streaming"""
+#         try:
+#             # print(f'Streaming chat request: {data.message}')
+#
+#             if not self.deepseek_api_key:
+#                 yield f"data: {json.dumps({'error': 'AI service not configured'})}\n\n"
+#                 return
+#
+#             messages = [
+#                 {
+#                     "role": "system",
+#                     "content": self.system_prompt
+#                 },
+#                 {
+#                     "role": "user",
+#                     "content": f"User's native language: {data.native_language}. User question: {data.message}"
+#                 }
+#             ]
+#
+#
+#
+#             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+#                 # print("Sending streaming request to DeepSeek API...")
+#
+#                 async with session.post(
+#                         self.api_url,
+#                         headers={
+#                             "Content-Type": "application/json",
+#                             "Authorization": f"Bearer {self.deepseek_api_key}"
+#                         },
+#                         json={
+#                             "model": "deepseek-chat",
+#                             "messages": messages,
+#                             "temperature": 0.7,
+#                             "max_tokens": 2000,
+#                             "stream": True
+#                         }
+#                 ) as response:
+#
+#                     if response.status != 200:
+#                         error_text = await response.text()
+#                         # print(f"DeepSeek API error: {response.status} - {error_text}")
+#                         yield f"data: {json.dumps({'error': f'AI service error: {response.status}'})}\n\n"
+#                         return
+#
+#                     # print("Starting to stream response from DeepSeek...")
+#                     async for line in response.content:
+#                         line = line.decode('utf-8').strip()
+#                         # print(f"Raw line from DeepSeek: {line}")
+#
+#                         if line.startswith('data: '):
+#                             data_line = line[6:]
+#
+#                             if data_line.strip() == '[DONE]':
+#                                 yield f"data: {json.dumps({'done': True})}\n\n"
+#                                 return
+#
+#                             try:
+#                                 chunk_data = json.loads(data_line)
+#                                 if 'choices' in chunk_data and chunk_data['choices']:
+#                                     delta = chunk_data['choices'][0].get('delta', {})
+#                                     content = delta.get('content', '')
+#
+#                                     if content:
+#                                         yield f"data: {json.dumps({'content': content})}\n\n"
+#                             except json.JSONDecodeError:
+#                                 continue
+#
+#         except Exception as e:
+#             print(f"Streaming error: {str(e)}")
+#             yield f"data: {json.dumps({'error': f'Streaming failed: {str(e)}'})}\n\n"
 
 
 
@@ -3275,3 +3275,461 @@ class GenerateAIQuestionRepository:
             return None
 
 
+
+
+############################################################################################################## New direct ai chat will be here.
+
+
+# word_repository.py - Update DirectChatContextRepository class
+
+class DirectChatContextRepository:
+    """Repository for managing direct chat context in database"""
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    @staticmethod
+    def _generate_context_hash(user_id: int) -> str:
+        """Generate hash for direct chat context - ONE PER USER"""
+        context_string = f"direct_chat_{user_id}"
+        return hashlib.sha256(context_string.encode('utf-8')).hexdigest()
+
+    async def get_or_create_context(self, user_id: int) -> DirectChatContextModel:
+        """
+        Get existing direct chat context or create a new one.
+        Each user has exactly ONE direct chat context.
+        """
+        try:
+            from sqlalchemy import select
+
+            # Generate hash - same for each user
+            context_hash = self._generate_context_hash(user_id)
+
+            # Try to get existing context
+            stmt = select(DirectChatContextModel).where(
+                DirectChatContextModel.context_hash == context_hash
+            )
+
+            result = await self.db.execute(stmt)
+            existing = result.scalar_one_or_none()
+
+            if existing:
+                # Always ensure it's active (should always be true)
+                if not existing.is_active:
+                    existing.is_active = True
+                    await self.db.commit()
+                    await self.db.refresh(existing)
+
+                logger.debug(f"Found existing direct chat context for user {user_id}")
+                return existing
+
+            # Create new context (first time for this user)
+            new_context = DirectChatContextModel(
+                user_id=user_id,
+                topic="language_learning",  # Default topic
+                context_hash=context_hash,
+                messages="[]",
+                is_active=True,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc)
+            )
+
+            self.db.add(new_context)
+            await self.db.commit()
+            await self.db.refresh(new_context)
+
+            logger.info(f"Created new direct chat context for user {user_id}")
+            return new_context
+
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error getting/creating direct chat context for user {user_id}: {str(e)}")
+            raise
+
+    async def add_message_to_context(
+            self,
+            context_id: int,
+            role: str,
+            content: str,
+            max_messages: int = 20  # Limit conversation history
+    ) -> Optional[DirectChatContextModel]:
+        """Add a message to direct chat context"""
+        try:
+            from sqlalchemy import select
+
+            stmt = select(DirectChatContextModel).where(
+                DirectChatContextModel.id == context_id
+            )
+            result = await self.db.execute(stmt)
+            context = result.scalar_one_or_none()
+
+            if not context:
+                return None
+
+            # Parse existing messages
+            try:
+                messages = json.loads(context.messages)
+            except json.JSONDecodeError:
+                messages = []
+
+            # Add new message
+            messages.append({
+                "role": role,
+                "content": content,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            })
+
+            # Keep only last N messages (prevent infinite growth)
+            if len(messages) > max_messages:
+                # Remove oldest messages, keep system message if present
+                if messages and messages[0].get('role') == 'system':
+                    # Keep system message + recent messages
+                    system_message = messages[0]
+                    recent_messages = messages[-(max_messages - 1):] if max_messages > 1 else []
+                    messages = [system_message] + recent_messages
+                else:
+                    messages = messages[-max_messages:]
+
+                logger.debug(f"Trimmed direct chat messages to {len(messages)} messages")
+
+            # Update context
+            context.messages = json.dumps(messages, ensure_ascii=False)
+            context.updated_at = datetime.now(timezone.utc)
+
+            await self.db.commit()
+            await self.db.refresh(context)
+
+            logger.debug(f"Added message to direct chat context {context_id}")
+            return context
+
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error adding message to direct chat context: {str(e)}")
+            return None
+
+    async def clear_context_messages(self, user_id: int) -> bool:
+        """
+        Clear all messages from user's direct chat context.
+        This is used when user wants to start fresh.
+        """
+        try:
+            from sqlalchemy import update
+
+            context_hash = self._generate_context_hash(user_id)
+
+            stmt = (
+                update(DirectChatContextModel)
+                .where(DirectChatContextModel.context_hash == context_hash)
+                .values(
+                    messages="[]",
+                    updated_at=datetime.now(timezone.utc)
+                )
+            )
+
+            result = await self.db.execute(stmt)
+            await self.db.commit()
+
+            rows_affected = result.rowcount
+            if rows_affected > 0:
+                logger.info(f"Cleared direct chat messages for user {user_id}")
+                return True
+
+            return False
+
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error clearing direct chat messages: {str(e)}")
+            return False
+
+    async def delete_context(self, user_id: int) -> bool:
+        """
+        Permanently delete user's direct chat context.
+        Use this only when deleting user account.
+        """
+        try:
+            from sqlalchemy import delete
+
+            context_hash = self._generate_context_hash(user_id)
+
+            stmt = (
+                delete(DirectChatContextModel)
+                .where(DirectChatContextModel.context_hash == context_hash)
+            )
+
+            result = await self.db.execute(stmt)
+            await self.db.commit()
+
+            rows_affected = result.rowcount
+            if rows_affected > 0:
+                logger.info(f"Permanently deleted direct chat context for user {user_id}")
+
+            return rows_affected > 0
+
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error deleting direct chat context: {str(e)}")
+            return False
+
+    # REMOVE the cleanup_old_direct_contexts method - we don't need it!
+    # Each user has ONE context that stays forever
+
+    async def get_user_stats(self, user_id: int) -> dict:
+        """Get statistics about user's direct chat context"""
+        try:
+            from sqlalchemy import select, func
+            import json
+
+            context_hash = self._generate_context_hash(user_id)
+
+            stmt = select(DirectChatContextModel).where(
+                DirectChatContextModel.context_hash == context_hash
+            )
+
+            result = await self.db.execute(stmt)
+            context = result.scalar_one_or_none()
+
+            if not context:
+                return {
+                    "has_context": False,
+                    "message_count": 0,
+                    "last_updated": None,
+                    "created_at": None
+                }
+
+            # Count messages
+            message_count = 0
+            if context.messages:
+                try:
+                    messages = json.loads(context.messages)
+                    message_count = len(messages)
+                except:
+                    pass
+
+            return {
+                "has_context": True,
+                "context_id": context.id,
+                "message_count": message_count,
+                "last_updated": context.updated_at.isoformat() if context.updated_at else None,
+                "created_at": context.created_at.isoformat() if context.created_at else None,
+                "is_active": context.is_active
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting user direct chat stats: {str(e)}")
+            return {"error": str(e)}
+
+
+
+class GenerateDirectAIChat:
+    """AI chat for general language learning conversations with context"""
+
+    def __init__(self, db: AsyncSession = None):
+        self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
+        self.api_url = "https://api.deepseek.com/v1/chat/completions"
+        self.db = db
+
+        # Initialize context repository if db is provided
+        if db:
+            self.context_repo = DirectChatContextRepository(db)
+        else:
+            self.context_repo = None
+
+        # System prompt
+        self.system_prompt = """You are an AI language learning tutor. Your role is strictly limited to helping users learn languages.
+
+CORE RESPONSIBILITIES:
+- Answer questions about vocabulary, grammar, pronunciation, and language usage
+- Provide language practice exercises and conversations
+- Explain cultural aspects related to languages
+- Help with translation and language comprehension
+- Create learning activities and study plans
+
+STRICT BOUNDARIES:
+- ONLY discuss language learning topics
+- If asked about unrelated topics (cars, sports, politics, etc.), politely redirect to language learning
+- Do not provide information outside of language education
+- Maintain a professional, educational tone
+
+RESPONSE GUIDELINES:
+- Be encouraging and supportive
+- Provide clear, structured explanations
+- Include practical examples when possible
+- Adapt to the user's native language for better understanding
+- Keep responses focused and educational"""
+
+    # word_repository.py - Update GenerateDirectAIChat._prepare_messages_with_context
+
+    async def _prepare_messages_with_context(
+            self,
+            user_id: int,
+            native_language: str,
+            user_message: str
+    ) -> tuple[List[Dict[str, str]], Optional[DirectChatContextModel]]:
+        """Prepare messages with conversation context"""
+        messages = []
+        context = None
+
+        # Enhanced system prompt with native language
+        enhanced_system_prompt = f"{self.system_prompt}\n\nThe user's native language is {native_language}. Please provide explanations in a way that's easy for them to understand."
+
+        # Always include system message
+        messages.append({"role": "system", "content": enhanced_system_prompt})
+
+        # Load conversation context if available
+        if self.context_repo and user_id:
+            try:
+                # Get or create user's direct chat context (always returns one)
+                context = await self.context_repo.get_or_create_context(user_id)
+
+                if context and context.messages:
+                    try:
+                        previous_messages = json.loads(context.messages)
+
+                        # Add previous conversation (excluding any system messages)
+                        for msg in previous_messages:
+                            if msg.get('role') != 'system':  # Don't duplicate system messages
+                                messages.append({
+                                    "role": msg.get('role', 'user'),
+                                    "content": msg.get('content', '')
+                                })
+
+                        logger.debug(f"Loaded {len(previous_messages)} previous messages from direct chat")
+
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse context messages: {str(e)}")
+                        # If messages are corrupted, clear them
+                        if context:
+                            context.messages = "[]"
+                            await self.db.commit()
+
+            except Exception as e:
+                logger.error(f"Error loading direct chat context: {str(e)}")
+
+        # Add current user message
+        messages.append({
+            "role": "user",
+            "content": user_message
+        })
+
+        return messages, context
+
+    async def _save_conversation_to_context(
+            self,
+            context: Optional[DirectChatContextModel],
+            user_id: int,
+            user_message: str,
+            ai_response: str
+    ) -> None:
+        """Save conversation to context"""
+        if not self.context_repo or not context:
+            return
+
+        try:
+            # Load existing messages
+            existing_messages = []
+            if context.messages:
+                try:
+                    existing_messages = json.loads(context.messages)
+                except json.JSONDecodeError:
+                    existing_messages = []
+
+            # Add new exchange
+            exchange = [
+                {
+                    "role": "user",
+                    "content": user_message,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                },
+                {
+                    "role": "assistant",
+                    "content": ai_response,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+            ]
+
+            # Combine and limit messages
+            all_messages = existing_messages + exchange
+            if len(all_messages) > 20:  # Keep last 10 exchanges
+                all_messages = all_messages[-20:]
+
+
+            # Update context
+            context.messages = json.dumps(all_messages, ensure_ascii=False)
+            context.updated_at = datetime.now(timezone.utc)
+
+            await self.db.commit()
+            logger.debug(f"Saved direct chat conversation to context {context.id}")
+
+        except Exception as e:
+            logger.error(f"Error saving direct chat context: {str(e)}")
+
+    async def ai_direct_chat_stream(self, data):
+        """Streaming version of AI chat with context support"""
+        try:
+            # Get user_id from data (assuming it's added by the endpoint)
+            user_id = getattr(data, 'user_id', None)
+
+            # Prepare messages with context
+            messages, context = await self._prepare_messages_with_context(
+                user_id=user_id,
+                native_language=data.native_language,
+                user_message=data.message
+            )
+
+            full_ai_response = ""
+
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+                async with session.post(
+                        self.api_url,
+                        headers={
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {self.deepseek_api_key}"
+                        },
+                        json={
+                            "model": "deepseek-chat",
+                            "messages": messages,
+                            "temperature": 0.7,
+                            "max_tokens": 2000,
+                            "stream": True
+                        }
+                ) as response:
+
+                    if response.status != 200:
+                        error_text = await response.text()
+                        yield f"data: {json.dumps({'error': f'AI service error: {response.status}'})}\n\n"
+                        return
+
+                    async for line in response.content:
+                        line = line.decode('utf-8').strip()
+
+                        if line.startswith('data: '):
+                            data_line = line[6:]
+
+                            if data_line.strip() == '[DONE]':
+                                # Save conversation to context
+                                if full_ai_response and context:
+                                    await self._save_conversation_to_context(
+                                        context=context,
+                                        user_id=user_id,
+                                        user_message=data.message,
+                                        ai_response=full_ai_response
+                                    )
+
+                                yield f"data: {json.dumps({'done': True})}\n\n"
+                                return
+
+                            try:
+                                chunk_data = json.loads(data_line)
+                                if 'choices' in chunk_data and chunk_data['choices']:
+                                    delta = chunk_data['choices'][0].get('delta', {})
+                                    content = delta.get('content', '')
+
+                                    if content:
+                                        full_ai_response += content
+                                        yield f"data: {json.dumps({'content': content})}\n\n"
+                            except json.JSONDecodeError:
+                                continue
+
+        except Exception as e:
+            logger.error(f"Direct chat streaming error: {str(e)}")
+            yield f"data: {json.dumps({'error': f'Streaming failed: {str(e)}'})}\n\n"

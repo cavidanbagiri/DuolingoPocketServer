@@ -43,11 +43,14 @@ class UserModel(Base):
         cascade="all, delete-orphan"
     )
 
+    direct_chat_contexts = relationship(
+        "DirectChatContextModel",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f'UserModel(id:{self.id}, username:{self.username}, email: {self.email}, native: {self.native})'
-
-
 
 
 class ConversationContextModel(Base):
@@ -103,7 +106,6 @@ class ConversationContextModel(Base):
         return f"ConversationContextModel(id={self.id}, user_id={self.user_id}, word='{self.word}', language='{self.language}')"
 
 
-
 class UserLanguage(Base):
     __tablename__ = "user_languages"
 
@@ -117,7 +119,6 @@ class UserLanguage(Base):
     target_language = relationship("Language", foreign_keys=[target_language_code])
 
 
-
 class TokenModel(Base):
     __tablename__ = 'tokens'
 
@@ -128,7 +129,6 @@ class TokenModel(Base):
 
     def __str__(self):
         return f"{self.id} {self.tokens} {self.user_id}"
-
 
 
 class UserWord(Base):
@@ -149,7 +149,6 @@ class UserWord(Base):
     word = relationship("Word", back_populates="user_words")
 
 
-# Stores user-created categories
 class FavoriteCategory(Base):
     __tablename__ = "favorite_categories"
 
@@ -164,7 +163,6 @@ class FavoriteCategory(Base):
     favorite_words = relationship("FavoriteWord", back_populates="category")
 
 
-# Stores the actual favorite translations
 class FavoriteWord(Base):
     __tablename__ = "favorite_words"
 
@@ -195,7 +193,6 @@ class DefaultCategory(Base):
     description = Column(String, nullable=True)
 
     # Users can copy these to their personal categories
-
 
 
 class PasswordResetToken(Base):
@@ -229,3 +226,49 @@ class PasswordResetToken(Base):
         """Check if token is still valid"""
         return not self.used and datetime.utcnow() < self.expires_at
 
+
+class DirectChatContextModel(Base):
+    """
+    Model to store direct AI chat conversations (not word-specific).
+    This is for general language learning conversations.
+    """
+    __tablename__ = "direct_chat_contexts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    # User who owns this conversation
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+
+    # Conversation topic or identifier (optional)
+    topic: Mapped[str] = mapped_column(String(255), nullable=True, index=True)
+
+    # Store conversation history as JSON
+    messages: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+
+    # Context hash for quick lookups
+    context_hash: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        unique=True,
+        index=True
+    )
+
+    # Active flag
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+    # Relationship with User
+    user: Mapped["UserModel"] = relationship(back_populates="direct_chat_contexts")
+
+    def __repr__(self):
+        return f"DirectChatContextModel(id={self.id}, user_id={self.user_id}, topic='{self.topic}')"

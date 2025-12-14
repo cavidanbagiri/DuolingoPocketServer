@@ -30,11 +30,12 @@ async def get_cleanup_status():
 @router.post("/cleanup/run-now")
 async def run_cleanup_now():
     """Manually trigger cleanup now"""
-    from app.tasks.context_cleanup import cleanup_old_inactive_contexts
+    # from app.tasks.context_cleanup import cleanup_old_inactive_contexts
+    from app.tasks.context_cleanup import cleanup_all_old_contexts
 
     try:
         start_time = datetime.now()
-        deleted = await cleanup_old_inactive_contexts()
+        deleted = await cleanup_all_old_contexts()
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
 
