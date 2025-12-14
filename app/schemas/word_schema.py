@@ -17,37 +17,11 @@ class GenerateAIWordSchema(BaseModel):
     native: str
 
 
-# class GenerateAIChatSchema(BaseModel):
-#     word: str  # The word being discussed
-#     message: str  # The user's question/message
-#     language: str  # Target language (e.g., 'en')
-#     native: str    # User's native language (e.g., 'tr')
-
-
 class TranslateSchema(BaseModel):
     text: str
     from_lang: str = "auto"
     to_lang: str
     alternatives: int = 3
-
-
-# class AiDirectChatSchema(BaseModel):
-#     message: str
-#     native_language: str = "English"
-
-
-# class AiDirectChatSchema(BaseModel):
-#     message: str = Field(..., min_length=1, max_length=1000, description="User's message to AI tutor")
-#     native_language: str = Field(default="English", description="User's native language for better explanations")
-#
-#     class Config:
-#         schema_extra = {
-#             "example": {
-#                 "message": "Can you explain the difference between ser and estar in Spanish?",
-#                 "native_language": "English"
-#             }
-#         }
-
 
 
 
@@ -111,10 +85,6 @@ class AIWordResponse(BaseModel):
         }
 
 
-
-
-# word_schema.py - Update AiDirectChatSchema
-
 class AiDirectChatSchema(BaseModel):
     message: str = Field(..., min_length=1, max_length=1000, description="User's message to AI tutor")
     native_language: str = Field(default="English", description="User's native language for better explanations")
@@ -128,3 +98,8 @@ class AiDirectChatSchema(BaseModel):
                 "native_language": "English"
             }
         }
+
+
+class STTRequest(BaseModel):
+    audio: str  # base64 encoded audio
+    language_code: str = "en-US"

@@ -1,6 +1,6 @@
+import os
 import asyncio
 from typing import List, Optional, Dict, Any
-import os
 
 from fastapi import APIRouter, HTTPException, status, Query, BackgroundTasks
 from fastapi.responses import Response
@@ -18,7 +18,7 @@ from app.repositories.word_repository import (FetchWordRepository, \
     SearchFavoriteRepository, FetchStatisticsForProfileRepository, DailyStreakRepository, GenerateDirectAIChat, DirectChatContextRepository, FetchWordCategoriesRepository,
                                               FetchWordByCategoryIdRepository, FetchWordByPosRepository)
 from app.schemas.user_schema import ChangeWordStatusSchema
-from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, TranslateSchema, AiDirectChatSchema
+from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, TranslateSchema, AiDirectChatSchema, STTRequest
 from app.schemas.conversation_contexts_schema import GenerateAIChatSchema
 
 from app.schemas.favorite_schemas import (FavoriteWordBase, FavoriteWordResponse, FavoriteCategoryBase, FavoriteCategoryResponse,
@@ -27,6 +27,13 @@ from app.schemas.favorite_schemas import (FavoriteWordBase, FavoriteWordResponse
 from app.repositories.structure_repository import CreateMainStructureRepository, GenerateEnglishSentence, TranslateEnglishSentencesRepository
 
 from app.services.ai_service import AIService
+
+
+# from google.cloud import speech_v1 as speech
+from google.cloud import speech
+from google.oauth2 import service_account
+import base64
+import json
 
 
 router = APIRouter()
@@ -438,34 +445,6 @@ async def get_active_context(
 
 
 
-# @router.post('/ai_direct_chat_stream')
-# async def ai_direct_chat_stream(data: AiDirectChatSchema):
-#     """
-#     Streaming AI Direct Chat Endpoint
-#     Returns responses as they're generated
-#     """
-#     logger.info(f"Streaming AI chat request: {data.message[:50]}...")
-#
-#     try:
-#         repo = GenerateDirectAIChat()
-#
-#         return StreamingResponse(
-#             repo.ai_direct_chat_stream(data),
-#             media_type="text/event-stream",
-#             headers={
-#                 "Cache-Control": "no-cache",
-#                 "Connection": "keep-alive",
-#                 "Access-Control-Allow-Origin": "*",
-#                 "Access-Control-Allow-Headers": "*",
-#             }
-#         )
-#
-#     except Exception as ex:
-#         logger.exception(f"Streaming chat error: {str(ex)}")
-#         raise HTTPException(status_code=500, detail="Streaming service error")
-
-
-
 ############################################################################################ Create new AI Direct chat stream and testing
 
 # word_router.py - Update endpoint
@@ -506,8 +485,6 @@ async def ai_direct_chat_stream(
         logger.exception(f"Streaming chat error: {str(ex)}")
         raise HTTPException(status_code=500, detail="Streaming service error")
 
-
-# word_router.py - Add these endpoints
 
 @router.post("/direct-chat/clear-history")
 async def clear_direct_chat_history(
@@ -562,7 +539,110 @@ async def get_direct_chat_stats(
 
 
 
+# Add this code block for Google Stt
+@router.post("/google/stt")
+async def speech_to_text(request: STTRequest):
+    """
+    Convert speech to text using Google Cloud Speech-to-Text
+    """
+    try:
+        # Get Google credentials from environment
+        credentials_info = {
+            "type": "service_account",
+            "project_id": os.getenv("GOOGLE_PROJECT_ID"),
+            "private_key_id": os.getenv("GOOGLE_PRIVATE_KEY_ID"),
+            "private_key": os.getenv("GOOGLE_PRIVATE_KEY", "").replace("\\n", "\n"),
+            "client_email": os.getenv("GOOGLE_CLIENT_EMAIL"),
+            "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+            "auth_uri": os.getenv("GOOGLE_AUTH_URI", "https://accounts.google.com/o/oauth2/auth"),
+            "token_uri": os.getenv("GOOGLE_TOKEN_URI", "https://oauth2.googleapis.com/token"),
+            "auth_provider_x509_cert_url": os.getenv("GOOGLE_AUTH_PROVIDER_X509_CERT_URL",
+                                                     "https://www.googleapis.com/oauth2/v1/certs"),
+            "client_x509_cert_url": f"https://www.googleapis.com/robot/v1/metadata/x509/{os.getenv('GOOGLE_CLIENT_EMAIL', '').replace('@', '%40')}",
+            "universe_domain": os.getenv("GOOGLE_UNIVERSE_DOMAIN", "googleapis.com")
+        }
 
+        # Validate credentials
+        required_fields = ["project_id", "private_key", "client_email"]
+        for field in required_fields:
+            if not credentials_info.get(field):
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Missing Google credential: {field}"
+                )
+
+        # Create credentials
+        credentials = service_account.Credentials.from_service_account_info(credentials_info)
+        client = speech.SpeechClient(credentials=credentials)
+
+        # Decode base64 audio
+        audio_content = base64.b64decode(request.audio)
+
+        # Configure recognition for language learning
+        config = speech.RecognitionConfig(
+            encoding=speech.RecognitionConfig.AudioEncoding.WEBM_OPUS,
+            sample_rate_hertz=48000,
+            language_code=request.language_code,
+            enable_automatic_punctuation=True,
+            enable_word_time_offsets=True,  # Useful for pronunciation analysis
+            model="latest_short",  # Best for short phrases
+            use_enhanced=True,  # Enhanced model for better accuracy
+            speech_contexts=[{
+                "phrases": [
+                    # Add common language learning phrases for better recognition
+                    "hello", "goodbye", "thank you", "please",
+                    "excuse me", "how are you", "I don't understand"
+                ],
+                "boost": 10.0  # Boost these phrases
+            }]
+        )
+
+        audio = speech.RecognitionAudio(content=audio_content)
+        response = client.recognize(config=config, audio=audio)
+
+        # Extract results
+        transcripts = []
+        confidence_scores = []
+        word_details = []
+
+        for result in response.results:
+            alternative = result.alternatives[0]
+            transcripts.append(alternative.transcript)
+            confidence_scores.append(alternative.confidence)
+
+            # Extract word-level details for pronunciation analysis
+            if alternative.words:
+                for word_info in alternative.words:
+                    word_details.append({
+                        "word": word_info.word,
+                        "start_time": word_info.start_time.total_seconds(),
+                        "end_time": word_info.end_time.total_seconds(),
+                        "confidence": word_info.confidence
+                    })
+
+        full_transcript = " ".join(transcripts)
+        avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0
+
+        # Return only JSON-serializable data
+        return {
+            "success": True,
+            "transcript": full_transcript,
+            "confidence": avg_confidence,
+            "language": request.language_code,
+            "word_details": word_details,
+            # DO NOT return raw_response like below:
+            # "raw_response": response.results  # ← This causes the error!
+            #
+            # If you need debugging info, extract only simple data:
+            # "result_count": len(response.results) if response.results else 0
+        }
+
+    except Exception as e:
+        print(f"Google STT error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Speech recognition failed: {str(e)}"
+        )
 
 
 
