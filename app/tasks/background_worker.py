@@ -37,7 +37,7 @@ class BackgroundWorker:
 
                 # wait_seconds = 24 * 60 * 60
                 wait_seconds = 10
-                # print(f"⏰ ....................... Waiting {wait_seconds} s /3600:.1f hours until next cleanup...")
+                print(f"⏰ ....................... Waiting {wait_seconds} s /3600:.1f hours until next cleanup...")
                 logger.info(f"⏰ Waiting {wait_seconds} s /3600:.1f hours until next cleanup...")
                 await asyncio.sleep(wait_seconds)
 
