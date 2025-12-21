@@ -272,3 +272,5 @@ class DirectChatContextModel(Base):
 
     def __repr__(self):
         return f"DirectChatContextModel(id={self.id}, user_id={self.user_id}, topic='{self.topic}')"
+
+

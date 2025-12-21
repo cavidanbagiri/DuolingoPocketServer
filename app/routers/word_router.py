@@ -16,7 +16,7 @@ from app.repositories.word_repository import (FetchWordRepository, \
     TranslateRepository, AddFavoritesRepository, CreateNewFavoriteCategoryRepository, FavoriteCategoryRepository, \
     CategoryWordsRepository, DeleteFavoriteWordRepository, MoveFavoriteWordRepository, DeleteCategoryRepository, \
     SearchFavoriteRepository, FetchStatisticsForProfileRepository, DailyStreakRepository, GenerateDirectAIChat, DirectChatContextRepository, FetchWordCategoriesRepository,
-                                              FetchWordByCategoryIdRepository, FetchWordByPosRepository)
+                                              FetchWordByCategoryIdRepository, FetchWordByPosRepository, FetchDirectAiChatContext)
 from app.schemas.user_schema import ChangeWordStatusSchema
 from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, TranslateSchema, AiDirectChatSchema, STTRequest
 from app.schemas.conversation_contexts_schema import GenerateAIChatSchema
@@ -444,10 +444,27 @@ async def get_active_context(
 
 
 
+# router.py
+@router.post('/ai_direct/fetch')
+async def ai_direct_fetch_context(
+        db: AsyncSession = Depends(get_db),
+        user_info=Depends(TokenHandler.verify_access_token)
+):
+    try:
+        # Get user_id from token
+        user_id = int(user_info.get('sub'))
 
-############################################################################################ Create new AI Direct chat stream and testing
+        repo = FetchDirectAiChatContext(db, user_id)
+        result = await repo.ai_direct_fetch_context()
 
-# word_router.py - Update endpoint
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error getting direct chat context: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get chat context")
+
+
 
 @router.post('/ai_direct_chat_stream')
 async def ai_direct_chat_stream(
@@ -630,11 +647,6 @@ async def speech_to_text(request: STTRequest):
             "confidence": avg_confidence,
             "language": request.language_code,
             "word_details": word_details,
-            # DO NOT return raw_response like below:
-            # "raw_response": response.results  # ← This causes the error!
-            #
-            # If you need debugging info, extract only simple data:
-            # "result_count": len(response.results) if response.results else 0
         }
 
     except Exception as e:
@@ -643,15 +655,6 @@ async def speech_to_text(request: STTRequest):
             status_code=500,
             detail=f"Speech recognition failed: {str(e)}"
         )
-
-
-
-
-
-
-
-
-
 
 
 
@@ -946,7 +949,6 @@ async def search_statistics_for_profile(
     Fetch daily streak statistics: last learned language, daily learned words
     """
     try:
-        print('..........................l am working dailt streak')
         repository = DailyStreakRepository(db, user_id=int(user_info.get('sub')))
         data = await repository.daily_streak()
         return data

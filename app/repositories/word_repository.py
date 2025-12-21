@@ -714,110 +714,6 @@ class GenerateAIWordRepository:
 
 
 
-# class GenerateDirectAIChat:
-#
-#     def __init__(self):
-#         self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
-#         self.api_url = "https://api.deepseek.com/v1/chat/completions"
-#
-#         # System prompt to enforce language learning context
-#         self.system_prompt = """You are an AI language learning tutor. Your role is strictly limited to helping users learn languages.
-#
-#     CORE RESPONSIBILITIES:
-#     - Answer questions about vocabulary, grammar, pronunciation, and language usage
-#     - Provide language practice exercises and conversations
-#     - Explain cultural aspects related to languages
-#     - Help with translation and language comprehension
-#     - Create learning activities and study plans
-#
-#     STRICT BOUNDARIES:
-#     - ONLY discuss language learning topics
-#     - If asked about unrelated topics (cars, sports, politics, etc.), politely redirect to language learning
-#     - Do not provide information outside of language education
-#     - Maintain a professional, educational tone
-#
-#     RESPONSE GUIDELINES:
-#     - Be encouraging and supportive
-#     - Provide clear, structured explanations
-#     - Include practical examples when possible
-#     - Adapt to the user's native language for better understanding
-#     - Keep responses focused and educational"""
-#
-#     async def ai_direct_chat_stream(self, data):
-#         """Streaming version of AI chat with true streaming"""
-#         try:
-#             # print(f'Streaming chat request: {data.message}')
-#
-#             if not self.deepseek_api_key:
-#                 yield f"data: {json.dumps({'error': 'AI service not configured'})}\n\n"
-#                 return
-#
-#             messages = [
-#                 {
-#                     "role": "system",
-#                     "content": self.system_prompt
-#                 },
-#                 {
-#                     "role": "user",
-#                     "content": f"User's native language: {data.native_language}. User question: {data.message}"
-#                 }
-#             ]
-#
-#
-#
-#             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
-#                 # print("Sending streaming request to DeepSeek API...")
-#
-#                 async with session.post(
-#                         self.api_url,
-#                         headers={
-#                             "Content-Type": "application/json",
-#                             "Authorization": f"Bearer {self.deepseek_api_key}"
-#                         },
-#                         json={
-#                             "model": "deepseek-chat",
-#                             "messages": messages,
-#                             "temperature": 0.7,
-#                             "max_tokens": 2000,
-#                             "stream": True
-#                         }
-#                 ) as response:
-#
-#                     if response.status != 200:
-#                         error_text = await response.text()
-#                         # print(f"DeepSeek API error: {response.status} - {error_text}")
-#                         yield f"data: {json.dumps({'error': f'AI service error: {response.status}'})}\n\n"
-#                         return
-#
-#                     # print("Starting to stream response from DeepSeek...")
-#                     async for line in response.content:
-#                         line = line.decode('utf-8').strip()
-#                         # print(f"Raw line from DeepSeek: {line}")
-#
-#                         if line.startswith('data: '):
-#                             data_line = line[6:]
-#
-#                             if data_line.strip() == '[DONE]':
-#                                 yield f"data: {json.dumps({'done': True})}\n\n"
-#                                 return
-#
-#                             try:
-#                                 chunk_data = json.loads(data_line)
-#                                 if 'choices' in chunk_data and chunk_data['choices']:
-#                                     delta = chunk_data['choices'][0].get('delta', {})
-#                                     content = delta.get('content', '')
-#
-#                                     if content:
-#                                         yield f"data: {json.dumps({'content': content})}\n\n"
-#                             except json.JSONDecodeError:
-#                                 continue
-#
-#         except Exception as e:
-#             print(f"Streaming error: {str(e)}")
-#             yield f"data: {json.dumps({'error': f'Streaming failed: {str(e)}'})}\n\n"
-
-
-
 class SearchRepository:
 
     def __init__(self, db: AsyncSession, user_id: int):
@@ -2434,7 +2330,6 @@ class FetchWordByCategoryIdRepository:
 
 
 
-
 class ConversationContextRepository:
     """Repository for managing conversation context in database"""
 
@@ -2910,7 +2805,6 @@ class ConversationContextRepository:
 
 
 
-
 class GenerateAIQuestionRepository:
     """
     Main repository for AI chat with conversation context support.
@@ -3275,12 +3169,6 @@ class GenerateAIQuestionRepository:
             return None
 
 
-
-
-############################################################################################################## New direct ai chat will be here.
-
-
-# word_repository.py - Update DirectChatContextRepository class
 
 class DirectChatContextRepository:
     """Repository for managing direct chat context in database"""
@@ -3733,3 +3621,39 @@ RESPONSE GUIDELINES:
         except Exception as e:
             logger.error(f"Direct chat streaming error: {str(e)}")
             yield f"data: {json.dumps({'error': f'Streaming failed: {str(e)}'})}\n\n"
+
+
+
+class FetchDirectAiChatContext:
+    def __init__(self, db: AsyncSession, user_id: int):
+        self.db = db
+        self.user_id = user_id
+
+    async def ai_direct_fetch_context(self):
+        """Fetch the direct chat context for the user if it exists."""
+        try:
+            # Get the context for this user
+            stmt = select(DirectChatContextModel).where(
+                DirectChatContextModel.user_id == self.user_id
+            )
+
+            result = await self.db.execute(stmt)
+            context = result.scalar_one_or_none()
+
+            if context:
+                # Parse messages from JSON string
+                messages = json.loads(context.messages) if context.messages else []
+                return {
+                    "id": context.id,
+                    "topic": context.topic,
+                    "messages": messages,
+                    "created_at": context.created_at.isoformat() if context.created_at else None,
+                    "updated_at": context.updated_at.isoformat() if context.updated_at else None
+                }
+
+            # If no context exists, return null/empty response
+            return None
+
+        except Exception as e:
+            logger.error(f"Error fetching direct chat context: {str(e)}")
+            raise
