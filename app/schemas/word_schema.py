@@ -1,5 +1,8 @@
-from typing import Optional, Literal, List, Dict, Any
 
+
+from datetime import date
+
+from typing import Optional, Literal, List, Dict, Any
 from pydantic import BaseModel, field_validator, Field
 
 
@@ -7,9 +10,11 @@ class ChangeWordStatusSchema(BaseModel):
     word_id: int
     w_status: Literal['starred', 'learned', 'delete']
 
+
 class VoiceSchema(BaseModel):
     text: str
     language: str
+
 
 class GenerateAIWordSchema(BaseModel):
     text: str
@@ -22,7 +27,6 @@ class TranslateSchema(BaseModel):
     from_lang: str = "auto"
     to_lang: str
     alternatives: int = 3
-
 
 
 class AIWordResponse(BaseModel):
@@ -103,3 +107,16 @@ class AiDirectChatSchema(BaseModel):
 class STTRequest(BaseModel):
     audio: str  # base64 encoded audio
     language_code: str = "en-US"
+
+
+class DailyStreakResponse(BaseModel):
+    current_streak: int
+    longest_streak: int
+    today_progress: int
+    is_today_completed: bool
+    daily_limit: int
+    total_learned_words: int
+    total_starred_words: int
+
+    class Config:
+        from_attributes = True

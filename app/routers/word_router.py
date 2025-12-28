@@ -25,7 +25,7 @@ from app.repositories.word_repository import (FetchWordRepository, \
                                               FetchWordByCategoryIdRepository, FetchWordByPosRepository,
                                               FetchDirectAiChatContext, CreateNoteRepository,
                                               GetNotesRepository, GetNoteByIdRepository,
-                                              UpdateNoteRepository, DeleteNoteRepository
+                                              UpdateNoteRepository, DeleteNoteRepository, GetDailyStreakRepository
                                               )
 from app.schemas.user_schema import ChangeWordStatusSchema
 from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, TranslateSchema, AiDirectChatSchema, STTRequest
@@ -64,6 +64,32 @@ async def get_statistics(db: AsyncSession = Depends(get_db),
         return result
     except Exception as ex:
         raise HTTPException(status_code=500, detail=str(ex))
+
+
+
+@router.get('/user/statistics/daily_streak', status_code=200)
+async def fetch_daily_streak(
+        db: AsyncSession = Depends(get_db),
+        user_info=Depends(TokenHandler.verify_access_token)
+):
+    """
+    Get user's current daily streak count.
+
+    Returns: Integer representing consecutive days of learning 20+ words.
+    Example: 3 means user learned 20+ words for 3 consecutive days.
+    Returns 0 if no current streak.
+    """
+    try:
+        repo = GetDailyStreakRepository(db, user_id=int(user_info.get('sub')))
+
+        # Choose which implementation to use
+        # result = await repo.fetch_daily_streak()  # Simple approach
+        result = await repo.fetch_daily_streak_optimized()  # More efficient
+
+        return {"daily_streak": result}
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=str(ex))
+
 
 
 
@@ -953,7 +979,7 @@ async def search_statistics_for_profile(
         )
 
 
-@router.get('/user/daily_streak', status_code=200, response_model=Dict[str, Any])
+@router.get('/user/daily_statistics', status_code=200, response_model=Dict[str, Any])
 async def search_statistics_for_profile(
         db: AsyncSession = Depends(get_db),
         user_info: dict = Depends(TokenHandler.verify_access_token)
