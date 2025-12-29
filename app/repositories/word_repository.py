@@ -29,10 +29,11 @@ import aiohttp
 from fastapi import HTTPException, status
 from fastapi.responses import StreamingResponse
 
-from sqlalchemy import select, func, and_, update, or_, case, delete, text
+from sqlalchemy import select, func, and_, update, or_, case, delete, text, distinct
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, outerjoin, joinedload
+
 
 
 
@@ -3947,11 +3948,6 @@ class DeleteNoteRepository:
         await self.db.commit()
 
 
-# repository.py
-from datetime import datetime, date, timedelta
-from sqlalchemy import select, func, and_
-from sqlalchemy.ext.asyncio import AsyncSession
-
 
 class GetDailyStreakRepository:
     def __init__(self, db: AsyncSession, user_id: int):
@@ -4131,3 +4127,53 @@ class GetDailyStreakRepository:
                 break
 
         return streak
+
+
+
+
+class FetchActiveLangRepository:
+    def __init__(self, db: AsyncSession, user_id: int):
+        self.db = db
+        self.user_id = user_id
+
+    async def fetch_active_lang(self) -> int:
+        """
+        Count how many languages user has actively learned in the last 7 days.
+
+        Returns: Number of languages with at least one learned word in the last week.
+        Format: {'active': 1}
+        """
+        # Calculate date range (last 7 days)
+        today = date.today()
+        one_week_ago = today - timedelta(days=7)
+
+        # Get all languages the user is learning
+        user_langs_query = select(UserLanguage.target_language_code).where(
+            UserLanguage.user_id == self.user_id
+        )
+        user_langs_result = await self.db.execute(user_langs_query)
+        user_languages = [lang[0] for lang in user_langs_result.all()]
+
+        if not user_languages:
+            return 0
+
+        # Count distinct languages where user learned words in the last week
+        active_langs_query = select(
+            func.count(distinct(Word.language_code))
+        ).select_from(UserWord).join(
+            Word, UserWord.word_id == Word.id
+        ).where(
+            and_(
+                UserWord.user_id == self.user_id,
+                UserWord.is_learned == True,
+                UserWord.created_at >= one_week_ago,
+                UserWord.created_at <= datetime.combine(today, datetime.max.time()),
+                Word.language_code.in_(user_languages)
+            )
+        )
+
+        active_langs_result = await self.db.execute(active_langs_query)
+        active_count = active_langs_result.scalar() or 0
+
+        return active_count
+

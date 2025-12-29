@@ -120,3 +120,27 @@ class DailyStreakResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class LanguageActivity(BaseModel):
+    language_code: str
+    level: str
+    weekly_activity: int
+    is_active: bool
+    last_activity: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
+class ActiveLangResponse(BaseModel):
+    active: int
+
+
+class DetailedActivityResponse(BaseModel):
+    active_count: int
+    inactive_count: int
+    languages: List[LanguageActivity]
+
+    class Config:
+        from_attributes = True

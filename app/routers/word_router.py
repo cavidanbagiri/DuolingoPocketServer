@@ -25,7 +25,8 @@ from app.repositories.word_repository import (FetchWordRepository, \
                                               FetchWordByCategoryIdRepository, FetchWordByPosRepository,
                                               FetchDirectAiChatContext, CreateNoteRepository,
                                               GetNotesRepository, GetNoteByIdRepository,
-                                              UpdateNoteRepository, DeleteNoteRepository, GetDailyStreakRepository
+                                              UpdateNoteRepository, DeleteNoteRepository, GetDailyStreakRepository,
+                                              FetchActiveLangRepository
                                               )
 from app.schemas.user_schema import ChangeWordStatusSchema
 from app.schemas.word_schema import VoiceSchema, GenerateAIWordSchema, TranslateSchema, AiDirectChatSchema, STTRequest
@@ -89,6 +90,42 @@ async def fetch_daily_streak(
         return {"daily_streak": result}
     except Exception as ex:
         raise HTTPException(status_code=500, detail=str(ex))
+
+
+
+
+@router.get('/user/statistics/active_lang', status_code=200)
+async def fetch_active_lang(
+        db: AsyncSession = Depends(get_db),
+        user_info=Depends(TokenHandler.verify_access_token)
+):
+    """
+    Count languages user has actively learned in the last week.
+
+    Returns: Number of active languages (with at least one learned word in last 7 days)
+    """
+    try:
+        repo = FetchActiveLangRepository(db, user_id=int(user_info.get('sub')))
+
+        # Basic count only
+        active_count = await repo.fetch_active_lang()
+
+        return {"active": active_count}
+
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
