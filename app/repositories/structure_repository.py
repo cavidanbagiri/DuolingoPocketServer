@@ -22,6 +22,8 @@ from google.cloud import translate_v2 as translate
 
 
 
+
+
 from app.models.ai_models import WordAnalysisResponse
 
 
@@ -3444,7 +3446,6 @@ class TranslateEnglishSentencesRepository:
         return results
 
 
-# This is yandex translate
 class TranslateEnglishWord:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -4095,8 +4096,6 @@ class DefinePosCategoryEnglishRepository:
 
 
 
-
-# Check and delete
 class WordRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -4342,60 +4341,6 @@ class FetchEnglishWordsGenerateWithAIToPOSDefCat:
                 "word": word.text,
                 "word_id": word.id
             }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -5887,5 +5832,1314 @@ class FixPosFunctionality:
             "updated_counts": updated_counts,
             "total_updated": total_updated
         }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+############################################################################################################################################# For Ai Words Section
+
+
+# repository.py
+
+
+class AITranslateEnglishWords:
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not self.api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY is not set.")
+
+        self.client = httpx.AsyncClient(timeout=60.0)
+        self.deepseek_url = "https://api.deepseek.com/v1/chat/completions"
+        self.auth_headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    async def _get_english_words_with_translations(self, target_language_code: str) -> List[Dict[str, Any]]:
+        """
+        Get all English words that already have translations to update
+        Returns words with their existing translation IDs
+        """
+        try:
+
+            # Query to get English words with their existing translations
+            query = select(
+                Word.id,
+                Word.text,
+                Word.level,
+                Translation.id.label("translation_id"),
+                Translation.translated_text.label("current_translation")
+            ).join(
+                Translation, Translation.source_word_id == Word.id
+            ).where(
+                and_(
+                    Word.language_code == "en",
+                    Translation.target_language_code == target_language_code
+                )
+            ).order_by(Word.id)  # Order by ID as requested
+
+            result = await self.db.execute(query)
+            rows = result.all()
+
+            return [
+                {
+                    "word_id": row.id,
+                    "text": row.text,
+                    "level": row.level,
+                    "translation_id": row.translation_id,
+                    "current_translation": row.current_translation
+                }
+                for row in rows
+            ]
+        except Exception as e:
+            logger.error(f"Error fetching words with translations: {str(e)}")
+            raise
+
+    async def _call_deepseek_api_for_translation(self, word: str, target_language: str) -> str:
+        """
+        Call DeepSeek API to translate a single word with optimized prompt
+        """
+        language_names = {
+            "es": "Spanish",
+            "ru": "Russian",
+            "tr": "Turkish"
+        }
+
+        language_name = language_names.get(target_language, target_language)
+
+        # Optimized prompt for word translation
+        prompt = f"""
+        Translate the English word "{word}" to {language_name}.
+
+        IMPORTANT RULES:
+        1. Return ONLY the single most accurate and common translation
+        2. Use the standard dictionary form (infinitive for verbs, singular for nouns)
+        3. No explanations, no examples, no extra text
+        4. Be precise and use the most frequent translation used by language learners
+
+        Translation:
+        """
+
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a professional translator. Always respond with ONLY the translated word, nothing else."
+                },
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,  # Very low for consistency
+            "max_tokens": 30,
+            "stop": ["\n", ".", ";"]  # Stop at any punctuation or newline
+        }
+
+        try:
+            response = await self.client.post(
+                self.deepseek_url,
+                headers=self.auth_headers,
+                json=payload,
+                timeout=30.0
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                translated_word = result["choices"][0]["message"]["content"].strip()
+
+                # Clean the response aggressively
+                translated_word = translated_word.split('\n')[0].strip()
+                translated_word = translated_word.strip('"\'«»„“”')
+                translated_word = translated_word.split('(')[0].strip()  # Remove anything in parentheses
+                translated_word = translated_word.split(',')[0].strip()  # Take first if multiple
+
+                return translated_word
+            else:
+                logger.error(f"DeepSeek API error: {response.status_code}")
+                raise Exception(f"API error: {response.status_code}")
+
+        except httpx.TimeoutException:
+            logger.error("DeepSeek API timeout")
+            raise Exception("API timeout")
+        except Exception as e:
+            logger.error(f"DeepSeek API call failed: {str(e)}")
+            raise
+
+    async def _translate_with_retry(self, word_data: Dict, target_language: str, max_retries: int = 3) -> Dict:
+        """
+        Translate a word with retry logic
+        """
+        for attempt in range(max_retries):
+            try:
+                new_translation = await self._call_deepseek_api_for_translation(
+                    word_data["text"],
+                    target_language
+                )
+
+                # Basic validation - translation shouldn't be empty
+                if not new_translation or len(new_translation.strip()) == 0:
+                    raise Exception("Empty translation received")
+
+                # Print the translation comparison
+                print(f"English['{word_data['text']}'] -> {target_language.upper()}['{new_translation}'] "
+                      f"old translation ['{word_data.get('current_translation', 'N/A')}']")
+
+                # Translation shouldn't be too long (usually 1-3 words)
+                if len(new_translation.split()) > 3:
+                    # Try to get the first word only
+                    new_translation = new_translation.split()[0]
+
+                return {
+                    **word_data,
+                    "new_translation": new_translation,
+                    "success": True,
+                    "error": None
+                }
+
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    logger.error(f"Failed to translate '{word_data['text']}' after {max_retries} attempts: {str(e)}")
+                    return {
+                        **word_data,
+                        "new_translation": None,
+                        "success": False,
+                        "error": str(e)
+                    }
+
+                # Exponential backoff
+                wait_time = 2 ** attempt
+                # logger.warning(f"Retry {attempt + 1} for '{word_data['text']}' in {wait_time}s")
+                print(f"Retrying '{word_data['text']}' (attempt {attempt + 1}/{max_retries})")
+                await asyncio.sleep(wait_time)
+
+    async def _process_batch(self, batch: List[Dict], target_language: str) -> List[Dict]:
+        """
+        Process a batch of words concurrently
+        """
+        tasks = []
+        for word_data in batch:
+            task = self._translate_with_retry(word_data, target_language)
+            tasks.append(task)
+
+        results = await asyncio.gather(*tasks)
+        return results
+
+    async def _update_translations_in_db(self, translations: List[Dict], target_language: str):
+        """
+        Update translations in the database
+        """
+
+        updated_count = 0
+        error_count = 0
+
+        for item in translations:
+            if item["success"] and item["new_translation"]:
+                try:
+                    # Directly update the translation record
+                    stmt = update(Translation).where(
+                        Translation.id == item["translation_id"]
+                    ).values(
+                        translated_text=item["new_translation"]
+                    )
+
+                    await self.db.execute(stmt)
+                    updated_count += 1
+
+                    # Log the change if you want to track
+                    logger.debug(
+                        f"Updated translation for '{item['text']}': {item['current_translation']} -> {item['new_translation']}")
+
+                except Exception as e:
+                    error_count += 1
+                    logger.error(f"Failed to update translation ID {item['translation_id']}: {str(e)}")
+
+        await self.db.commit()
+        return updated_count, error_count
+
+    async def ai_translate_english_word_to_spanish(self):
+        """
+        Re-translate all English words to Spanish (update existing translations)
+        """
+        logger.info("Starting English to Spanish re-translation")
+
+
+        try:
+            # 1. Get all English words with existing Spanish translations
+            words = await self._get_english_words_with_translations("es")
+
+            if not words:
+                return {"message": "No Spanish translations found to update", "count": 0}
+
+            logger.info(f"Found {len(words)} English words with Spanish translations to update")
+
+            # 2. Process in batches (20 at a time - adjust based on API limits)
+            batch_size = 20
+            all_results = []
+
+            for i in range(0, len(words), batch_size):
+                batch = words[i:i + batch_size]
+                logger.info(f"Processing batch {i // batch_size + 1}/{(len(words) - 1) // batch_size + 1}")
+
+                batch_results = await self._process_batch(batch, "es")
+                all_results.extend(batch_results)
+
+                # Update database after each batch to save progress
+                updated, errors = await self._update_translations_in_db(batch_results, "es")
+                logger.info(f"Batch {i // batch_size + 1}: Updated {updated}, Errors {errors}")
+
+                # Rate limiting between batches
+                if i + batch_size < len(words):
+                    await asyncio.sleep(2)  # 2 seconds between batches
+
+            # 3. Prepare final statistics
+            successful = [r for r in all_results if r["success"]]
+            failed = [r for r in all_results if not r["success"]]
+
+            # Sample of changed translations
+            sample_changes = []
+            for result in successful[:5]:  # Show first 5 changes
+                if result.get("current_translation") != result.get("new_translation"):
+                    sample_changes.append({
+                        "word": result["text"],
+                        "old": result["current_translation"],
+                        "new": result["new_translation"]
+                    })
+
+            print(f"\n{'=' * 60}")
+            print(f"COMPLETED: English -> {target_language.upper()}")
+            print(f"Successfully updated: {len(successful)}/{len(words)} "
+                  f"({(len(successful) / len(words) * 100):.1f}%)")
+            print(f"Failed: {len(failed)}")
+            print(f"{'=' * 60}")
+
+            # Optional: Print first 10 translations as sample
+            print("\nSample of updated translations:")
+            for result in successful[:10]:
+                if result.get("current_translation") != result.get("new_translation"):
+                    print(f"  {result['text']}: '{result['current_translation']}' -> '{result['new_translation']}'")
+                else:
+                    print(f"  {result['text']}: '{result['new_translation']}' (unchanged)")
+
+            return {
+                "message": "Spanish translations updated successfully",
+                "stats": {
+                    "total_words": len(words),
+                    "successfully_updated": len(successful),
+                    "failed_to_update": len(failed),
+                    "completion_percentage": f"{(len(successful) / len(words) * 100):.1f}%"
+                },
+                "sample_changes": sample_changes if sample_changes else "No significant changes in first 5 words"
+            }
+
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"English to Spanish re-translation failed: {str(e)}", exc_info=True)
+            raise
+
+    async def ai_translate_english_word_to_russian(self):
+        """
+        Re-translate all English words to Russian (update existing translations)
+        """
+        logger.info("Starting English to Russian re-translation")
+
+        try:
+            words = await self._get_english_words_with_translations("ru")
+
+            if not words:
+                return {"message": "No Russian translations found to update", "count": 0}
+
+            logger.info(f"Found {len(words)} English words with Russian translations to update")
+
+            batch_size = 20
+            all_results = []
+
+            for i in range(0, len(words), batch_size):
+                batch = words[i:i + batch_size]
+                logger.info(f"Processing batch {i // batch_size + 1}/{(len(words) - 1) // batch_size + 1}")
+
+                batch_results = await self._process_batch(batch, "ru")
+                all_results.extend(batch_results)
+
+                updated, errors = await self._update_translations_in_db(batch_results, "ru")
+                logger.info(f"Batch {i // batch_size + 1}: Updated {updated}, Errors {errors}")
+
+                if i + batch_size < len(words):
+                    await asyncio.sleep(2)
+
+            successful = [r for r in all_results if r["success"]]
+            failed = [r for r in all_results if not r["success"]]
+
+            print(f"\n{'=' * 60}")
+            print(f"COMPLETED: English -> {target_language.upper()}")
+            print(f"Successfully updated: {len(successful)}/{len(words)} "
+                  f"({(len(successful) / len(words) * 100):.1f}%)")
+            print(f"Failed: {len(failed)}")
+            print(f"{'=' * 60}")
+
+            # Optional: Print first 10 translations as sample
+            print("\nSample of updated translations:")
+            for result in successful[:10]:
+                if result.get("current_translation") != result.get("new_translation"):
+                    print(f"  {result['text']}: '{result['current_translation']}' -> '{result['new_translation']}'")
+                else:
+                    print(f"  {result['text']}: '{result['new_translation']}' (unchanged)")
+
+            return {
+                "message": "Russian translations updated successfully",
+                "stats": {
+                    "total_words": len(words),
+                    "successfully_updated": len(successful),
+                    "failed_to_update": len(failed),
+                    "completion_percentage": f"{(len(successful) / len(words) * 100):.1f}%"
+                }
+            }
+
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"English to Russian re-translation failed: {str(e)}", exc_info=True)
+            raise
+
+    async def ai_translate_english_word_to_turkish(self):
+        """
+        Re-translate all English words to Turkish (update existing translations)
+        """
+        logger.info("Starting English to Turkish re-translation")
+
+        try:
+            words = await self._get_english_words_with_translations("tr")
+
+            if not words:
+                return {"message": "No Turkish translations found to update", "count": 0}
+
+            logger.info(f"Found {len(words)} English words with Turkish translations to update")
+
+            batch_size = 20
+            all_results = []
+
+            for i in range(0, len(words), batch_size):
+                batch = words[i:i + batch_size]
+                # logger.info(f"Processing batch {i // batch_size + 1}/{(len(words) - 1) // batch_size + 1}")
+                # Add this print:
+                print(f"\n📦 Batch {i // batch_size + 1}/{(len(words) - 1) // batch_size + 1}")
+                print(f"   Processing words {i + 1} to {min(i + batch_size, len(words))}")
+
+                batch_results = await self._process_batch(batch, "tr")
+                all_results.extend(batch_results)
+
+                updated, errors = await self._update_translations_in_db(batch_results, "tr")
+                logger.info(f"Batch {i // batch_size + 1}: Updated {updated}, Errors {errors}")
+
+                print(f"   ✅ Updated: {updated}, ❌ Errors: {errors}")
+
+                if i + batch_size < len(words):
+                    await asyncio.sleep(2)
+
+            successful = [r for r in all_results if r["success"]]
+            failed = [r for r in all_results if not r["success"]]
+
+            print(f"\n{'=' * 60}")
+            print(f"COMPLETED: English -> {target_language.upper()}")
+            print(f"Successfully updated: {len(successful)}/{len(words)} "
+                  f"({(len(successful) / len(words) * 100):.1f}%)")
+            print(f"Failed: {len(failed)}")
+            print(f"{'=' * 60}")
+
+            # Optional: Print first 10 translations as sample
+            print("\nSample of updated translations:")
+            for result in successful[:10]:
+                if result.get("current_translation") != result.get("new_translation"):
+                    print(f"  {result['text']}: '{result['current_translation']}' -> '{result['new_translation']}'")
+                else:
+                    print(f"  {result['text']}: '{result['new_translation']}' (unchanged)")
+
+
+            return {
+                "message": "Turkish translations updated successfully",
+                "stats": {
+                    "total_words": len(words),
+                    "successfully_updated": len(successful),
+                    "failed_to_update": len(failed),
+                    "completion_percentage": f"{(len(successful) / len(words) * 100):.1f}%"
+                }
+            }
+
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"English to Turkish re-translation failed: {str(e)}", exc_info=True)
+            raise
+
+    async def close(self):
+        """Clean up HTTP client"""
+        await self.client.aclose()
+
+
+
+
+
+
+
+
+class AITranslateSpanishWords:
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not self.api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY is not set.")
+
+        self.client = httpx.AsyncClient(timeout=60.0)
+        self.deepseek_url = "https://api.deepseek.com/v1/chat/completions"
+        self.auth_headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    async def _get_spanish_words_with_translations(self, target_language_code: str) -> List[Dict[str, Any]]:
+        """
+        Get all Spanish words that already have translations to update
+        """
+        try:
+
+            query = select(
+                Word.id,
+                Word.text,
+                Word.level,
+                Translation.id.label("translation_id"),
+                Translation.translated_text.label("current_translation")
+            ).join(
+                Translation, Translation.source_word_id == Word.id
+            ).where(
+                and_(
+                    Word.language_code == "es",  # Spanish source
+                    Translation.target_language_code == target_language_code
+                )
+            ).order_by(Word.id)
+
+            result = await self.db.execute(query)
+            rows = result.all()
+
+            return [
+                {
+                    "word_id": row.id,
+                    "text": row.text,
+                    "level": row.level,
+                    "translation_id": row.translation_id,
+                    "current_translation": row.current_translation
+                }
+                for row in rows
+            ]
+        except Exception as e:
+            logger.error(f"Error fetching Spanish words with translations: {str(e)}")
+            raise
+
+    async def _call_deepseek_api_for_translation(self, word: str, source_lang: str, target_lang: str) -> str:
+        """
+        Call DeepSeek API to translate from Spanish to target language
+        """
+        language_names = {
+            "en": "English",
+            "ru": "Russian",
+            "tr": "Turkish",
+            "es": "Spanish"
+        }
+
+        source_name = language_names.get(source_lang, source_lang)
+        target_name = language_names.get(target_lang, target_lang)
+
+        prompt = f"""
+        Translate the {source_name} word "{word}" to {target_name}.
+
+        IMPORTANT RULES:
+        1. Return ONLY the single most accurate and common translation
+        2. Use the standard dictionary form
+        3. No explanations, no examples, no extra text
+        4. Be precise and use the most frequent translation used by language learners
+
+        Translation:
+        """
+
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a professional translator. Always respond with ONLY the translated word, nothing else."
+                },
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "max_tokens": 30,
+            "stop": ["\n", ".", ";"]
+        }
+
+        try:
+            response = await self.client.post(
+                self.deepseek_url,
+                headers=self.auth_headers,
+                json=payload,
+                timeout=30.0
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                translated_word = result["choices"][0]["message"]["content"].strip()
+
+                # Clean the response
+                translated_word = translated_word.split('\n')[0].strip()
+                translated_word = translated_word.strip('"\'«»„""')
+                translated_word = translated_word.split('(')[0].strip()
+                translated_word = translated_word.split(',')[0].strip()
+
+                return translated_word
+            else:
+                logger.error(f"DeepSeek API error: {response.status_code}")
+                raise Exception(f"API error: {response.status_code}")
+
+        except httpx.TimeoutException:
+            logger.error("DeepSeek API timeout")
+            raise Exception("API timeout")
+        except Exception as e:
+            logger.error(f"DeepSeek API call failed: {str(e)}")
+            raise
+
+    async def _translate_with_retry(self, word_data: Dict, target_language: str, max_retries: int = 3) -> Dict:
+        """
+        Translate a Spanish word with retry logic
+        """
+        for attempt in range(max_retries):
+            try:
+                new_translation = await self._call_deepseek_api_for_translation(
+                    word_data["text"],
+                    "es",  # Source is Spanish
+                    target_language
+                )
+
+                if not new_translation or len(new_translation.strip()) == 0:
+                    raise Exception("Empty translation received")
+
+                # PRINT the translation comparison
+                print(f"Spanish['{word_data['text']}'] -> {target_language.upper()}['{new_translation}'] "
+                      f"old translation ['{word_data.get('current_translation', 'N/A')}']")
+
+                if len(new_translation.split()) > 3:
+                    new_translation = new_translation.split()[0]
+
+                return {
+                    **word_data,
+                    "new_translation": new_translation,
+                    "success": True,
+                    "error": None
+                }
+
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    print(f"FAILED: Spanish['{word_data['text']}'] -> {target_language.upper()} "
+                          f"Error: {str(e)}")
+                    logger.error(f"Failed to translate '{word_data['text']}' after {max_retries} attempts: {str(e)}")
+                    return {
+                        **word_data,
+                        "new_translation": None,
+                        "success": False,
+                        "error": str(e)
+                    }
+
+                wait_time = 2 ** attempt
+                print(f"Retrying '{word_data['text']}' (attempt {attempt + 1}/{max_retries})")
+                await asyncio.sleep(wait_time)
+
+    async def _process_batch(self, batch: List[Dict], target_language: str) -> List[Dict]:
+        """
+        Process a batch of Spanish words concurrently
+        """
+        # Optional: Print batch words
+        print(f"  Processing Spanish words: {', '.join([w['text'] for w in batch[:5]])}...")
+
+        tasks = []
+        for word_data in batch:
+            task = self._translate_with_retry(word_data, target_language)
+            tasks.append(task)
+
+        results = await asyncio.gather(*tasks)
+        return results
+
+    async def _update_translations_in_db(self, translations: List[Dict], target_language: str):
+        """
+        Update translations in the database
+        """
+
+        updated_count = 0
+        error_count = 0
+
+        for item in translations:
+            if item["success"] and item["new_translation"]:
+                try:
+                    stmt = update(Translation).where(
+                        Translation.id == item["translation_id"]
+                    ).values(
+                        translated_text=item["new_translation"]
+                    )
+
+                    await self.db.execute(stmt)
+                    updated_count += 1
+
+                except Exception as e:
+                    error_count += 1
+                    logger.error(f"Failed to update translation ID {item['translation_id']}: {str(e)}")
+
+        await self.db.commit()
+        return updated_count, error_count
+
+    async def ai_translate_spanish_word_to_english(self):
+        """
+        Re-translate all Spanish words to English (update existing translations)
+        """
+        print(f"\n{'=' * 60}")
+        print(f"STARTING: Spanish -> ENGLISH translation")
+
+        try:
+            words = await self._get_spanish_words_with_translations("en")
+
+            if not words:
+                print("No English translations found to update")
+                return {"message": "No English translations found to update", "count": 0}
+
+            print(f"Total words to process: {len(words)}")
+            print(f"Processing in batches of 20")
+            print(f"{'=' * 60}\n")
+
+            batch_size = 20
+            all_results = []
+
+            for i in range(0, len(words), batch_size):
+                batch = words[i:i + batch_size]
+
+                print(f"\n📦 Batch {i // batch_size + 1}/{(len(words) - 1) // batch_size + 1}")
+                print(f"   Processing words {i + 1} to {min(i + batch_size, len(words))}")
+
+                batch_results = await self._process_batch(batch, "en")
+                all_results.extend(batch_results)
+
+                updated, errors = await self._update_translations_in_db(batch_results, "en")
+                print(f"   ✅ Updated: {updated}, ❌ Errors: {errors}")
+
+                if i + batch_size < len(words):
+                    await asyncio.sleep(2)
+
+            successful = [r for r in all_results if r["success"]]
+            failed = [r for r in all_results if not r["success"]]
+
+            print(f"\n{'=' * 60}")
+            print(f"COMPLETED: Spanish -> ENGLISH")
+            print(f"Successfully updated: {len(successful)}/{len(words)} "
+                  f"({(len(successful) / len(words) * 100):.1f}%)")
+            print(f"Failed: {len(failed)}")
+            print(f"{'=' * 60}")
+
+            # Sample translations
+            print("\nSample of updated translations:")
+            for result in successful[:10]:
+                if result.get("current_translation") != result.get("new_translation"):
+                    print(f"  {result['text']}: '{result['current_translation']}' -> '{result['new_translation']}'")
+                else:
+                    print(f"  {result['text']}: '{result['new_translation']}' (unchanged)")
+
+            return {
+                "message": "Spanish to English translations updated successfully",
+                "stats": {
+                    "total_words": len(words),
+                    "successfully_updated": len(successful),
+                    "failed_to_update": len(failed),
+                    "completion_percentage": f"{(len(successful) / len(words) * 100):.1f}%"
+                }
+            }
+
+        except Exception as e:
+            await self.db.rollback()
+            print(f"\n❌ ERROR: Spanish to English translation failed: {str(e)}")
+            logger.error(f"Spanish to English translation failed: {str(e)}", exc_info=True)
+            raise
+
+    async def ai_translate_spanish_word_to_russian(self):
+        """
+        Re-translate all Spanish words to Russian (update existing translations)
+        """
+        print(f"\n{'=' * 60}")
+        print(f"STARTING: Spanish -> RUSSIAN translation")
+
+        try:
+            words = await self._get_spanish_words_with_translations("ru")
+
+            if not words:
+                print("No Russian translations found to update")
+                return {"message": "No Russian translations found to update", "count": 0}
+
+            print(f"Total words to process: {len(words)}")
+            print(f"Processing in batches of 20")
+            print(f"{'=' * 60}\n")
+
+            batch_size = 20
+            all_results = []
+
+            for i in range(0, len(words), batch_size):
+                batch = words[i:i + batch_size]
+
+                print(f"\n📦 Batch {i // batch_size + 1}/{(len(words) - 1) // batch_size + 1}")
+                print(f"   Processing words {i + 1} to {min(i + batch_size, len(words))}")
+
+                batch_results = await self._process_batch(batch, "ru")
+                all_results.extend(batch_results)
+
+                updated, errors = await self._update_translations_in_db(batch_results, "ru")
+                print(f"   ✅ Updated: {updated}, ❌ Errors: {errors}")
+
+                if i + batch_size < len(words):
+                    await asyncio.sleep(2)
+
+            successful = [r for r in all_results if r["success"]]
+            failed = [r for r in all_results if not r["success"]]
+
+            print(f"\n{'=' * 60}")
+            print(f"COMPLETED: Spanish -> RUSSIAN")
+            print(f"Successfully updated: {len(successful)}/{len(words)} "
+                  f"({(len(successful) / len(words) * 100):.1f}%)")
+            print(f"Failed: {len(failed)}")
+            print(f"{'=' * 60}")
+
+            return {
+                "message": "Spanish to Russian translations updated successfully",
+                "stats": {
+                    "total_words": len(words),
+                    "successfully_updated": len(successful),
+                    "failed_to_update": len(failed),
+                    "completion_percentage": f"{(len(successful) / len(words) * 100):.1f}%"
+                }
+            }
+
+        except Exception as e:
+            await self.db.rollback()
+            print(f"\n❌ ERROR: Spanish to Russian translation failed: {str(e)}")
+            logger.error(f"Spanish to Russian translation failed: {str(e)}", exc_info=True)
+            raise
+
+    async def ai_translate_spanish_word_to_turkish(self):
+        """
+        Re-translate all Spanish words to Turkish (update existing translations)
+        """
+        print(f"\n{'=' * 60}")
+        print(f"STARTING: Spanish -> TURKISH translation")
+
+        try:
+            words = await self._get_spanish_words_with_translations("tr")
+
+            if not words:
+                print("No Turkish translations found to update")
+                return {"message": "No Turkish translations found to update", "count": 0}
+
+            print(f"Total words to process: {len(words)}")
+            print(f"Processing in batches of 20")
+            print(f"{'=' * 60}\n")
+
+            batch_size = 20
+            all_results = []
+
+            for i in range(0, len(words), batch_size):
+                batch = words[i:i + batch_size]
+
+                print(f"\n📦 Batch {i // batch_size + 1}/{(len(words) - 1) // batch_size + 1}")
+                print(f"   Processing words {i + 1} to {min(i + batch_size, len(words))}")
+
+                batch_results = await self._process_batch(batch, "tr")
+                all_results.extend(batch_results)
+
+                updated, errors = await self._update_translations_in_db(batch_results, "tr")
+                print(f"   ✅ Updated: {updated}, ❌ Errors: {errors}")
+
+                if i + batch_size < len(words):
+                    await asyncio.sleep(2)
+
+            successful = [r for r in all_results if r["success"]]
+            failed = [r for r in all_results if not r["success"]]
+
+            print(f"\n{'=' * 60}")
+            print(f"COMPLETED: Spanish -> TURKISH")
+            print(f"Successfully updated: {len(successful)}/{len(words)} "
+                  f"({(len(successful) / len(words) * 100):.1f}%)")
+            print(f"Failed: {len(failed)}")
+            print(f"{'=' * 60}")
+
+            return {
+                "message": "Spanish to Turkish translations updated successfully",
+                "stats": {
+                    "total_words": len(words),
+                    "successfully_updated": len(successful),
+                    "failed_to_update": len(failed),
+                    "completion_percentage": f"{(len(successful) / len(words) * 100):.1f}%"
+                }
+            }
+
+        except Exception as e:
+            await self.db.rollback()
+            print(f"\n❌ ERROR: Spanish to Turkish translation failed: {str(e)}")
+            logger.error(f"Spanish to Turkish translation failed: {str(e)}", exc_info=True)
+            raise
+
+    async def close(self):
+        """Clean up HTTP client"""
+        await self.client.aclose()
+
+
+
+
+
+
+
+class AITranslateRussianWords:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not self.api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY is not set.")
+
+        self.client = httpx.AsyncClient(timeout=60.0)
+        self.deepseek_url = "https://api.deepseek.com/v1/chat/completions"
+        self.auth_headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    async def _get_russian_words_with_translations(self, target_language_code: str) -> List[Dict[str, Any]]:
+        """
+        Get all Russian words that already have translations to update
+        """
+        try:
+
+            query = select(
+                Word.id,
+                Word.text,
+                Word.level,
+                Translation.id.label("translation_id"),
+                Translation.translated_text.label("current_translation")
+            ).join(
+                Translation, Translation.source_word_id == Word.id
+            ).where(
+                and_(
+                    Word.language_code == "ru",  # Russian source
+                    Translation.target_language_code == target_language_code
+                )
+            ).order_by(Word.id)
+
+            result = await self.db.execute(query)
+            rows = result.all()
+
+            return [
+                {
+                    "word_id": row.id,
+                    "text": row.text,
+                    "level": row.level,
+                    "translation_id": row.translation_id,
+                    "current_translation": row.current_translation
+                }
+                for row in rows
+            ]
+        except Exception as e:
+            logger.error(f"Error fetching Russian words with translations: {str(e)}")
+            raise
+
+    async def _call_deepseek_api_for_translation(self, word: str, source_lang: str, target_lang: str) -> str:
+        """
+        Call DeepSeek API to translate from Russian to target language
+        """
+        language_names = {
+            "en": "English",
+            "es": "Spanish",
+            "tr": "Turkish",
+            "ru": "Russian"
+        }
+
+        source_name = language_names.get(source_lang, source_lang)
+        target_name = language_names.get(target_lang, target_lang)
+
+        prompt = f"""
+        Translate the {source_name} word "{word}" to {target_name}.
+
+        IMPORTANT RULES:
+        1. Return ONLY the single most accurate and common translation
+        2. Use the standard dictionary form
+        3. No explanations, no examples, no extra text
+        4. Be precise and use the most frequent translation used by language learners
+
+        Translation:
+        """
+
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a professional translator. Always respond with ONLY the translated word, nothing else."
+                },
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "max_tokens": 30,
+            "stop": ["\n", ".", ";"]
+        }
+
+        try:
+            response = await self.client.post(
+                self.deepseek_url,
+                headers=self.auth_headers,
+                json=payload,
+                timeout=30.0
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                translated_word = result["choices"][0]["message"]["content"].strip()
+
+                # Clean the response
+                translated_word = translated_word.split('\n')[0].strip()
+                translated_word = translated_word.strip('"\'«»„""')
+                translated_word = translated_word.split('(')[0].strip()
+                translated_word = translated_word.split(',')[0].strip()
+
+                return translated_word
+            else:
+                logger.error(f"DeepSeek API error: {response.status_code}")
+                raise Exception(f"API error: {response.status_code}")
+
+        except httpx.TimeoutException:
+            logger.error("DeepSeek API timeout")
+            raise Exception("API timeout")
+        except Exception as e:
+            logger.error(f"DeepSeek API call failed: {str(e)}")
+            raise
+
+    async def _translate_with_retry(self, word_data: Dict, target_language: str, max_retries: int = 3) -> Dict:
+        """
+        Translate a Russian word with retry logic
+        """
+        for attempt in range(max_retries):
+            try:
+                new_translation = await self._call_deepseek_api_for_translation(
+                    word_data["text"],
+                    "ru",  # Source is Russian
+                    target_language
+                )
+
+                if not new_translation or len(new_translation.strip()) == 0:
+                    raise Exception("Empty translation received")
+
+                # PRINT the translation comparison
+                print(f"Russian['{word_data['text']}'] -> {target_language.upper()}['{new_translation}'] "
+                      f"old translation ['{word_data.get('current_translation', 'N/A')}']")
+
+                if len(new_translation.split()) > 3:
+                    new_translation = new_translation.split()[0]
+
+                return {
+                    **word_data,
+                    "new_translation": new_translation,
+                    "success": True,
+                    "error": None
+                }
+
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    print(f"FAILED: Russian['{word_data['text']}'] -> {target_language.upper()} "
+                          f"Error: {str(e)}")
+                    logger.error(f"Failed to translate '{word_data['text']}' after {max_retries} attempts: {str(e)}")
+                    return {
+                        **word_data,
+                        "new_translation": None,
+                        "success": False,
+                        "error": str(e)
+                    }
+
+                wait_time = 2 ** attempt
+                print(f"Retrying '{word_data['text']}' (attempt {attempt + 1}/{max_retries})")
+                await asyncio.sleep(wait_time)
+
+    async def _process_batch(self, batch: List[Dict], target_language: str) -> List[Dict]:
+        """
+        Process a batch of Russian words concurrently
+        """
+        # Print first few words in batch
+        print(f"  Processing Russian words: {', '.join([w['text'] for w in batch[:5]])}...")
+
+        tasks = []
+        for word_data in batch:
+            task = self._translate_with_retry(word_data, target_language)
+            tasks.append(task)
+
+        results = await asyncio.gather(*tasks)
+        return results
+
+    async def _update_translations_in_db(self, translations: List[Dict], target_language: str):
+        """
+        Update translations in the database
+        """
+
+        updated_count = 0
+        error_count = 0
+
+        for item in translations:
+            if item["success"] and item["new_translation"]:
+                try:
+                    stmt = update(Translation).where(
+                        Translation.id == item["translation_id"]
+                    ).values(
+                        translated_text=item["new_translation"]
+                    )
+
+                    await self.db.execute(stmt)
+                    updated_count += 1
+
+                except Exception as e:
+                    error_count += 1
+                    logger.error(f"Failed to update translation ID {item['translation_id']}: {str(e)}")
+
+        await self.db.commit()
+        return updated_count, error_count
+
+    async def ai_translate_russian_word_to_english(self):
+        """
+        Re-translate all Russian words to English (update existing translations)
+        """
+        print(f"\n{'=' * 60}")
+        print(f"STARTING: Russian -> ENGLISH translation")
+
+        try:
+            words = await self._get_russian_words_with_translations("en")
+
+            if not words:
+                print("No English translations found to update")
+                return {"message": "No English translations found to update", "count": 0}
+
+            print(f"Total words to process: {len(words)}")
+            print(f"Processing in batches of 20")
+            print(f"{'=' * 60}\n")
+
+            batch_size = 20
+            all_results = []
+
+            for i in range(0, len(words), batch_size):
+                batch = words[i:i + batch_size]
+
+                print(f"\n📦 Batch {i // batch_size + 1}/{(len(words) - 1) // batch_size + 1}")
+                print(f"   Processing words {i + 1} to {min(i + batch_size, len(words))}")
+
+                batch_results = await self._process_batch(batch, "en")
+                all_results.extend(batch_results)
+
+                updated, errors = await self._update_translations_in_db(batch_results, "en")
+                print(f"   ✅ Updated: {updated}, ❌ Errors: {errors}")
+
+                if i + batch_size < len(words):
+                    await asyncio.sleep(2)
+
+            successful = [r for r in all_results if r["success"]]
+            failed = [r for r in all_results if not r["success"]]
+
+            print(f"\n{'=' * 60}")
+            print(f"COMPLETED: Russian -> ENGLISH")
+            print(f"Successfully updated: {len(successful)}/{len(words)} "
+                  f"({(len(successful) / len(words) * 100):.1f}%)")
+            print(f"Failed: {len(failed)}")
+            print(f"{'=' * 60}")
+
+            # Sample translations
+            print("\nSample of updated translations:")
+            for result in successful[:10]:
+                if result.get("current_translation") != result.get("new_translation"):
+                    print(f"  {result['text']}: '{result['current_translation']}' -> '{result['new_translation']}'")
+                else:
+                    print(f"  {result['text']}: '{result['new_translation']}' (unchanged)")
+
+            return {
+                "message": "Russian to English translations updated successfully",
+                "stats": {
+                    "total_words": len(words),
+                    "successfully_updated": len(successful),
+                    "failed_to_update": len(failed),
+                    "completion_percentage": f"{(len(successful) / len(words) * 100):.1f}%"
+                }
+            }
+
+        except Exception as e:
+            await self.db.rollback()
+            print(f"\n❌ ERROR: Russian to English translation failed: {str(e)}")
+            logger.error(f"Russian to English translation failed: {str(e)}", exc_info=True)
+            raise
+
+    async def ai_translate_russian_word_to_spanish(self):
+        """
+        Re-translate all Russian words to Spanish (update existing translations)
+        """
+        print(f"\n{'=' * 60}")
+        print(f"STARTING: Russian -> SPANISH translation")
+
+        try:
+            words = await self._get_russian_words_with_translations("es")
+
+            if not words:
+                print("No Spanish translations found to update")
+                return {"message": "No Spanish translations found to update", "count": 0}
+
+            print(f"Total words to process: {len(words)}")
+            print(f"Processing in batches of 20")
+            print(f"{'=' * 60}\n")
+
+            batch_size = 20
+            all_results = []
+
+            for i in range(0, len(words), batch_size):
+                batch = words[i:i + batch_size]
+
+                print(f"\n📦 Batch {i // batch_size + 1}/{(len(words) - 1) // batch_size + 1}")
+                print(f"   Processing words {i + 1} to {min(i + batch_size, len(words))}")
+
+                batch_results = await self._process_batch(batch, "es")
+                all_results.extend(batch_results)
+
+                updated, errors = await self._update_translations_in_db(batch_results, "es")
+                print(f"   ✅ Updated: {updated}, ❌ Errors: {errors}")
+
+                if i + batch_size < len(words):
+                    await asyncio.sleep(2)
+
+            successful = [r for r in all_results if r["success"]]
+            failed = [r for r in all_results if not r["success"]]
+
+            print(f"\n{'=' * 60}")
+            print(f"COMPLETED: Russian -> SPANISH")
+            print(f"Successfully updated: {len(successful)}/{len(words)} "
+                  f"({(len(successful) / len(words) * 100):.1f}%)")
+            print(f"Failed: {len(failed)}")
+            print(f"{'=' * 60}")
+
+            return {
+                "message": "Russian to Spanish translations updated successfully",
+                "stats": {
+                    "total_words": len(words),
+                    "successfully_updated": len(successful),
+                    "failed_to_update": len(failed),
+                    "completion_percentage": f"{(len(successful) / len(words) * 100):.1f}%"
+                }
+            }
+
+        except Exception as e:
+            await self.db.rollback()
+            print(f"\n❌ ERROR: Russian to Spanish translation failed: {str(e)}")
+            logger.error(f"Russian to Spanish translation failed: {str(e)}", exc_info=True)
+            raise
+
+    async def ai_translate_russian_word_to_turkish(self):
+        """
+        Re-translate all Russian words to Turkish (update existing translations)
+        """
+        print(f"\n{'=' * 60}")
+        print(f"STARTING: Russian -> TURKISH translation")
+
+        try:
+            words = await self._get_russian_words_with_translations("tr")
+
+            if not words:
+                print("No Turkish translations found to update")
+                return {"message": "No Turkish translations found to update", "count": 0}
+
+            print(f"Total words to process: {len(words)}")
+            print(f"Processing in batches of 20")
+            print(f"{'=' * 60}\n")
+
+            batch_size = 20
+            all_results = []
+
+            for i in range(0, len(words), batch_size):
+                batch = words[i:i + batch_size]
+
+                print(f"\n📦 Batch {i // batch_size + 1}/{(len(words) - 1) // batch_size + 1}")
+                print(f"   Processing words {i + 1} to {min(i + batch_size, len(words))}")
+
+                batch_results = await self._process_batch(batch, "tr")
+                all_results.extend(batch_results)
+
+                updated, errors = await self._update_translations_in_db(batch_results, "tr")
+                print(f"   ✅ Updated: {updated}, ❌ Errors: {errors}")
+
+                if i + batch_size < len(words):
+                    await asyncio.sleep(2)
+
+            successful = [r for r in all_results if r["success"]]
+            failed = [r for r in all_results if not r["success"]]
+
+            print(f"\n{'=' * 60}")
+            print(f"COMPLETED: Russian -> TURKISH")
+            print(f"Successfully updated: {len(successful)}/{len(words)} "
+                  f"({(len(successful) / len(words) * 100):.1f}%)")
+            print(f"Failed: {len(failed)}")
+            print(f"{'=' * 60}")
+
+            return {
+                "message": "Russian to Turkish translations updated successfully",
+                "stats": {
+                    "total_words": len(words),
+                    "successfully_updated": len(successful),
+                    "failed_to_update": len(failed),
+                    "completion_percentage": f"{(len(successful) / len(words) * 100):.1f}%"
+                }
+            }
+
+        except Exception as e:
+            await self.db.rollback()
+            print(f"\n❌ ERROR: Russian to Turkish translation failed: {str(e)}")
+            logger.error(f"Russian to Turkish translation failed: {str(e)}", exc_info=True)
+            raise
+
+    async def close(self):
+        """Clean up HTTP client"""
+        await self.client.aclose()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 

@@ -3,7 +3,6 @@
 from pydantic import BaseModel, EmailStr, field_validator, Field
 
 
-
 class UserRegisterSchema(BaseModel):
 
     username: str | None
@@ -29,7 +28,6 @@ class UserTokenSchema(BaseModel):
     sub: str
     email: EmailStr()
     project_id: int
-
 
 
 class UserLoginSchema(BaseModel):
@@ -64,4 +62,7 @@ class ChooseLangSchema(BaseModel):
 class ChangeWordStatusSchema(BaseModel):
     word_id: int
     action: str
+
+
+
 

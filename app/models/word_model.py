@@ -1,16 +1,12 @@
 
+from datetime import datetime
+from enum import Enum
+
 from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Boolean, Table
 from sqlalchemy.orm import relationship, mapped_column
-from enum import Enum
-from datetime import datetime
+
 from app.models.base_model import Base
-
-
-# from app.models.user_model import Language
-
 from app.models.language_model import Language
-
-# Base = declarative_base()
 
 
 class CEFRLevel(str, Enum):
@@ -42,7 +38,6 @@ class Category(Base):
         return f"Category(id={self.id}, name='{self.name}')"
 
 
-
 class Word(Base):
     __tablename__ = "words"
     id = Column(Integer, primary_key=True)
@@ -63,6 +58,7 @@ class Word(Base):
 
     def __repr__(self):
         return f'Word(id:({self.id}), text({self.text}, language_code({self.language_code}, frequency_rank:({self.frequency_rank}, level({self.level})))))'
+
 
 class WordMeaning(Base):
     __tablename__ = "word_meanings"
@@ -95,9 +91,6 @@ class Translation(Base):
     target_language = relationship("Language", lazy="joined")
 
 
-
-
-# Define SentenceTranslation BEFORE Sentence
 class SentenceTranslation(Base):
     __tablename__ = "sentence_translations"
     id = mapped_column(Integer, primary_key=True)
@@ -111,7 +104,6 @@ class SentenceTranslation(Base):
     # language = relationship("Language")
 
     language = relationship("Language", lazy="joined")
-
 
 
 class Sentence(Base):

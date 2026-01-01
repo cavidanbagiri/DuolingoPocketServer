@@ -27,10 +27,18 @@ from app.schemas.favorite_schemas import (FavoriteWordBase, FavoriteWordResponse
                                           FavoriteFetchWordResponse, CategoryWordsResponse, MoveWordResponse, MoveWordRequest)
 
 from app.repositories.structure_repository import (CreateMainStructureRepository,
-                                                    DefineCommonCategories,
-                                                    GenerateEnglishSentence, TranslateEnglishSentencesRepository, TranslateEnglishWord, DefinePosCategoryEnglishRepository, GoogleTranslateEnglishWord,
-                                                    CreateMainStructureForRussianRepository, GenerateRussianSentences, TranslateRussianSentences,TranslateRussianWord, DefinePosCategoryRussianRepository, GoogleTranslateRussianWord,
-                                                    CreateMainStructureForSpanishRepository, GenerateSpanishSentences, TranslateSpanishSentences, TranslateSpanishWord, DefinePosCategorySpanishRepository, GoogleTranslateSpanishWord)
+                                                   DefineCommonCategories,
+                                                   GenerateEnglishSentence, TranslateEnglishSentencesRepository,
+                                                   TranslateEnglishWord, DefinePosCategoryEnglishRepository,
+                                                   GoogleTranslateEnglishWord,
+                                                   CreateMainStructureForRussianRepository, GenerateRussianSentences,
+                                                   TranslateRussianSentences, TranslateRussianWord,
+                                                   DefinePosCategoryRussianRepository, GoogleTranslateRussianWord,
+                                                   CreateMainStructureForSpanishRepository, GenerateSpanishSentences,
+                                                   TranslateSpanishSentences, TranslateSpanishWord,
+                                                   DefinePosCategorySpanishRepository, GoogleTranslateSpanishWord,
+                                                   AITranslateEnglishWords, AITranslateSpanishWords,
+                                                   AITranslateRussianWords)
 
 from app.services.ai_service import AIService
 
@@ -444,4 +452,193 @@ async def define_pos_category_english_word(
         await db.rollback()
         logger.error(f"💥 Word Pos Category failed: {str(ex)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+
+
+
+
+######################################################################################################### Set the languages translations again with ai
+
+
+################## English
+
+
+@router.post('/ai_translate_english_words_to_spanish', status_code=201)
+async def ai_translate_english_word(db: AsyncSession = Depends(get_db)):
+
+    """
+    Translate English Words to Turkish, Spanish and Russian language
+    :param db:
+    :return:
+    """
+
+    try:
+        repo = AITranslateEnglishWords(db)
+        result = await repo.ai_translate_english_word_to_spanish()
+        return {"success": True, "data": result}
+
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"<UNK> Word AI translation failed: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+@router.post('/ai_translate_english_words_to_turkish', status_code=201)
+async def ai_translate_english_word(db: AsyncSession = Depends(get_db)):
+    """
+    Translate English Words to Turkish, Spanish and Russian language
+    :param db:
+    :return:
+    """
+
+    try:
+        repo = AITranslateEnglishWords(db)
+        result = await repo.ai_translate_english_word_to_turkish()
+        return {"success": True, "data": result}
+
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"<UNK> Word AI translation failed: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+@router.post('/ai_translate_english_words_to_russian', status_code=201)
+async def ai_translate_english_word(db: AsyncSession = Depends(get_db)):
+    """
+    Translate English Words to Turkish, Spanish and Russian language
+    :param db:
+    :return:
+    """
+
+    try:
+        repo = AITranslateEnglishWords(db)
+        result = await repo.ai_translate_english_word_to_russian()
+        return {"success": True, "data": result}
+
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"<UNK> Word AI translation failed: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+
+
+
+################## Spanish
+
+@router.post('/ai_translate_spanish_words_to_english', status_code=201)
+async def ai_translate_spanish_word(db: AsyncSession = Depends(get_db)):
+
+    """
+    Translate Spanish Words to Turkish, English and Russian language
+    :param db:
+    """
+
+    try:
+        repo = AITranslateSpanishWords(db)
+        result = await repo.ai_translate_spanish_word_to_english()
+        return {"success": True, "data": result}
+
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"<UNK> Word AI translation failed: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+@router.post('/ai_translate_spanish_words_to_turkish', status_code=201)
+async def ai_translate_spanish_word(db: AsyncSession = Depends(get_db)):
+    """
+    Translate Spanish Words to Turkish, English and Russian language
+    :param db:
+    """
+
+    try:
+        repo = AITranslateSpanishWords(db)
+        result = await repo.ai_translate_spanish_word_to_turkish()
+        return {"success": True, "data": result}
+
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"<UNK> Word AI translation failed: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+@router.post('/ai_translate_spanish_words_to_russian', status_code=201)
+async def ai_translate_spanish_word(db: AsyncSession = Depends(get_db)):
+    """
+    Translate Spanish Words to Turkish, English and Russian language
+    :param db:
+    """
+
+    try:
+        repo = AITranslateSpanishWords(db)
+        result = await repo.ai_translate_spanish_word_to_russian()
+        return {"success": True, "data": result}
+
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"<UNK> Word AI translation failed: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+
+
+################## Russian
+
+@router.post('/ai_translate_russian_words_to_english', status_code=201)
+async def ai_translate_russian_word(db: AsyncSession = Depends(get_db)):
+
+    """
+    Translate Russian Words to English, Spanish and Turkish language
+    :param db:
+    """
+
+    try:
+        repo = AITranslateRussianWords(db)
+        result = await repo.ai_translate_russian_word_to_english()
+        return {"success": True, "data": result}
+
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"<UNK> Word AI translation failed: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+@router.post('/ai_translate_russian_words_to_turkish', status_code=201)
+async def ai_translate_russian_word(db: AsyncSession = Depends(get_db)):
+    """
+    Translate Russian Words to English, Spanish and Turkish language
+    :param db:
+    """
+
+    try:
+        repo = AITranslateRussianWords(db)
+        result = await repo.ai_translate_russian_word_to_turkish()
+        return {"success": True, "data": result}
+
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"<UNK> Word AI translation failed: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+@router.post('/ai_translate_russian_words_to_spanish', status_code=201)
+async def ai_translate_russian_word(db: AsyncSession = Depends(get_db)):
+    """
+    Translate Russian Words to English, Spanish and Turkish language
+    :param db:
+    """
+
+    try:
+        repo = AITranslateRussianWords(db)
+        result = await repo.ai_translate_russian_word_to_spanish()
+        return {"success": True, "data": result}
+
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"<UNK> Word AI translation failed: {str(ex)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
 

@@ -25,35 +25,6 @@ logger = setup_logger(__name__, "user.log")
 
 router = APIRouter()
 
-#
-# @router.post('/register', status_code=201)
-# async def register(response: Response, register_data: UserRegisterSchema,
-#                    db_session: Annotated[AsyncSession, Depends(get_db)]):
-#     repository = UserRegisterRepository(db_session)
-#
-#     try:
-#         data = await repository.register(register_data)
-#
-#         response.headers["X-Content-Type-Options"] = "nosniff"
-#         response.headers["X-Frame-Options"] = "DENY"
-#
-#         response.set_cookie('refresh_token', data.get('refresh_token'),
-#                             httponly=True,
-#                             secure=True,
-#                             samesite="none"
-#                             )
-#
-#         return {
-#             'user': data.get('user'),
-#             'access_token': data.get('access_token')
-#         }
-#
-#     except HTTPException as ex:
-#         raise ex
-#     except Exception as ex:  # Catch all other exceptions
-#         logger.exception("Unexpected error login user: %s", ex)
-#         raise HTTPException(500, 'Internal server error')
-
 @router.post('/register', status_code=201)
 async def register(response: Response, register_data: UserRegisterSchema,
                    db_session: Annotated[AsyncSession, Depends(get_db)]):
@@ -266,36 +237,6 @@ async def logout(
         return {"message": "Logout successful"}
 
 
-# @router.post('/logout', status_code=200)
-# async def logout(
-#     request: Request,
-#     response: Response,
-#     # user_payload: Annotated[UserTokenSchema, Depends(TokenHandler.verify_access_token)],
-#     db: AsyncSession = Depends(get_db)
-# ):
-#     print('.............................logout start to work')
-#     user_payload = ''
-#     if not user_payload:
-#         return JSONResponse(status_code=401, content={"message": "Please login before logging out"})
-#     user_logout_repository = UserLogoutRepository(db)
-#     try:
-#         result = await user_logout_repository.logout(int(user_payload.get('sub')))
-#
-#         if result:
-#             response.delete_cookie(key="refresh_token")
-#             return{
-#                 "message": "Logout successful"
-#             }
-#
-#         return JSONResponse(status_code=500, content={"message": "Error logging out user"})
-#     except HTTPException as ex:
-#         return JSONResponse(status_code=200, content={"message": f"An error occurred during logout {ex}"})
-#     except Exception as e:
-#         logger.error(f"Error during logout: {str(e)}")
-#         return JSONResponse(status_code=500, content={"message": f"An error occurred during logout {e}"})
-
-
-
 
 @router.post('/setnative', status_code=201)
 async def set_native(
@@ -328,16 +269,6 @@ async def get_native_language(
         result = await repo.get_native(user_id)
 
         return result
-
-        # result = await db.execute(
-        #     select(UserModel.native).where(UserModel.id == user_id)
-        # )
-        # native_language = result.scalar_one_or_none()
-        #
-        # return {
-        #     'has_native': native_language is not None and native_language != '',
-        #     'native_language': native_language
-        # }
 
     except Exception as ex:
         logger.error(f"Error checking native language: {str(ex)}")
@@ -377,13 +308,6 @@ async def get_total_learned_words(
             status_code=500,
             detail="We're having trouble with the fetching total learned words size"
         )
-
-
-
-
-
-
-
 
 
 from pydantic import BaseModel, EmailStr
