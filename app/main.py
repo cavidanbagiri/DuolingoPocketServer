@@ -50,8 +50,8 @@ origins = [
     "https://w9999.app",
     "http://www.w9999.app",
     "https://w9999-web.onrender.com/",
-    "http://localhost:5173",
-    "http://192.168.1.101:5173"
+    # "http://localhost:5173",
+    # "http://192.168.1.101:5173"
 ]
 
 app.add_middleware(
