@@ -2419,8 +2419,8 @@ class ConversationContextRepository:
                 .where(ConversationContextModel.context_hash == context_hash)
             )
 
-            if active_only:
-                stmt = stmt.where(ConversationContextModel.is_active == True)
+            # if active_only:
+            #     stmt = stmt.where(ConversationContextModel.is_active == True)
 
             result = await self.db.execute(stmt)
             context = result.scalar_one_or_none()

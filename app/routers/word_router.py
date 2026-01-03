@@ -448,7 +448,7 @@ async def clear_context(
         raise HTTPException(status_code=500, detail="Failed to clear context")
 
 
-@router.get('/conversation_history')
+@router.get('/wordai/conversation_history')
 async def get_conversation_history(
         word: str,
         language: str,
@@ -459,6 +459,7 @@ async def get_conversation_history(
     Get conversation history for a specific word.
     Useful for displaying previous conversation in UI.
     """
+    # print('here is working................................')
     try:
         # Get user_id from token
         user_id = int(user_info.get('sub'))
