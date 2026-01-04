@@ -2819,7 +2819,7 @@ class GenerateAIQuestionRepository:
         """
         self.deepseek_api_key = os.getenv('DEEPSEEK_API_KEY')
         self.api_url = "https://api.deepseek.com/v1/chat/completions"
-        self.max_tokens = 1500
+        self.max_tokens = 6000
         self.max_context_messages = 10  # Keep last 10 messages for context
         self.db = db
 
@@ -3567,7 +3567,11 @@ RESPONSE GUIDELINES:
 
             full_ai_response = ""
 
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+            # Track if we've sent anything
+            has_sent_content = False
+
+            async with aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=300)) as session:  # Increased to 5 minutes
                 async with session.post(
                         self.api_url,
                         headers={
@@ -3578,7 +3582,7 @@ RESPONSE GUIDELINES:
                             "model": "deepseek-chat",
                             "messages": messages,
                             "temperature": 0.7,
-                            "max_tokens": 2000,
+                            "max_tokens": 6000,  # Increase max tokens for longer responses
                             "stream": True
                         }
                 ) as response:
@@ -3615,10 +3619,26 @@ RESPONSE GUIDELINES:
 
                                     if content:
                                         full_ai_response += content
+                                        has_sent_content = True
+                                        # Send content chunk
                                         yield f"data: {json.dumps({'content': content})}\n\n"
+
+                                        # Flush the buffer periodically for long responses
+                                        if len(full_ai_response) % 1000 == 0:
+                                            await asyncio.sleep(0.001)  # Small yield
                             except json.JSONDecodeError:
                                 continue
+                            except Exception as e:
+                                logger.error(f"Error processing chunk: {str(e)}")
+                                continue
 
+                    # If we never got DONE but have content, send completion
+                    if has_sent_content:
+                        yield f"data: {json.dumps({'done': True})}\n\n"
+
+        except asyncio.CancelledError:
+            logger.info("Direct chat stream was cancelled by client")
+            raise
         except Exception as e:
             logger.error(f"Direct chat streaming error: {str(e)}")
             yield f"data: {json.dumps({'error': f'Streaming failed: {str(e)}'})}\n\n"
