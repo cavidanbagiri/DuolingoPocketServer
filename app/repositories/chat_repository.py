@@ -413,52 +413,65 @@ class GetFriendsListRepository:
         Get user's friends list with their online status and last seen
         """
         try:
-            # Query friends through friendships table
-            stmt = (
+            # Query friends where user_id = current user
+            stmt_user_as_user = (
                 select(UserModel)
                 .join(
                     friendship,
-                    or_(
-                        friendship.c.user_id == self.user_id,
-                        friendship.c.friend_id == self.user_id
-                    )
-                )
-                .where(
                     and_(
-                        or_(
-                            friendship.c.user_id == UserModel.id,
-                            friendship.c.friend_id == UserModel.id
-                        ),
-                        UserModel.id != self.user_id,
-                        friendship.c.status == 'accepted'
+                        friendship.c.user_id == self.user_id,
+                        friendship.c.friend_id == UserModel.id
                     )
                 )
-                .options(
-                    selectinload(UserModel.profile)
-                )
-                .order_by(UserModel.username)
+                .where(friendship.c.status == 'accepted')
+                .options(selectinload(UserModel.profile))
             )
 
-            result = await self.db.execute(stmt)
-            friends = result.scalars().all()
+            # Query friends where user_id = friend (reverse direction)
+            stmt_user_as_friend = (
+                select(UserModel)
+                .join(
+                    friendship,
+                    and_(
+                        friendship.c.friend_id == self.user_id,
+                        friendship.c.user_id == UserModel.id
+                    )
+                )
+                .where(friendship.c.status == 'accepted')
+                .options(selectinload(UserModel.profile))
+            )
 
-            # Format response with friend info
+            # Execute both queries
+            result1 = await self.db.execute(stmt_user_as_user)
+            friends1 = result1.scalars().all()
+
+            result2 = await self.db.execute(stmt_user_as_friend)
+            friends2 = result2.scalars().all()
+
+            # Combine and deduplicate
+            all_friends = list(set(friends1 + friends2))
+
+            # Sort by username
+            all_friends.sort(key=lambda x: x.username)
+
+            # Format response
             formatted_friends = []
-            for friend in friends:
-                # Determine friendship direction to get friendship info
+            for friend in all_friends:
+                # Get the specific friendship record
                 friendship_stmt = select(friendship).where(
                     or_(
                         and_(
                             friendship.c.user_id == self.user_id,
-                            friendship.c.friend_id == friend.id
+                            friendship.c.friend_id == friend.id,
+                            friendship.c.status == 'accepted'
                         ),
                         and_(
                             friendship.c.user_id == friend.id,
-                            friendship.c.friend_id == self.user_id
+                            friendship.c.friend_id == self.user_id,
+                            friendship.c.status == 'accepted'
                         )
-                    ),
-                    friendship.c.status == 'accepted'
-                )
+                    )
+                ).limit(1)
 
                 friendship_result = await self.db.execute(friendship_stmt)
                 friendship_data = friendship_result.first()
@@ -476,9 +489,10 @@ class GetFriendsListRepository:
                     } if friend.profile else None,
                     "native_language": friend.native,
                     "is_premium": friend.is_premium,
-                    "friendship_created_at": friendship_data.created_at.isoformat() if friendship_data else None,
-                    "is_online": False,  # Will be updated by Express WebSocket
-                    "last_seen": None  # Will be updated by Express WebSocket
+                    "friendship_created_at": friendship_data[2].isoformat() if friendship_data and friendship_data[
+                        2] else None,
+                    "is_online": False,
+                    "last_seen": None
                 })
 
             return formatted_friends
@@ -722,7 +736,7 @@ class FriendRequestActionRepository:
                 friendship.insert().values(
                     user_id=request.receiver_id,
                     friend_id=request.sender_id,
-                    # status='accepted',
+                    status='accepted',
                     created_at=func.now()
                 )
             )
@@ -732,7 +746,7 @@ class FriendRequestActionRepository:
                 friendship.insert().values(
                     user_id=request.sender_id,
                     friend_id=request.receiver_id,
-                    # status='accepted',
+                    status='accepted',
                     created_at=func.now()
                 )
             )

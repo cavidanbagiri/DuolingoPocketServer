@@ -128,6 +128,7 @@ async def get_friends(
 ):
     """Get user's friends list"""
     try:
+        print('............... this is for fetching the friends')
         repo = GetFriendsListRepository(db=db,user_id=int(user_info.get('sub')))
         result = await repo.get_friends()
         return result
@@ -181,14 +182,12 @@ async def get_friend_requests(
     :param db:
     :return:
     """
-    print('............................ the friend requests is working and .....................................')
     try:
         repo = GetFriendRequestsRepository(
             db=db,
             user_id=int(user_info.get('sub'))
         )
         result = await repo.get_friend_requests()
-        print('the result............................................... is {}'.format(result))
         return result
     except HTTPException:
         raise
