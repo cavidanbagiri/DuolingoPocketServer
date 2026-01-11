@@ -1,17 +1,14 @@
 import os
-from typing import Any, Coroutine, Union
+from typing import Any, Coroutine, Union, Dict, Optional
 
 from fastapi import HTTPException
 
-from sqlalchemy import insert, select, delete, select, func
-from sqlalchemy.exc import NoResultFound, DBAPIError
-
-
+from sqlalchemy import insert, select, delete, select, func, update
+from sqlalchemy.exc import NoResultFound, DBAPIError, IntegrityError, SQLAlchemyError
 
 # services/reset_password_service.py
-import secrets
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from fastapi import HTTPException, status, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
@@ -23,7 +20,6 @@ import logging
 
 
 
-
 # New added for Google sign in
 import httpx
 from jose import jwt
@@ -31,9 +27,9 @@ from jose.exceptions import JWTError
 ###########################################
 
 from app.auth.refresh_token_handler import DeleteRefreshTokenRepository
-from app.schemas.user_schema import UserLoginSchema
+from app.schemas.user_schema import UserLoginSchema, EditUserProfileSchema
 
-from app.models.user_model import UserModel, TokenModel, UserLanguage, PasswordResetToken, UserWord
+from app.models.user_model import UserModel, TokenModel, UserLanguage, PasswordResetToken, UserWord, UserProfile
 
 from app.utils.hash_password import PasswordHash
 
@@ -161,13 +157,17 @@ class UserRegisterRepository:
 
         await self.refresh_token_repo.manage_refresh_token(user.id, refresh_token)
 
+        completed_user = await UserLoginRepository.get_user_with_profile(self.db, user.id)
+
+
         return {
-            'user': {
-                'sub': str(user.id),
-                'email': user.email,
-                'username': user.username,
-                'native': user.native,  # This should match what was saved
-            },
+            # 'user': {
+            #     'sub': str(user.id),
+            #     'email': user.email,
+            #     'username': user.username,
+            #     'native': user.native,  # This should match what was saved
+            # },
+            'user': completed_user,
             'access_token': access_token,
             'refresh_token': refresh_token
         }
@@ -204,17 +204,39 @@ class UserLoginRepository:
         self.check_user_available = CheckUserAvailable(self.db)
         self.refresh_token_repo = RefreshTokenRepository(self.db)
 
-
-    async def login(self, login_data: UserLoginSchema)-> dict:
+    async def login(self, login_data: UserLoginSchema) -> dict:
         try:
             logger.info(f'{login_data.email} try to login')
             user = await self.check_user_available.check_user_exists(login_data)
 
-
-            # Fetch existing target languages --->>>> New Added
+            # Get target languages
             stmt = select(UserLanguage.target_language_code).where(UserLanguage.user_id == user.id)
             result = await self.db.execute(stmt)
-            target_langs = [row[0] for row in result.all()]  # extract codes as list
+            target_langs = [row[0] for row in result.all()]
+
+            # Get profile data
+            # from models import UserProfile
+            profile_stmt = select(UserProfile).where(UserProfile.user_id == user.id)
+            profile_result = await self.db.execute(profile_stmt)
+            profile = profile_result.scalar_one_or_none()
+
+            # Format profile data
+            profile_data = None
+            if profile:
+                profile_data = {
+                    "first_name": profile.first_name,
+                    "middle_name": profile.middle_name,
+                    "last_name": profile.last_name,
+                    "date_of_birth": str(profile.date_of_birth) if profile.date_of_birth else None,
+                    "age": profile.age,
+                    "country": profile.country,
+                    "city": profile.city,
+                    "gender": profile.gender,
+                    "bio": profile.bio,
+                    "profile_image_url": profile.profile_image_url,
+                    "cover_image_url": profile.cover_image_url,
+                    "phone_number": profile.phone_number,
+                }
 
             token_data = {
                 'sub': str(user.id),
@@ -228,10 +250,22 @@ class UserLoginRepository:
 
             await self.refresh_token_repo.manage_refresh_token(user.id, refresh_token)
 
-            return self.return_data(user, access_token, refresh_token, target_langs)
+            return {
+                'user': {
+                    'sub': str(user.id),
+                    'email': user.email,
+                    'username': user.username,
+                    'native': user.native,
+                    'learning_targets': target_langs,
+                    'profile': profile_data  # Add profile data
+                },
+                'access_token': access_token,
+                'refresh_token': refresh_token
+            }
 
         except HTTPException as ex:
             raise
+
 
     @staticmethod
     def return_data(user: UserModel, access_token: str, refresh_token: str, target_langs: list[str]):
@@ -246,6 +280,57 @@ class UserLoginRepository:
             },
             'access_token': access_token,
             'refresh_token': refresh_token
+        }
+
+
+    @staticmethod
+    async def get_user_with_profile(db:AsyncSession, user_id: int) -> Dict[str, Any]:
+        """Get complete user data including profile"""
+
+        # Get user with profile
+        user_stmt = (
+            select(UserModel, UserProfile)
+            .outerjoin(UserProfile, UserModel.id == UserProfile.user_id)
+            .where(UserModel.id == user_id)
+        )
+        result = await db.execute(user_stmt)
+        user_data = result.first()
+
+        if not user_data:
+            return None
+
+        user, profile = user_data
+
+        # Get target languages
+        lang_stmt = select(UserLanguage.target_language_code).where(UserLanguage.user_id == user_id)
+        lang_result = await db.execute(lang_stmt)
+        target_langs = [row[0] for row in lang_result.all()]
+
+        # Format profile data if exists
+        profile_data = None
+        if profile:
+            profile_data = {
+                "first_name": profile.first_name,
+                "middle_name": profile.middle_name,
+                "last_name": profile.last_name,
+                "date_of_birth": str(profile.date_of_birth) if profile.date_of_birth else None,
+                "age": profile.age,
+                "country": profile.country,
+                "city": profile.city,
+                "gender": profile.gender,
+                "bio": profile.bio,
+                "profile_image_url": profile.profile_image_url,
+                "cover_image_url": profile.cover_image_url,
+                "phone_number": profile.phone_number,
+            }
+
+        return {
+            "sub": str(user.id),
+            "email": user.email,
+            "username": user.username,
+            "native": user.native,
+            "learning_targets": target_langs,
+            "profile": profile_data
         }
 
 
@@ -444,14 +529,18 @@ class GoogleAuthRepository:
         target_langs = [row[0] for row in result.all()]
 
         # Return same format as your login/register endpoints
+
+        completed_user = await UserLoginRepository.get_user_with_profile(self.db, user.id)
+
         return {
-            'user': {
-                'sub': str(user.id),
-                'email': user.email,
-                'username': user.username,
-                'native': user.native,
-                'learning_targets': target_langs
-            },
+            # 'user': {
+            #     'sub': str(user.id),
+            #     'email': user.email,
+            #     'username': user.username,
+            #     'native': user.native,
+            #     'learning_targets': target_langs
+            # },
+            'user': completed_user,
             'access_token': access_token,
             'refresh_token': refresh_token
         }
@@ -854,3 +943,167 @@ class ResetPasswordService:
 
         # Allow max 3 reset requests per hour
         return len(recent_requests) >= 3
+
+
+
+class EditUserProfileRepository:
+
+    def __init__(self, db: AsyncSession, user_id: int):
+        self.db = db
+        self.user_id = user_id
+        self.user_login_repo = UserLoginRepository(db)
+
+    async def update_user(self, user_data: EditUserProfileSchema) -> Dict[str, Any]:
+        """
+        Update user profile information
+        """
+        try:
+            # Check if user exists
+            # from models import UserModel
+            user_query = select(UserModel).where(UserModel.id == self.user_id)
+            user_result = await self.db.execute(user_query)
+            user = user_result.scalar_one_or_none()
+
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found"
+                )
+
+            # Check if profile exists, if not create one
+            # from models import UserProfile
+            profile_query = select(UserProfile).where(UserProfile.user_id == self.user_id)
+            profile_result = await self.db.execute(profile_query)
+            profile = profile_result.scalar_one_or_none()
+
+            # Convert data to dict and prepare for database
+            update_data = self._prepare_update_data(user_data)
+
+            if profile:
+                # Update existing profile
+                stmt = (
+                    update(UserProfile)
+                    .where(UserProfile.user_id == self.user_id)
+                    .values(**update_data, updated_at=datetime.utcnow())
+                )
+                await self.db.execute(stmt)
+                message = "Profile updated successfully"
+            else:
+                # Create new profile
+                new_profile = UserProfile(
+                    user_id=self.user_id,
+                    **update_data,
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow()
+                )
+                self.db.add(new_profile)
+                message = "Profile created successfully"
+
+            await self.db.commit()
+
+            # Fetch updated profile
+            updated_profile_query = select(UserProfile).where(UserProfile.user_id == self.user_id)
+            updated_profile_result = await self.db.execute(updated_profile_query)
+            updated_profile = updated_profile_result.scalar_one_or_none()
+
+            complete_user_data = await UserLoginRepository.get_user_with_profile(self.db, self.user_id)
+
+            return {
+                "status": "success",
+                "message": message,
+                # "data": self._profile_to_dict(updated_profile) if updated_profile else {},
+                "user": complete_user_data  # Add complete user data
+            }
+
+        except IntegrityError as e:
+            await self.db.rollback()
+            logger.error(f"Integrity error during profile update: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Database integrity error. Please check your data."
+            )
+        except SQLAlchemyError as e:
+            await self.db.rollback()
+            logger.error(f"Database error during profile update: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database error occurred"
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Unexpected error during profile update: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="An unexpected error occurred"
+            )
+
+    def _prepare_update_data(self, user_data: EditUserProfileSchema) -> Dict[str, Any]:
+        """Prepare update data for database insertion"""
+        update_data = user_data.dict(exclude_unset=True)
+
+
+        # Convert empty strings to None
+        for key, value in update_data.items():
+            if value == "":
+                update_data[key] = None
+
+        # Make first_name and middle_name and last_name title
+        update_data['first_name'] = update_data['first_name'].capitalize()
+        update_data['last_name'] = update_data['last_name'].capitalize()
+        if 'middle_name' in update_data and update_data['middle_name'] is not None:
+            update_data['middle_name'] = update_data['middle_name'].capitalize()
+        if 'city' in update_data and update_data['city'] is not None:
+            update_data['city'] = update_data['city'].capitalize()
+
+        # Convert date_of_birth string to date object
+        if 'date_of_birth' in update_data and update_data['date_of_birth']:
+            try:
+                update_data['date_of_birth'] = date.fromisoformat(update_data['date_of_birth'])
+
+                # Calculate age from date_of_birth
+                today = date.today()
+                dob = update_data['date_of_birth']
+                calculated_age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+                update_data['age'] = calculated_age
+            except (ValueError, TypeError) as e:
+                logger.error(f"Error parsing date_of_birth: {e}")
+                # Remove invalid date
+                update_data.pop('date_of_birth', None)
+                update_data.pop('age', None)
+
+        # Handle age if date_of_birth not provided
+        elif 'age' in update_data and update_data['age'] is not None:
+            try:
+                if isinstance(update_data['age'], str):
+                    update_data['age'] = int(update_data['age'])
+            except (ValueError, TypeError):
+                update_data['age'] = None
+
+        # Convert gender empty string to None
+        if 'gender' in update_data and update_data['gender'] == '':
+            update_data['gender'] = None
+
+        return update_data
+
+    def _profile_to_dict(self, profile: UserProfile) -> Dict[str, Any]:
+        """Convert profile object to dictionary"""
+        return {
+            "id": profile.id,
+            "user_id": profile.user_id,
+            "first_name": profile.first_name,
+            "middle_name": profile.middle_name,
+            "last_name": profile.last_name,
+            "date_of_birth": str(profile.date_of_birth) if profile.date_of_birth else None,
+            "age": profile.age,
+            "country": profile.country,
+            "city": profile.city,
+            "gender": profile.gender,
+            "bio": profile.bio,
+            "profile_image_url": profile.profile_image_url,
+            "cover_image_url": profile.cover_image_url,
+            "phone_number": profile.phone_number,
+            "created_at": profile.created_at.isoformat() if profile.created_at else None,
+            "updated_at": profile.updated_at.isoformat() if profile.updated_at else None
+        }

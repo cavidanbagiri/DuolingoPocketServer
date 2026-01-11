@@ -1,5 +1,5 @@
 import asyncio
-from typing import Annotated
+from typing import Annotated, Dict, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -14,11 +14,11 @@ from app.database.setup import get_db
 from app.repositories.user_repository import (UserRegisterRepository, UserLoginRepository, UserLogoutRepository,
                                               CheckUserAvailable, RefreshTokenRepository, DeleteRefreshTokenRepository,
                                               SetNativeRepository, ChooseLangTargetRepository, GoogleAuthRepository,
-                                              GetNativeRepository,
+                                              GetNativeRepository, EditUserProfileRepository,
                                               ResetPasswordService, GetTotalLearnedRepository)
 
 from app.schemas.user_schema import UserLoginSchema, UserTokenSchema, UserRegisterSchema, NativeLangSchema, \
-    ChooseLangSchema
+    ChooseLangSchema, EditUserProfileSchema
 
 from app.logging_config import setup_logger
 logger = setup_logger(__name__, "user.log")
@@ -47,6 +47,8 @@ async def register(response: Response, register_data: UserRegisterSchema,
 
         logger.info(
             f"🔍 REGISTRATION COMPLETE - User: {register_data.email}, Saved Native: '{data.get('user', {}).get('native')}'")
+
+        # completed_user = await UserLoginRepository.get_user_with_profile(db, int(user_info.get('user').get('sub')))
 
         return {
             'user': data.get('user'),
@@ -160,9 +162,11 @@ async def refresh_token(response: Response, request: Request, db: AsyncSession =
             response.delete_cookie(key="refresh_token")
             raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
 
+        completed_user = await UserLoginRepository.get_user_with_profile(db, int(user_info.get('user').get('sub')))
+
         return {
             "access_token": user_info.get("access_token"),
-            "user": user_info.get('user'),
+            "user": completed_user,
         }
 
     except HTTPException as e:
@@ -328,6 +332,7 @@ async def reset_password(
     service = ResetPasswordService(db)
     return await service.request_password_reset(request.email)
 
+
 @router.post("/reset-password-confirm", status_code=200)
 async def reset_password_confirm(
     request: ResetPasswordConfirmRequest,
@@ -336,3 +341,51 @@ async def reset_password_confirm(
     """Confirm password reset"""
     service = ResetPasswordService(db)
     return await service.confirm_password_reset(request.token, request.new_password)
+
+
+@router.post('/edit/update-profile', status_code=200)
+async def update_user_profile(
+        user_data: EditUserProfileSchema,
+        user_info: Dict = Depends(TokenHandler.verify_access_token),
+        db: AsyncSession = Depends(get_db)
+):
+    """
+    Update user profile information
+
+    Args:
+        user_data: User profile data to update
+        user_info: Authenticated user information from token
+        db: Database session
+
+    Returns:
+        Success message and updated profile data
+    """
+    try:
+        user_id = int(user_info.get('sub'))
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user token"
+            )
+
+        repo = EditUserProfileRepository(db=db, user_id=user_id)
+        result = await repo.update_user(user_data)
+
+        return result
+
+    except HTTPException as http_exc:
+        logger.warning(f"HTTPException during profile update for user {user_info.get('sub')}: {http_exc.detail}")
+        raise http_exc
+    except ValueError as ve:
+        logger.error(f"Validation error during profile update: {str(ve)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Validation error: {str(ve)}"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error during user profile update: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unexpected error during user profile update"
+        )
+
