@@ -3,7 +3,7 @@
 
 
 # app/repositories/chat_repository.py
-from typing import List, Optional
+from typing import List, Optional, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func, desc
 from sqlalchemy.orm import selectinload, joinedload
@@ -169,61 +169,35 @@ class CreateConversationRepository:
         try:
             # Add current user to participants
             all_participants = [self.user_id] + self.participant_ids
-
-            # Remove duplicates
             all_participants = list(set(all_participants))
 
-            # Check if conversation already exists (for 1:1 chats)
+            # Check if 1:1 conversation already exists
             if len(all_participants) == 2:
-                stmt_existing = select(Conversation).join(
-                    ConversationParticipant,
-                    Conversation.id == ConversationParticipant.conversation_id
-                ).where(
-                    ConversationParticipant.user_id.in_(all_participants)
-                ).group_by(Conversation.id).having(
-                    func.count(ConversationParticipant.user_id) == 2
-                )
-
-                result_existing = await self.db.execute(stmt_existing)
-                existing_conversation = result_existing.scalar_one_or_none()
-
+                existing_conversation = await self._get_existing_conversation(all_participants)
                 if existing_conversation:
-                    # Return existing conversation
-                    return await self._format_conversation(existing_conversation)
+                    return self._format_conversation(existing_conversation)
 
             # Create new conversation
             is_group = len(all_participants) > 2
+            now = datetime.datetime.now(datetime.timezone.utc)
 
             conversation = Conversation(
                 is_group=is_group,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
+                created_at=now,
+                updated_at=now
             )
 
             self.db.add(conversation)
-            await self.db.flush()  # Get the ID
+            await self.db.flush()
 
             # Add participants
-            for participant_id in all_participants:
-                participant = ConversationParticipant(
-                    conversation_id=conversation.id,
-                    user_id=participant_id,
-                    joined_at=datetime.utcnow(),
-                    is_admin=(participant_id == self.user_id)  # Creator is admin
-                )
-                self.db.add(participant)
+            await self._add_participants(conversation.id, all_participants)
 
             await self.db.commit()
 
-            # Fetch the complete conversation with participants
-            stmt = select(Conversation).where(Conversation.id == conversation.id).options(
-                selectinload(Conversation.participants).selectinload(ConversationParticipant.user).selectinload(
-                    UserModel.profile)
-            )
-            result = await self.db.execute(stmt)
-            full_conversation = result.scalar_one()
-
-            return await self._format_conversation(full_conversation)
+            # Load full conversation with relationships
+            full_conversation = await self._load_full_conversation(conversation.id)
+            return self._format_conversation(full_conversation)
 
         except Exception as e:
             await self.db.rollback()
@@ -232,13 +206,82 @@ class CreateConversationRepository:
                 detail=f"Error creating conversation: {str(e)}"
             )
 
+    async def _get_existing_conversation(self, participant_ids: List[int]):
+        """Check if 1:1 conversation already exists"""
+        try:
+            stmt = (
+                select(Conversation)
+                .join(ConversationParticipant)
+                .where(ConversationParticipant.user_id.in_(participant_ids))
+                .group_by(Conversation.id)
+                .having(func.count(ConversationParticipant.user_id) == 2)
+                .options(
+                    selectinload(Conversation.participants)
+                    .selectinload(ConversationParticipant.user)
+                    .selectinload(UserModel.profile)
+                )
+            )
 
-    async def _format_conversation(self, conversation: Conversation) -> dict:
-        """Helper to format conversation response"""
+            result = await self.db.execute(stmt)
+            return result.scalar_one_or_none()
+
+        except Exception as e:
+            return None
+
+    async def _add_participants(self, conversation_id: int, participant_ids: List[int]):
+        """Add all participants to conversation"""
+        now = datetime.datetime.now(datetime.timezone.utc)
+
+        for participant_id in participant_ids:
+            participant = ConversationParticipant(
+                conversation_id=conversation_id,
+                user_id=participant_id,
+                joined_at=now,
+                is_admin=(participant_id == self.user_id)
+            )
+            self.db.add(participant)
+
+    async def _load_full_conversation(self, conversation_id: int) -> Conversation:
+        """Load conversation with all relationships"""
+        stmt = (
+            select(Conversation)
+            .where(Conversation.id == conversation_id)
+            .options(
+                selectinload(Conversation.participants)
+                .selectinload(ConversationParticipant.user)
+                .selectinload(UserModel.profile)
+            )
+        )
+
+        result = await self.db.execute(stmt)
+        return result.scalar_one()
+
+    def _format_conversation(self, conversation: Conversation) -> Dict:
+        """Helper to format conversation response (SYNCHRONOUS)"""
+        # Filter out current user from participants
         other_participants = [
             p for p in conversation.participants
             if p.user_id != self.user_id
         ]
+
+        # Format participants data
+        formatted_participants = []
+        for participant in other_participants:
+            user_data = {
+                "id": participant.user.id,
+                "username": participant.user.username,
+                "email": participant.user.email,
+            }
+
+            # Add profile if exists
+            if participant.user.profile:
+                user_data["profile"] = {
+                    "first_name": participant.user.profile.first_name,
+                    "last_name": participant.user.profile.last_name,
+                    "profile_image_url": participant.user.profile.profile_image_url,
+                }
+
+            formatted_participants.append(user_data)
 
         return {
             "id": conversation.id,
@@ -247,20 +290,122 @@ class CreateConversationRepository:
             "group_image_url": conversation.group_image_url,
             "created_at": conversation.created_at.isoformat() if conversation.created_at else None,
             "updated_at": conversation.updated_at.isoformat() if conversation.updated_at else None,
-            "participants": [
-                {
-                    "id": p.user.id,
-                    "username": p.user.username,
-                    "email": p.user.email,
-                    "profile": {
-                        "first_name": p.user.profile.first_name if p.user.profile else None,
-                        "last_name": p.user.profile.last_name if p.user.profile else None,
-                        "profile_image_url": p.user.profile.profile_image_url if p.user.profile else None,
-                    } if p.user.profile else None
-                }
-                for p in other_participants
-            ]
+            "participants": formatted_participants,
+            "message": "Conversation created successfully"
         }
+
+
+
+
+
+# class CreateConversationRepository:
+#     def __init__(self, db: AsyncSession, user_id: int, participant_ids: List[int]):
+#         self.db = db
+#         self.user_id = user_id
+#         self.participant_ids = participant_ids
+#
+#     async def create_conversation(self) -> dict:
+#         """
+#         Create a new conversation (1:1 or group)
+#         """
+#         try:
+#             # Add current user to participants
+#             all_participants = [self.user_id] + self.participant_ids
+#
+#             # Remove duplicates
+#             all_participants = list(set(all_participants))
+#
+#             # Check if conversation already exists (for 1:1 chats)
+#             if len(all_participants) == 2:
+#                 stmt_existing = select(Conversation).join(
+#                     ConversationParticipant,
+#                     Conversation.id == ConversationParticipant.conversation_id
+#                 ).where(
+#                     ConversationParticipant.user_id.in_(all_participants)
+#                 ).group_by(Conversation.id).having(
+#                     func.count(ConversationParticipant.user_id) == 2
+#                 )
+#
+#                 result_existing = await self.db.execute(stmt_existing)
+#                 existing_conversation = result_existing.scalar_one_or_none()
+#
+#                 if existing_conversation:
+#                     # Return existing conversation
+#                     return await self._format_conversation(existing_conversation)
+#
+#             # Create new conversation
+#             is_group = len(all_participants) > 2
+#
+#             conversation = Conversation(
+#                 is_group=is_group,
+#                 created_at=datetime.datetime.now(datetime.UTC).replace(tzinfo=None),
+#                 updated_at=datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+#             )
+#
+#             self.db.add(conversation)
+#             await self.db.flush()  # Get the ID
+#
+#             # Add participants
+#             for participant_id in all_participants:
+#                 participant = ConversationParticipant(
+#                     conversation_id=conversation.id,
+#                     user_id=participant_id,
+#                     joined_at=datetime.datetime.now(datetime.UTC).replace(tzinfo=None),
+#                     is_admin=(participant_id == self.user_id)  # Creator is admin
+#                 )
+#                 self.db.add(participant)
+#
+#             await self.db.commit()
+#
+#             # Fetch the complete conversation with participants
+#             stmt = select(Conversation).where(Conversation.id == conversation.id).options(
+#                 selectinload(Conversation.participants).selectinload(ConversationParticipant.user).selectinload(
+#                     UserModel.profile)
+#             )
+#             result = await self.db.execute(stmt)
+#             full_conversation = result.scalar_one()
+#
+#             return await self._format_conversation(full_conversation)
+#
+#         except Exception as e:
+#             await self.db.rollback()
+#             logger.error(e)
+#             raise HTTPException(
+#                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#                 detail=f"Error creating conversation: {str(e)}"
+#             )
+#
+#
+#     async def _format_conversation(self, conversation: Conversation) -> dict:
+#         """Helper to format conversation response"""
+#         other_participants = [
+#             p for p in conversation.participants
+#             if p.user_id != self.user_id
+#         ]
+#
+#         return {
+#             "id": conversation.id,
+#             "is_group": conversation.is_group,
+#             "group_name": conversation.group_name,
+#             "group_image_url": conversation.group_image_url,
+#             "created_at": conversation.created_at.isoformat() if conversation.created_at else None,
+#             "updated_at": conversation.updated_at.isoformat() if conversation.updated_at else None,
+#             "participants": [
+#                 {
+#                     "id": p.user.id,
+#                     "username": p.user.username,
+#                     "email": p.user.email,
+#                     "profile": {
+#                         "first_name": p.user.profile.first_name if p.user.profile else None,
+#                         "last_name": p.user.profile.last_name if p.user.profile else None,
+#                         "profile_image_url": p.user.profile.profile_image_url if p.user.profile else None,
+#                     } if p.user.profile else None
+#                 }
+#                 for p in other_participants
+#             ]
+#         }
+
+
 
 
 class ChatConversationGetConversationByIdRepository:

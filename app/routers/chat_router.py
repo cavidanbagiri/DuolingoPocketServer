@@ -72,13 +72,21 @@ async def create_conversation(
     :return:
     """
     try:
-        repo = ChatConversationRepository(
+        repo = CreateConversationRepository(
             db=db,
             user_id=int(user_info.get('sub')),
             participant_ids = participant_ids
         )
+
+
         result = await repo.create_conversation()
+
+        print('......................................................................')
+        print(result)
+        print('......................................................................')
+
         return result
+
     except HTTPException:
         raise
     except Exception as e:
@@ -128,7 +136,6 @@ async def get_friends(
 ):
     """Get user's friends list"""
     try:
-        print('............... this is for fetching the friends')
         repo = GetFriendsListRepository(db=db,user_id=int(user_info.get('sub')))
         result = await repo.get_friends()
         return result
