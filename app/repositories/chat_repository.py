@@ -135,7 +135,7 @@ class ChatConversationRepository:
                         }
                         for p in other_participants
                     ],
-                    "last_message": {
+                    "lastMessage": {
                         "id": last_message.id,
                         "content": last_message.content,
                         "message_type": last_message.message_type,

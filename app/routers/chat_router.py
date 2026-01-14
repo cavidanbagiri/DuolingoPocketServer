@@ -1,6 +1,7 @@
 
 
 from typing import List, Optional
+import httpx
 
 from fastapi import APIRouter, HTTPException, status, Query
 from fastapi.params import Depends
@@ -81,9 +82,16 @@ async def create_conversation(
 
         result = await repo.create_conversation()
 
-        print('......................................................................')
-        print(result)
-        print('......................................................................')
+        # try:
+        #     async with httpx.AsyncClient() as client:
+        #         await client.post('http://localhost:4000/conversation-created', json={
+        #             'conversationId': result.get('id'),  # ✅ Changed from conversation.id
+        #             'participantIds': participant_ids + [int(user_info.get('sub'))]  # ✅ Include creator
+        #         })
+        # except Exception as e:
+        #     print(f"Failed to notify chat server: {e}")
+
+
 
         return result
 
