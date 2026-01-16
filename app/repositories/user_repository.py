@@ -1,22 +1,33 @@
 import os
 from typing import Any, Coroutine, Union, Dict, Optional
+import uuid
 
-from fastapi import HTTPException
+import boto3
+from botocore.exceptions import ClientError
+import shutil
+from pathlib import Path
 
 from sqlalchemy import insert, select, delete, select, func, update
 from sqlalchemy.exc import NoResultFound, DBAPIError, IntegrityError, SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_
+from sqlalchemy.orm import selectinload
 
 # services/reset_password_service.py
 import hashlib
 from datetime import datetime, timedelta, date
 from fastapi import HTTPException, status, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
-from sqlalchemy.orm import selectinload
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import logging
+
+from app.utils.s3yandex import s3
+import aioboto3
+from io import BytesIO
+
+
+
 
 
 
@@ -533,13 +544,6 @@ class GoogleAuthRepository:
         completed_user = await UserLoginRepository.get_user_with_profile(self.db, user.id)
 
         return {
-            # 'user': {
-            #     'sub': str(user.id),
-            #     'email': user.email,
-            #     'username': user.username,
-            #     'native': user.native,
-            #     'learning_targets': target_langs
-            # },
             'user': completed_user,
             'access_token': access_token,
             'refresh_token': refresh_token
@@ -1107,3 +1111,192 @@ class EditUserProfileRepository:
             "created_at": profile.created_at.isoformat() if profile.created_at else None,
             "updated_at": profile.updated_at.isoformat() if profile.updated_at else None
         }
+
+
+import aioboto3
+import uuid
+from io import BytesIO
+import os
+from typing import Optional
+from sqlalchemy import select, update
+from fastapi import HTTPException, status
+import logging
+
+class EditUserProfileImageRepository:
+
+    def __init__(self, db: AsyncSession, user_id: int) -> None:
+        self.db = db
+        self.user_id = user_id
+
+        # Get environment variables
+        self.key_id = os.getenv('YANDEX_STORAGE_KEY_ID')
+        self.secret_key = os.getenv('YANDEX_STORAGE_SECRET_KEY')
+        self.bucket_name = os.getenv('YANDEX_STORAGE_BUCKET_NAME') or os.getenv('BUCKET_NAME')
+        self.region_name = 'ru-central1'
+
+        logger.info(f"S3 Config - Key ID: {'Set' if self.key_id else 'Missing'}, "
+                    f"Bucket: {self.bucket_name}")
+
+    async def _upload_file_to_storage(self, file) -> str:
+        """Upload file to Yandex Cloud S3 using aioboto3 (async)"""
+        if not all([self.key_id, self.secret_key, self.bucket_name]):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="S3 storage configuration is incomplete"
+            )
+
+        try:
+            # Generate unique filename
+            file_extension = file.filename.split('.')[-1].lower()
+            unique_filename = f"{uuid.uuid4()}.{file_extension}"
+            s3_path = f"user_profile_images/{unique_filename}"
+
+            # Read file contents
+            file_contents = await file.read()
+
+            # Create async S3 session
+            session = aioboto3.Session(
+                aws_access_key_id=self.key_id,
+                aws_secret_access_key=self.secret_key,
+                region_name=self.region_name
+            )
+
+            # Upload to S3
+            async with session.client(
+                    's3',
+                    endpoint_url='https://storage.yandexcloud.net'
+            ) as s3_client:
+
+                await s3_client.upload_fileobj(
+                    BytesIO(file_contents),
+                    self.bucket_name,
+                    s3_path,
+                    ExtraArgs={
+                        'ContentType': file.content_type,
+                        # Try with ACL if needed, or remove it
+                        # 'ACL': 'public-read'
+                    }
+                )
+
+            # Generate URL (note: your old code had a different URL format)
+            image_url = f"https://storage.yandexcloud.net/{self.bucket_name}/{s3_path}"
+
+            # Reset file pointer for potential future use
+            file.file.seek(0)
+
+            logger.info(f"Successfully uploaded image to S3: {image_url}")
+            return image_url
+
+        except Exception as e:
+            logger.error(f"S3 upload error: {str(e)}", exc_info=True)
+
+            # Check for specific AWS errors
+            error_msg = str(e)
+            if 'AccessDenied' in error_msg:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Access denied to S3 bucket. Check IAM permissions for key: {self.key_id}"
+                )
+            elif 'NoSuchBucket' in error_msg:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"S3 bucket '{self.bucket_name}' not found"
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to upload image: {str(e)}"
+                )
+
+    async def _delete_old_image(self, old_image_url: Optional[str]):
+        """Delete old profile image from S3"""
+        if not old_image_url or not old_image_url.startswith('https://storage.yandexcloud.net/'):
+            return
+
+        try:
+            # Extract bucket and key from URL
+            # URL format: https://storage.yandexcloud.net/BUCKET_NAME/user_profile_images/filename
+            parts = old_image_url.split('https://storage.yandexcloud.net/')[-1].split('/')
+            if len(parts) < 2:
+                return
+
+            bucket = parts[0]
+            key = '/'.join(parts[1:])
+
+            # Create async session
+            session = aioboto3.Session(
+                aws_access_key_id=self.key_id,
+                aws_secret_access_key=self.secret_key,
+                region_name=self.region_name
+            )
+
+            async with session.client(
+                    's3',
+                    endpoint_url='https://storage.yandexcloud.net'
+            ) as s3_client:
+                await s3_client.delete_object(Bucket=bucket, Key=key)
+                logger.info(f"Deleted old image from S3: {key}")
+
+        except Exception as e:
+            logger.warning(f"Failed to delete old image {old_image_url}: {str(e)}")
+
+    async def edit_user_profile_image(self, file):
+        try:
+            # Upload image first
+            image_url = await self._upload_file_to_storage(file)
+            # Get or create user profile
+            stmt = select(UserProfile).where(UserProfile.user_id == self.user_id)
+            result = await self.db.execute(stmt)
+            user_profile = result.scalar_one_or_none()
+            if user_profile:
+                # Store old image URL for deletion
+                old_image_url = user_profile.profile_image_url
+                # Update existing profile
+                user_profile.profile_image_url = image_url
+                user_profile.updated_at = func.now()
+                # Delete old image after successful update
+                if old_image_url:
+                    await self._delete_old_image(old_image_url)
+                logger.info(f"Updated profile image for user {self.user_id}")
+            else:
+                # Verify user exists
+                user_stmt = select(UserModel).where(UserModel.id == self.user_id)
+                user_result = await self.db.execute(user_stmt)
+                user = user_result.scalar_one_or_none()
+                if not user:
+                    # Clean up uploaded image since user doesn't exist
+                    try:
+                        await self._delete_old_image(image_url)
+                    except:
+                        pass  # Ignore cleanup errors
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="User not found"
+                    )
+                # Create new profile
+                user_profile = UserProfile(
+                    user_id=self.user_id,
+                    profile_image_url=image_url,
+                    created_at=func.now(),
+                    updated_at=func.now()
+                )
+                self.db.add(user_profile)
+                logger.info(f"Created new profile with image for user {self.user_id}")
+            await self.db.commit()
+            await self.db.refresh(user_profile)
+            return {
+                "message": "Profile image updated successfully",
+                "image_url": image_url,
+                "user_id": self.user_id,
+                "profile_created": not user_profile.id  # or track differently
+            }
+        except HTTPException:
+            await self.db.rollback()
+            raise
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update profile image"
+            )

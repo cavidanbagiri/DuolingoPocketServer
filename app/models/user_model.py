@@ -104,32 +104,6 @@ class UserModel(Base):
     message_statuses = relationship("MessageStatus", back_populates="user")
     typing_indicators = relationship("TypingIndicator", back_populates="user")
 
-    # sent_friend_requests = relationship("FriendshipRequest", foreign_keys=[FriendshipRequest.sender_id],
-    #                                     backref="sender")
-    # received_friend_requests = relationship("FriendshipRequest", foreign_keys=[FriendshipRequest.receiver_id],
-    #                                         backref="receiver")
-
-
-    # friends = relationship(
-    #     "UserModel",
-    #     secondary=friendship,
-    #     primaryjoin=(friendship.c.user_id == id),
-    #     secondaryjoin=(friendship.c.friend_id == id),
-    #     backref="friend_of"
-    # )
-
-    # sent_friend_requests = relationship(
-    #     "FriendshipRequest",
-    #     foreign_keys="FriendshipRequest.sender_id",
-    #     backref="sender_relationship"
-    # )
-    #
-    # received_friend_requests = relationship(
-    #     "FriendshipRequest",
-    #     foreign_keys="FriendshipRequest.receiver_id",
-    #     backref="receiver_relationship"
-    # )
-
     sent_friend_requests = relationship(
         "FriendshipRequest",
         foreign_keys="[FriendshipRequest.sender_id]",
@@ -141,9 +115,6 @@ class UserModel(Base):
         foreign_keys="[FriendshipRequest.receiver_id]",
         back_populates="receiver"
     )
-
-
-
 
     def __repr__(self):
         return f'UserModel(id:{self.id}, username:{self.username}, email: {self.email}, native: {self.native})'

@@ -1,11 +1,13 @@
 import asyncio
+import aiofiles
+import uuid
 from typing import Annotated, Dict, Optional, Union
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, status
 from fastapi.responses import Response, JSONResponse
 
 from sqlalchemy.ext.asyncio import AsyncSession
+
 
 from app.auth.refresh_token_handler import VerifyRefreshTokenMiddleware
 from app.auth.token_handler import TokenHandler
@@ -15,7 +17,8 @@ from app.repositories.user_repository import (UserRegisterRepository, UserLoginR
                                               CheckUserAvailable, RefreshTokenRepository, DeleteRefreshTokenRepository,
                                               SetNativeRepository, ChooseLangTargetRepository, GoogleAuthRepository,
                                               GetNativeRepository, EditUserProfileRepository,
-                                              ResetPasswordService, GetTotalLearnedRepository)
+                                              ResetPasswordService, GetTotalLearnedRepository,
+                                              EditUserProfileImageRepository)
 
 from app.schemas.user_schema import UserLoginSchema, UserTokenSchema, UserRegisterSchema, NativeLangSchema, \
     ChooseLangSchema, EditUserProfileSchema
@@ -64,10 +67,6 @@ async def register(response: Response, register_data: UserRegisterSchema,
 
 
 
-
-
-
-
 @router.post('/login', status_code=201)
 async def login(response: Response, login_data: UserLoginSchema, db_session: Annotated[AsyncSession,  Depends(get_db)]):
 
@@ -96,7 +95,6 @@ async def login(response: Response, login_data: UserLoginSchema, db_session: Ann
     except Exception as ex:  # Catch all other exceptions
         logger.exception("Unexpected error login user: %s", ex)
         raise HTTPException(500, 'Internal server error')
-
 
 
 
@@ -389,3 +387,51 @@ async def update_user_profile(
             detail="Unexpected error during user profile update"
         )
 
+
+
+@router.post('/edit/update-profile-image', status_code=200)
+async def edit_user_profile_image(
+        file: UploadFile = File(...),
+        user_info: Dict = Depends(TokenHandler.verify_access_token),
+        db: AsyncSession = Depends(get_db)
+):
+    """
+    Change the user profile image
+    :param file: Uploaded image file
+    :param user_info:
+    :param db:
+    :return:
+    """
+    try:
+        # Validate file type
+        allowed_types = ['image/jpeg', 'image/png', 'image/jpg', 'image/gif', 'image/webp']
+        if file.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed."
+            )
+
+        # Validate file size (max 5MB)
+        max_size = 5 * 1024 * 1024  # 5MB
+        file.file.seek(0, 2)  # Seek to end
+        file_size = file.file.tell()
+        file.file.seek(0)  # Reset to beginning
+
+        if file_size > max_size:
+            raise HTTPException(
+                status_code=400,
+                detail="File too large. Maximum size is 5MB."
+            )
+
+        repo = EditUserProfileImageRepository(db=db, user_id=int(user_info.get('sub')))
+        result = await repo.edit_user_profile_image(file)
+        return result
+    except HTTPException as http_exc:
+        logger.warning(f"HTTPException during profile image update for user {user_info.get('sub')}: {http_exc.detail}")
+        raise http_exc
+    except Exception as e:
+        logger.error(f"Unexpected error during user profile image update: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Unexpected error during user profile image update"
+        )
