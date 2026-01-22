@@ -10,9 +10,11 @@ router = APIRouter()
 
 @router.get("/slugs", response_model=List[SlugOut])
 async def list_slugs(db: AsyncSession = Depends(get_db)):
-    print('The slugs is working inside of the public router ..............')
+    print('The slugs is working inside of the public router cavidan ..............')
     repo = PublicSEORepo(db)
-    return await repo.get_all_slugs()
+    result = await repo.get_all_slugs()
+    print(result)
+    return result
 
 @router.get("/word", response_model=WordSEOPayload)
 async def get_seo_word(

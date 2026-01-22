@@ -15,9 +15,9 @@ class PublicSEORepo:
                 Translation.target_language_code.label("lt"),
                 Word.text.label("word"),
             )
-            .select_from(Word)  # ← explicit FROM
             .join(Translation, Translation.source_word_id == Word.id)
-            .distinct()
+            .distinct(Word.id, Translation.target_language_code)  # ← only these cols
+            .limit(10_000)  # ← safety cap
         )
         rows = (await self.db.execute(stmt)).all()
         return [SlugOut(lf=r.lf, lt=r.lt, word=r.word) for r in rows]
