@@ -5,6 +5,7 @@ from app.database.setup import get_db
 from app.repositories.public_repository import PublicSEORepo
 from app.schemas.public_seo import WordSEOPayload, SlugOut
 from typing import List
+from urllib.parse import unquote
 
 router = APIRouter()
 
@@ -25,6 +26,7 @@ async def get_seo_word(
 ):
     print('get word is working ................')
     repo = PublicSEORepo(db)
+    word = unquote(word)
     payload = await repo.get_word_seo(from_, to, word)
     if not payload:
         raise HTTPException(404, "Word not found")
