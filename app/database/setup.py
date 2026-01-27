@@ -37,7 +37,7 @@ engine = create_async_engine(
     max_overflow=30,    # Increased from 5
     pool_recycle=3600,  # Recycle connections every hour
     pool_timeout=30,    # Wait 30 seconds for connection
-    max_connections=50, # Total limit
+    # max_connections=50, # Total limit
 )
 
 
