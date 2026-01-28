@@ -8,11 +8,18 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-DB_USER = os.getenv('RENDER_DB_USER')
-DB_PASSWORD = os.getenv('RENDER_DB_PASSWORD')
-DB_HOST = os.getenv('RENDER_DB_HOST')
-DB_PORT = os.getenv('RENDER_DB_PORT')
-DB_NAME = os.getenv('RENDER_DB_NAME')
+# DB_USER = os.getenv('RENDER_DB_USER')
+# DB_PASSWORD = os.getenv('RENDER_DB_PASSWORD')
+# DB_HOST = os.getenv('RENDER_DB_HOST')
+# DB_PORT = os.getenv('RENDER_DB_PORT')
+# DB_NAME = os.getenv('RENDER_DB_NAME')
+
+
+DB_USER = os.getenv('YANDEX_DB_USER')
+DB_PASSWORD = os.getenv('YANDEX_DB_PASSWORD')
+DB_HOST = os.getenv('YANDEX_DB_HOST')
+DB_PORT = os.getenv('YANDEX_DB_PORT')
+DB_NAME = os.getenv('YANDEX_DB_NAME')
 
 
 connection_string = f'postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}'
