@@ -306,3 +306,29 @@ class DeepSeekRepo:
 
     async def get_ai_answer(self, lang_from: str, lang_to: str | None, word: str):
         pass
+
+
+class GetTopWordsRepository:
+    def __init__(self, db: AsyncSession = None):
+        self.db = db
+
+    async def get_top_words_by_frequency(self, language_code: str, limit: int = 1000):
+        """Get top N words by frequency rank - words only, no translations"""
+        stmt = (
+            select(Word)
+            .where(Word.language_code == language_code)
+            .order_by(Word.frequency_rank.asc().nulls_last())
+            .limit(limit)
+        )
+        result = await self.db.scalars(stmt)
+        words = result.all()
+
+        return [
+            {
+                "id": w.id,
+                "text": w.text,
+                "frequency_rank": w.frequency_rank,
+                "level": w.level,
+            }
+            for w in words
+        ]

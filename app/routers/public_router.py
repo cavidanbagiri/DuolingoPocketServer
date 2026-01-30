@@ -11,7 +11,7 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.setup import get_db
-from app.repositories.public_repository import PublicSEORepo
+from app.repositories.public_repository import PublicSEORepo, GetTopWordsRepository
 from app.schemas.public_seo import  WordRichPayload, SlugOut, WordSEOPayload
 from typing import List
 from urllib.parse import unquote
@@ -59,3 +59,40 @@ async def get_rich_word(
         raise HTTPException(status_code=404, detail="Word not found")
 
     return payload
+
+
+
+
+
+@router.get("/top-words/{language_code}")
+async def get_top_words(
+    language_code: str,
+    limit: int = Query(default=1000, le=10000),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get top words by frequency for cluster pages"""
+
+    try:
+        repo = GetTopWordsRepository(db)
+        words = await repo.get_top_words_by_frequency(language_code, limit)
+        return {"words": words, "count": len(words), "language": language_code}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
