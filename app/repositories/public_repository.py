@@ -332,3 +332,35 @@ class GetTopWordsRepository:
             }
             for w in words
         ]
+
+
+class GetTopWordsPosRepository:
+    def __init__(self, db: AsyncSession = None):
+        self.db = db
+
+    async def get_top_words_pos(self, language_code: str, pos: str, limit: int = 1000):
+        """Get top N words by POS (verb/noun/adjective) via WordMeaning"""
+        stmt = (
+            select(Word)
+            .join(WordMeaning, WordMeaning.word_id == Word.id)
+            .where(and_(
+                Word.language_code == language_code,
+                WordMeaning.pos.ilike(pos)  # case-insensitive: "verb", "VERB", "Verb"
+            ))
+            .order_by(Word.frequency_rank.asc().nulls_last())
+            .limit(limit)
+            .distinct()  # avoid duplicates if word has multiple meanings with same POS
+        )
+
+        result = await self.db.scalars(stmt)
+        words = result.all()
+
+        return [
+            {
+                "id": w.id,
+                "text": w.text,
+                "frequency_rank": w.frequency_rank,
+                "level": w.level,
+            }
+            for w in words
+        ]

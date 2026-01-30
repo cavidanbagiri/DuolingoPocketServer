@@ -11,7 +11,7 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.setup import get_db
-from app.repositories.public_repository import PublicSEORepo, GetTopWordsRepository
+from app.repositories.public_repository import PublicSEORepo, GetTopWordsPosRepository, GetTopWordsRepository
 from app.schemas.public_seo import  WordRichPayload, SlugOut, WordSEOPayload
 from typing import List
 from urllib.parse import unquote
@@ -62,8 +62,6 @@ async def get_rich_word(
 
 
 
-
-
 @router.get("/top-words/{language_code}")
 async def get_top_words(
     language_code: str,
@@ -71,26 +69,36 @@ async def get_top_words(
     db: AsyncSession = Depends(get_db)
 ):
     """Get top words by frequency for cluster pages"""
-
+    print('here is workinf')
     try:
         repo = GetTopWordsRepository(db)
         words = await repo.get_top_words_by_frequency(language_code, limit)
         return {"words": words, "count": len(words), "language": language_code}
 
     except Exception as e:
+        print('the error os ', error)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 
-
-
-
-
-
-
-
-
-
+@router.get('/top-words/{language_code}/{pos}', status_code=200)
+async def get_top_words_pos(
+    language_code: str,  # ✅ match URL param name
+    pos: str,
+    limit: int = Query(default=1000, le=10000),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        repo = GetTopWordsPosRepository(db)
+        words = await repo.get_top_words_pos(language_code, pos, limit)
+        return {
+            "words": words,
+            "count": len(words),
+            "language": language_code,
+            "pos": pos
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 

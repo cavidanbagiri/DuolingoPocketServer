@@ -1,7 +1,8 @@
 
 import os
 import asyncio
-import datetime
+# import datetime
+from datetime import datetime
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
@@ -45,8 +46,7 @@ app = FastAPI(lifespan=lifespan)
 
 # ... CORS middleware ...
 origins = [
-    "www.w9999.tech",
-    "https://www.w9999.tech",
+    "https://w9999.tech",
     "https://www.w9999.tech",
     "https://w9999.app",
     "https://www.w9999.app",
