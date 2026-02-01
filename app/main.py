@@ -51,9 +51,10 @@ origins = [
     "https://w9999.app",
     "https://www.w9999.app",
     "https://w9999-web.onrender.com/",
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://192.168.1.101:5173",
+    # "http://localhost:5173",
+    # "http://localhost:5174",
+    # "http://localhost:3000",
+    # "http://192.168.1.101:5173",
     "http://api.w9999.app",
     "https://api.w9999.app"
 ]

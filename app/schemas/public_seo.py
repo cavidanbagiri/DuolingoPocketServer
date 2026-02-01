@@ -74,8 +74,7 @@ class WordRichPayload(BaseModel):
     langTo: str
 
 class SlugOut(BaseModel):
-    lf: str
-    lt: str
+    lang: str
     word: str
 
 

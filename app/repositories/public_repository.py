@@ -1,11 +1,5 @@
-# from sqlalchemy.ext.asyncio import AsyncSession
-# from sqlalchemy import select, and_
-# from app.models.word_model import Word, Translation, WordMeaning, Language, Sentence, SentenceTranslation, SentenceWord
-# from app.schemas.public_seo import WordSEOPayload, SlugOut
-
-
-
 # app/repositories/public_repository.py
+import asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func
 from sqlalchemy.orm import selectinload
@@ -19,8 +13,6 @@ from app.schemas.public_seo import (
     SentenceOut, CategoryOut, RelatedWordOut, WordSEOPayload, SlugOut
 )
 from typing import List, Dict, Optional
-import asyncio
-
 
 
 
@@ -29,19 +21,27 @@ class PublicSEORepo:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+
     async def get_all_slugs(self):
-        stmt = (
-            select(
-                Word.language_code.label("lf"),
-                Translation.target_language_code.label("lt"),
-                Word.text.label("word"),
+        """
+        Get all word slugs for static generation.
+        Returns: [{lang: "en", word: "book"}, {lang: "es", word: "libro"}, ...]
+        """
+        try:
+            stmt = (
+                select(
+                    Word.language_code.label("lang"),
+                    Word.text.label("word"),
+                )
+                .distinct(Word.language_code, Word.text)
+                .limit(10_000)  # ✅ Safety cap
             )
-            .join(Translation, Translation.source_word_id == Word.id)
-            .distinct(Word.id, Translation.target_language_code)  # ← only these cols
-            .limit(10_000)  # ← safety cap
-        )
-        rows = (await self.db.execute(stmt)).all()
-        return [SlugOut(lf=r.lf, lt=r.lt, word=r.word) for r in rows]
+            rows = (await self.db.execute(stmt)).all()
+            return [SlugOut(lang=r.lang, word=r.word) for r in rows]
+        except Exception as e:
+            print(f"Error in get_all_slugs: {str(e)}")
+            return []
+
 
     async def get_word_seo(self, lang_from: str, lang_to: str, word: str):
         # 1. main word
@@ -94,13 +94,13 @@ class PublicSEORepo:
             langTo=lang_to,
         )
 
-    async def get_word_rich(self, lang_from: str, lang_to: str, word: str) -> Optional[WordRichPayload]:
+    async def get_word_rich(self, lang_from: str, word: str) -> Optional[WordRichPayload]:
         """
-        Fetch comprehensive word data for static page generation
-        WITHOUT using MeaningSentenceLink
+        Fetch comprehensive word data for static page generation.
+        Only source language - no translations to other languages.
         """
         try:
-            # 1. Fetch word with translations and categories
+            # 1. Fetch word with categories (no translations)
             word_stmt = (
                 select(Word)
                 .where(and_(
@@ -108,7 +108,6 @@ class PublicSEORepo:
                     Word.language_code == lang_from
                 ))
                 .options(
-                    selectinload(Word.translations).selectinload(Translation.target_language),
                     selectinload(Word.categories),
                 )
                 .limit(1)
@@ -118,7 +117,7 @@ class PublicSEORepo:
             if not word_obj:
                 return None
 
-            # 2. Fetch all meanings for this word (handle None values)
+            # 2. Fetch all meanings for this word
             meanings_stmt = (
                 select(WordMeaning)
                 .where(WordMeaning.word_id == word_obj.id)
@@ -126,46 +125,20 @@ class PublicSEORepo:
             meanings_result = await self.db.scalars(meanings_stmt)
             meanings_list = list(meanings_result)
 
-            # 3. Fetch translations to all languages
-            translations_stmt = (
-                select(Translation, Language.name)
-                .join(Language, Translation.target_language_code == Language.code)
-                .where(Translation.source_word_id == word_obj.id)
-            )
-            translation_rows = await self.db.execute(translations_stmt)
-
-            translations = []
-            primary_translation = None
-            for trans, lang_name in translation_rows:
-                if trans and trans.translated_text:  # Check for valid translation
-                    translation_out = TranslationOut(
-                        language_code=trans.target_language_code,
-                        language_name=lang_name,
-                        translated_text=trans.translated_text or ""  # Ensure string
-                    )
-                    translations.append(translation_out)
-
-                    if trans.target_language_code == lang_to:
-                        primary_translation = trans.translated_text or ""
-
-            # 4. Process meanings with None handling
+            # 3. Process meanings
             meanings = []
             for meaning in meanings_list:
-                if meaning:  # Check if meaning exists
+                if meaning:
                     meanings.append(MeaningOut(
-                        pos=meaning.pos or "",  # Convert None to empty string
-                        definition=meaning.definition or "",  # Convert None to empty string
-                        example_sentences=[]  # Empty since we don't have the link
+                        pos=meaning.pos or "",
+                        definition=meaning.definition or "",
+                        example_sentences=[]
                     ))
 
-            # 5. Fetch 5-7 example sentences containing this word
+            # 4. Fetch 7 example sentences in source language only
             example_sentences_stmt = (
-                select(Sentence, SentenceTranslation.translated_text)
+                select(Sentence)
                 .join(SentenceWord, SentenceWord.sentence_id == Sentence.id)
-                .outerjoin(SentenceTranslation, and_(
-                    SentenceTranslation.source_sentence_id == Sentence.id,
-                    SentenceTranslation.language_code == lang_to
-                ))
                 .where(and_(
                     SentenceWord.word_id == word_obj.id,
                     Sentence.language_code == lang_from
@@ -174,30 +147,42 @@ class PublicSEORepo:
                 .limit(7)
             )
 
-            sentence_rows = await self.db.execute(example_sentences_stmt)
+            sentence_rows = await self.db.scalars(example_sentences_stmt)
             example_sentences = []
-            for sentence, translation in sentence_rows:
-                if sentence and sentence.text:  # Check for valid sentence
+            for sentence in sentence_rows:
+                if sentence and sentence.text:
                     example_sentences.append(SentenceOut(
                         text=sentence.text or "",
-                        translation=translation or None
+                        translation=None  # ✅ No translation
                     ))
 
-            # 6. Get categories
+            # 5. Get categories
             categories = []
             if word_obj.categories:
                 for cat in word_obj.categories:
-                    if cat:  # Check if category exists
+                    if cat:
                         categories.append(CategoryOut(
                             name=cat.name or "",
                             description=cat.description or None
                         ))
 
-            # 7. Find related words (same categories, same language)
+            # 6. Find related words (same categories, same language)
             related_words = []
             if categories and word_obj.categories:
                 category_ids = [cat.id for cat in word_obj.categories if cat]
                 if category_ids:
+                    # related_stmt = (
+                    #     select(Word)
+                    #     .join(word_category_association, word_category_association.c.word_id == Word.id)
+                    #     .where(and_(
+                    #         word_category_association.c.category_id.in_(category_ids),
+                    #         Word.id != word_obj.id,
+                    #         Word.language_code == lang_from
+                    #     ))
+                    #     .order_by(Word.frequency_rank)
+                    #     .limit(8)
+                    #     .distinct(Word.id)
+                    # )
                     related_stmt = (
                         select(Word)
                         .join(word_category_association, word_category_association.c.word_id == Word.id)
@@ -206,21 +191,21 @@ class PublicSEORepo:
                             Word.id != word_obj.id,
                             Word.language_code == lang_from
                         ))
-                        .order_by(Word.frequency_rank)
+                        .distinct(Word.id)  # Move to BEFORE order_by
+                        .order_by(Word.id, Word.frequency_rank)  # ✅ id FIRST, then frequency_rank
                         .limit(8)
-                        .distinct(Word.id)
                     )
                     related_word_objs = await self.db.scalars(related_stmt)
 
                     for rel_word in related_word_objs:
-                        if rel_word:  # Check if word exists
+                        if rel_word:
                             related_words.append(RelatedWordOut(
                                 text=rel_word.text or "",
                                 level=rel_word.level or None,
                                 frequency_rank=rel_word.frequency_rank
                             ))
 
-            # 8. Get language names
+            # 7. Get language name
             source_lang_name = lang_from.upper()
             try:
                 source_lang_stmt = select(Language.name).where(Language.code == lang_from)
@@ -228,16 +213,14 @@ class PublicSEORepo:
                 if result:
                     source_lang_name = result
             except:
-                pass  # Use default if fails
+                pass
 
-            # 9. Generate audio URLs for all translations
-            audio_urls = {}
-            base_tts_url = "https://api.w9999.app/tts"
-            for trans in translations:
-                if trans.translated_text:
-                    audio_urls[trans.language_code] = f"{base_tts_url}/{trans.language_code}/{trans.translated_text}"
+            # 8. Generate audio URL for source word only
+            audio_urls = {
+                lang_from: f"https://api.w9999.app/tts/{lang_from}/{word}"
+            }
 
-            # 10. Get ALL sentences for this word
+            # 9. Get ALL sentences for this word
             all_sentence_texts = []
             try:
                 all_sentences_stmt = (
@@ -254,13 +237,13 @@ class PublicSEORepo:
             except:
                 pass
 
-            # 11. Compile the payload with safe defaults
+            # 10. Return payload (no translations, no lang_to)
             return WordRichPayload(
                 word=word_obj.text or "",
                 ipa_pronunciation=None,
                 level=word_obj.level or None,
                 frequency_rank=word_obj.frequency_rank,
-                translations=translations,
+                translations=[],  # ✅ Empty
                 meanings=meanings,
                 example_sentences=example_sentences,
                 categories=categories,
@@ -268,29 +251,22 @@ class PublicSEORepo:
                 audio_urls=audio_urls,
                 source_language=lang_from,
                 source_language_name=source_lang_name,
-                target_languages=[t.language_code for t in translations if t.language_code],
-
-                # Backward compatibility fields
-                translation=primary_translation or "",
-                targetLangName=next(
-                    (t.language_name for t in translations if t.language_code == lang_to and t.language_name),
-                    lang_to.upper()
-                ),
-                audioUrl=f"{base_tts_url}/{lang_to}/{primary_translation or word}" if primary_translation else "",
+                target_languages=[],  # ✅ Empty
+                translation="",  # ✅ Empty
+                targetLangName="",  # ✅ Empty
+                audioUrl=f"https://api.w9999.app/tts/{lang_from}/{word}",
                 examples=all_sentence_texts[:3] if all_sentence_texts else [],
                 langFrom=lang_from,
-                langTo=lang_to
+                langTo=lang_from  # ✅ Same as source
             )
 
         except Exception as e:
-            # Log the error for debugging
             print(f"Error in get_word_rich: {str(e)}")
             import traceback
             traceback.print_exc()
             return None
 
 
-# This class must be used Public Seo Repo
 class DeepSeekRepo:
 
     def __init__(self, db: AsyncSession = None):
@@ -308,12 +284,15 @@ class DeepSeekRepo:
         pass
 
 
-class GetTopWordsRepository:
-    def __init__(self, db: AsyncSession = None):
+class TopWordsRepository:
+    def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def get_top_words_by_frequency(self, language_code: str, limit: int = 1000):
-        """Get top N words by frequency rank - words only, no translations"""
+    async def get_mixed(self, language_code: str, limit: int = 1000):
+        """
+        Get top N words by frequency (Mixed categories).
+        Query is faster because it does not require a JOIN.
+        """
         stmt = (
             select(Word)
             .where(Word.language_code == language_code)
@@ -321,46 +300,38 @@ class GetTopWordsRepository:
             .limit(limit)
         )
         result = await self.db.scalars(stmt)
-        words = result.all()
+        return self._format_list(result.all())
 
-        return [
-            {
-                "id": w.id,
-                "text": w.text,
-                "frequency_rank": w.frequency_rank,
-                "level": w.level,
-            }
-            for w in words
-        ]
-
-
-class GetTopWordsPosRepository:
-    def __init__(self, db: AsyncSession = None):
-        self.db = db
-
-    async def get_top_words_pos(self, language_code: str, pos: str, limit: int = 1000):
-        """Get top N words by POS (verb/noun/adjective) via WordMeaning"""
+    async def get_by_pos(self, language_code: str, pos: str, limit: int = 1000):
+        """
+        Get top N words filtered by Part of Speech (JOINS WordMeaning).
+        """
         stmt = (
             select(Word)
             .join(WordMeaning, WordMeaning.word_id == Word.id)
             .where(and_(
                 Word.language_code == language_code,
-                WordMeaning.pos.ilike(pos)  # case-insensitive: "verb", "VERB", "Verb"
+                WordMeaning.pos.ilike(pos)  # Case insensitive (Verb, verb, VERB)
             ))
             .order_by(Word.frequency_rank.asc().nulls_last())
             .limit(limit)
-            .distinct()  # avoid duplicates if word has multiple meanings with same POS
+            .distinct()  # vital: prevents seeing the same word twice if it has 2 verb meanings
         )
 
         result = await self.db.scalars(stmt)
-        words = result.all()
+        return self._format_list(result.all())
 
+    def _format_list(self, words):
+        """Helper to format output consistently"""
         return [
             {
                 "id": w.id,
                 "text": w.text,
                 "frequency_rank": w.frequency_rank,
                 "level": w.level,
+                # We do not return strict POS here for mixed lists
+                # because one word can be both noun and verb.
             }
             for w in words
         ]
+
