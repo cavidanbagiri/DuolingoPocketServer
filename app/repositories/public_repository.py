@@ -22,22 +22,47 @@ class PublicSEORepo:
         self.db = db
 
 
+    # async def get_all_slugs(self):
+    #     """
+    #     Get all word slugs for static generation.
+    #     Returns: [{lang: "en", word: "book"}, {lang: "es", word: "libro"}, ...]
+    #     """
+    #     try:
+    #         stmt = (
+    #             select(
+    #                 Word.language_code.label("lang"),
+    #                 Word.text.label("word"),
+    #             )
+    #             .distinct(Word.language_code, Word.text)
+    #             .limit(10_000)  # ✅ Safety cap
+    #         )
+    #         rows = (await self.db.execute(stmt)).all()
+    #         return [SlugOut(lang=r.lang, word=r.word) for r in rows]
+    #     except Exception as e:
+    #         print(f"Error in get_all_slugs: {str(e)}")
+    #         return []
+
     async def get_all_slugs(self):
-        """
-        Get all word slugs for static generation.
-        Returns: [{lang: "en", word: "book"}, {lang: "es", word: "libro"}, ...]
-        """
         try:
-            stmt = (
-                select(
-                    Word.language_code.label("lang"),
-                    Word.text.label("word"),
+            langs = ["en", "es", "ru"]
+            per_lang = 10_000
+
+            all_rows = []
+            for lang in langs:
+                stmt = (
+                    select(
+                        Word.language_code.label("lang"),
+                        Word.text.label("word"),
+                    )
+                    .where(Word.language_code == lang)
+                    .distinct(Word.language_code, Word.text)
+                    .order_by(Word.text)  # deterministic
+                    .limit(per_lang)
                 )
-                .distinct(Word.language_code, Word.text)
-                .limit(10_000)  # ✅ Safety cap
-            )
-            rows = (await self.db.execute(stmt)).all()
-            return [SlugOut(lang=r.lang, word=r.word) for r in rows]
+                rows = (await self.db.execute(stmt)).all()
+                all_rows.extend(rows)
+
+            return [SlugOut(lang=r.lang, word=r.word) for r in all_rows]
         except Exception as e:
             print(f"Error in get_all_slugs: {str(e)}")
             return []
