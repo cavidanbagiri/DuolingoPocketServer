@@ -38,7 +38,8 @@ from app.repositories.structure_repository import (CreateMainStructureRepository
                                                    TranslateSpanishSentences, TranslateSpanishWord,
                                                    DefinePosCategorySpanishRepository, GoogleTranslateSpanishWord,
                                                    AITranslateEnglishWords, AITranslateSpanishWords,
-                                                   AITranslateRussianWords)
+                                                   AITranslateRussianWords,SaveTurkishWordsToDatabase, TurkishTranslateWords, TurkishGenerateSentence, GeneratePosAndCategories
+                                                   )
 
 from app.services.ai_service import AIService
 
@@ -639,6 +640,126 @@ async def ai_translate_russian_word(db: AsyncSession = Depends(get_db)):
         await db.rollback()
         logger.error(f"<UNK> Word AI translation failed: {str(ex)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+
+
+
+
+
+@router.post('/turkish/save_turkish_words_to_database', status_code=201)
+async def save_turkish_words_to_database(db: AsyncSession = Depends(get_db)):
+    """
+    Save Turkish words to database
+    :param db:
+    :return:
+    """
+    try:
+        repo = SaveTurkishWordsToDatabase(db)
+        result = await repo.save_turkish_words_to_database()
+        return {"success": True, "data": result}
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"Error happen during the saving the words in database {ex}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+
+
+@router.post('/turkish/translate_words', status_code=201)
+async def translate_words(
+        min_id: int = Query(None, description="Minimum word ID to translate"),
+        max_id: int = Query(None, description="Maximum word ID to translate"),
+        limit: int = Query(10, description="Number of words to translate if no ID range"),
+        db: AsyncSession = Depends(get_db)
+):
+    """
+    Translate Turkish words to English, Spanish and Russian
+
+    - If min_id and max_id provided: translates words in that ID range
+    - If no range provided: translates next 'limit' words without translations
+    """
+    try:
+        print(f"\n🚀 Translation request received:")
+        print(f"   Min ID: {min_id if min_id else 'Not specified'}")
+        print(f"   Max ID: {max_id if max_id else 'Not specified'}")
+        print(f"   Limit: {limit if not (min_id and max_id) else 'Using ID range instead'}")
+
+        repo = TurkishTranslateWords(db)
+        result = await repo.translate_words(min_id=min_id, max_id=max_id, limit=limit)
+
+        return {"success": True, "data": result}
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"Error during translation: {ex}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+
+
+@router.post('/turkish/generate_sentence_and_translate', status_code=201)
+async def generate_sentence(
+        min_id: int = Query(None, description="Minimum word ID to translate"),
+        max_id: int = Query(None, description="Maximum word ID to translate"),
+        limit: int = Query(10, description="Number of words to translate if no ID range"),
+        db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate at least 5 sentences about each word
+
+    - If min_id and max_id provided: generate sentences in that ID range
+    """
+    try:
+        print(f"\n🚀 Translation request received:")
+        print(f"   Min ID: {min_id if min_id else 'Not specified'}")
+        print(f"   Max ID: {max_id if max_id else 'Not specified'}")
+        print(f"   Limit: {limit if not (min_id and max_id) else 'Using ID range instead'}")
+
+        repo = TurkishGenerateSentence(db)
+        result = await repo.generate_sentence(min_id=min_id, max_id=max_id, limit=limit)
+
+        return {"success": True, "data": result}
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"Error during sentence generation: {ex}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+
+
+
+@router.post('/turkish/generate_pos_and_categories', status_code=201)
+async def generate_pos_and_categories(
+        min_id: int = Query(None, description="Minimum word ID to translate"),
+        max_id: int = Query(None, description="Maximum word ID to translate"),
+        limit: int = Query(10, description="Number of words to translate if no ID range"),
+        db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate Part of Speech and Categories
+
+    - If min_id and max_id provided: generate sentences in that ID range
+    """
+    try:
+        print(f"\n🚀 Generate request received:")
+        print(f"   Min ID: {min_id if min_id else 'Not specified'}")
+        print(f"   Max ID: {max_id if max_id else 'Not specified'}")
+        print(f"   Limit: {limit if not (min_id and max_id) else 'Using ID range instead'}")
+
+        repo = GeneratePosAndCategories(db)
+        result = await repo.generate_pos_and_categories(min_id=min_id, max_id=max_id, limit=limit)
+
+        return {"success": True, "data": result}
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"Error during pos and categories generation: {ex}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+
+
+
+
 
 
 

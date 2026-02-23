@@ -1,0 +1,89 @@
+{
+  "total_original_words": 10500,
+  "unique_lemmas_found": 4114,
+  "new_words_added": 4114,
+  "words_removed": 78,
+  "existing_words_skipped": 0,
+  "removed_words_details": [
+    {
+      "word": "mi",
+      "reason": "POS: question_particle"
+    },
+    {
+      "word": "mı",
+      "reason": "POS: question_particle"
+    },
+    {
+      "word": "mu",
+      "reason": "POS: question_particle"
+    },
+    {
+      "word": "misin",
+      "reason": "POS: question_particle"
+    },
+    {
+      "word": "musun",
+      "reason": "POS: question_particle"
+    },
+    {
+      "word": "ın",
+      "reason": "POS: question_particle"
+    },
+    {
+      "word": "nın",
+      "reason": "POS: question_particle"
+    },
+    {
+      "word": "mısın",
+      "reason": "POS: question_particle"
+    },
+    {
+      "word": "mü",
+      "reason": "POS: question_particle"
+    },
+    {
+      "word": "miyim",
+      "reason": "POS: question_particle"
+    },
+    {
+      "word": "dan",
+      "reason": "POS: question_particle"
+    },
+    {
+      "word": "misiniz",
+      "reason": "POS: question_particle"
+    },
+    {
+      "word": "musunuz",
+      "reason": "POS: question_particle"
+    },
+    {
+      "word": "nun",
+      "reason": "POS: question_particle"
+    },
+    {
+      "word": "miyiz",
+      "reason": "POS: question_particle"
+    },
+    {
+      "word": "daki",
+      "reason": "POS: question_particle"
+    },
+    {
+      "word": "mısınız",
+      "reason": "POS: question_particle"
+    },
+    {
+      "word": "miydi",
+      "reason": "POS: question_particle"
+    },
+    {
+      "word": "mıydı",
+      "reason": "POS: question_particle"
+    },
+    {
+      "word": "n",
+      "reason": "POS: question_particle"
+    }
+  ]
+}
