@@ -1,0 +1,15 @@
+
+Problems:
+
+1 - *Fix the streaming problem. If the answer is big, return the streaming error
+2 - Add the same answers from ai to database for answering the next time.
+3 - Add the test section for learning words
+
+
+Working
+
+
+
+
+Solves
+

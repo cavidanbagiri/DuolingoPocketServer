@@ -38,7 +38,9 @@ from app.repositories.structure_repository import (CreateMainStructureRepository
                                                    TranslateSpanishSentences, TranslateSpanishWord,
                                                    DefinePosCategorySpanishRepository, GoogleTranslateSpanishWord,
                                                    AITranslateEnglishWords, AITranslateSpanishWords,
-                                                   AITranslateRussianWords,SaveTurkishWordsToDatabase, TurkishTranslateWords, TurkishGenerateSentence, GeneratePosAndCategories
+                                                   AITranslateRussianWords, SaveTurkishWordsToDatabase,
+                                                   TurkishTranslateWords, TurkishGenerateSentence,
+                                                   GeneratePosAndCategories, TranslateWordsToIndiaLang, TranslateSentencesToHindiLang
                                                    )
 
 from app.services.ai_service import AIService
@@ -759,7 +761,63 @@ async def generate_pos_and_categories(
 
 
 
+@router.post('/india/translate_words')
+async def translate_words(
+        lang_code: str = Query(None, description="Language Code for translating"),
+        min_id: int = Query(None, description="Minimum word ID to translate"),
+        max_id: int = Query(None, description="Maximum word ID to translate"),
+        limit: int = Query(10, description="Number of words to translate if no ID range"),
+        db: AsyncSession = Depends(get_db)
+):
+    """
+    Translate words to India Lang
+    :param lang_code:
+    :param min_id:
+    :param max_id:
+    :param limit:
+    :param db:
+    :return:
+    """
+
+    try:
+
+        repo = TranslateWordsToIndiaLang(db )
+        result = await repo.translate_words(lang_code = lang_code, min_id=min_id, max_id=max_id, limit=limit)
+
+        return {"success": True, "data": result}
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"Error during translate a words : {ex}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
 
 
+# router.py
+@router.post('/india/translate_sentences')
+async def translate_sentences(
+        lang_code: str = Query(..., description="Source language code to translate from (e.g., 'en')"),
+        min_id: int = Query(None, description="Minimum sentence ID to translate"),
+        max_id: int = Query(None, description="Maximum sentence ID to translate"),
+        limit: int = Query(10, description="Number of sentences to translate if no ID range"),
+        db: AsyncSession = Depends(get_db)
+):
+    """
+    Translate sentences from source language to Hindi
+    Example: lang_code='en' translates English sentences to Hindi
+    """
+    try:
+        # Use the correct repository for sentences
+        repo = TranslateSentencesToHindiLang(db)
+        result = await repo.translate_sentences(
+            lang_code=lang_code,
+            min_id=min_id,
+            max_id=max_id,
+            limit=limit
+        )
+
+        return {"success": True, "data": result}
+    except Exception as ex:
+        await db.rollback()
+        logger.error(f"Error during sentence translation: {ex}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
 
 

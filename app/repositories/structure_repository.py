@@ -7232,7 +7232,8 @@ class SaveTurkishWordsToDatabase:
 
     async def save_turkish_words_to_database(self):
         """
-        Read words, process with AI, and save to database
+        Read words, process with AI, and save to database batch by batch
+        Each batch is processed and saved immediately
         """
         try:
             # 1. Read words from CSV
@@ -7241,152 +7242,160 @@ class SaveTurkishWordsToDatabase:
             print(f"📊 Found {len(all_words)} words to process")
             print("-" * 50)
 
-            # 2. Process in batches with AI
-            batches = self.create_batches(all_words, batch_size=25)
-            all_results = []
-            processed_count = 0
+            # 2. Create batches
+            batches = self.create_batches(list(zip(all_words, all_ranks)), batch_size=25)
+            print(f"📦 Created {len(batches)} batches of up to 25 words each\n")
 
-            print("🤖 Starting AI processing with DeepSeek...\n")
+            # Track overall statistics
+            total_stats = {
+                'total_original_words': len(all_words),
+                'unique_lemmas_found': 0,
+                'new_words_added': 0,
+                'words_removed': 0,
+                'existing_words_skipped': 0,
+                'removed_words_details': []
+            }
 
+            # 3. Process each batch immediately
             for i, batch in enumerate(batches):
-                print(f"🔄 Processing batch {i + 1}/{len(batches)} ({len(batch)} words)")
-                print(f"   Words: {', '.join(batch[:5])}{'...' if len(batch) > 5 else ''}")
+                print("=" * 60)
+                print(f"🔄 PROCESSING BATCH {i + 1}/{len(batches)}")
+                print("=" * 60)
 
-                batch_results = await self.processor.process_batch(batch)
-                all_results.extend(batch_results)
-                processed_count += len(batch)
+                # Unpack batch
+                batch_words = [item[0] for item in batch]
+                batch_ranks = [item[1] for item in batch]
 
-                # Show some results from this batch
-                if batch_results:
-                    print(f"   ✅ Batch results preview:")
-                    for res in batch_results[:3]:  # Show first 3 results
-                        keep_status = "✅ KEEP" if res.get('keep', True) else "❌ REMOVE"
-                        print(
-                            f"      • {res['original']:15} → {res.get('lemma', '?'):15} [{res.get('pos', '?'):10}] {keep_status}")
+                print(f"   Words in this batch: {', '.join(batch_words[:5])}{'...' if len(batch_words) > 5 else ''}")
+                print(f"   Rank range: {min(batch_ranks)} - {max(batch_ranks)}")
 
+                # Process batch with AI
+                batch_results = await self.processor.process_batch(batch_words)
+
+                if not batch_results:
+                    print("   ❌ Batch processing failed, skipping...")
+                    continue
+
+                # Filter and organize batch results
+                batch_lemmas = {}
+                batch_removed = []
+
+                for idx, result in enumerate(batch_results):
+                    if idx < len(batch_ranks):
+                        result['original_rank'] = batch_ranks[idx]
+
+                    if result.get('keep', True):
+                        lemma = result['lemma']
+                        if lemma not in batch_lemmas:
+                            batch_lemmas[lemma] = {
+                                'pos': result.get('pos', 'unknown'),
+                                'rank': result.get('original_rank', idx + 1),
+                                'normalized': result.get('normalized', result['original']),
+                                'level': self.get_cefr_level(result.get('original_rank', idx + 1)),
+                                'original_forms': [result['original']]
+                            }
+                        else:
+                            batch_lemmas[lemma]['original_forms'].append(result['original'])
+                    else:
+                        batch_removed.append({
+                            'word': result['original'],
+                            'reason': f"POS: {result.get('pos', 'unknown')}"
+                        })
+
+                print(f"\n   📊 Batch Results:")
+                print(f"      • Unique lemmas in batch: {len(batch_lemmas)}")
+                print(f"      • Words to remove: {len(batch_removed)}")
+
+                # Check existing words in database for this batch
+                print(f"\n   🔍 Checking database for existing words...")
+
+                # Get all lemmas from this batch
+                batch_lemma_list = list(batch_lemmas.keys())
+
+                # Query existing words in one go
+                existing_query = await self.db.execute(
+                    select(Word.text).where(
+                        Word.language_code == 'tr',
+                        Word.text.in_(batch_lemma_list)
+                    )
+                )
+                existing_in_db = {row[0] for row in existing_query.fetchall()}
+
+                # Prepare new words for insertion
+                batch_new_words = []
+                batch_skipped = []
+
+                for lemma, info in batch_lemmas.items():
+                    if lemma not in existing_in_db:
+                        word = Word(
+                            text=lemma,
+                            language_code='tr',
+                            frequency_rank=info['rank'],
+                            level=info['level']
+                        )
+                        batch_new_words.append(word)
+                    else:
+                        batch_skipped.append(lemma)
+
+                print(f"      • New words to add: {len(batch_new_words)}")
+                print(f"      • Already existing: {len(batch_skipped)}")
+
+                # Save batch to database
+                if batch_new_words:
+                    print(f"\n   💾 Saving {len(batch_new_words)} new words to database...")
+                    self.db.add_all(batch_new_words)
+                    await self.db.flush()  # Flush to get IDs but don't commit yet
+
+                    # Show saved words
+                    print("      ✅ Saved words:")
+                    for word in batch_new_words[:5]:
+                        print(f"         • {word.text:15} (Rank: {word.frequency_rank}, Level: {word.level})")
+                    if len(batch_new_words) > 5:
+                        print(f"         • ... and {len(batch_new_words) - 5} more")
+
+                # Commit the batch
+                await self.db.commit()
+                print(f"\n   ✅ Batch {i + 1} COMMITTED to database successfully!")
+
+                # Update overall statistics
+                total_stats['unique_lemmas_found'] += len(batch_lemmas)
+                total_stats['new_words_added'] += len(batch_new_words)
+                total_stats['words_removed'] += len(batch_removed)
+                total_stats['existing_words_skipped'] += len(batch_skipped)
+                total_stats['removed_words_details'].extend(batch_removed[:5])  # Keep sample
+
+                # Show progress
+                processed_so_far = (i + 1) * 25
                 print(
-                    f"   Progress: {processed_count}/{len(all_words)} words processed ({processed_count / len(all_words) * 100:.1f}%)\n")
+                    f"\n   📈 Overall Progress: {min(processed_so_far, len(all_words))}/{len(all_words)} words processed ({min(processed_so_far, len(all_words)) / len(all_words) * 100:.1f}%)")
+                print(f"      Total new words added so far: {total_stats['new_words_added']}")
 
                 # Small delay between batches
                 if i < len(batches) - 1:
+                    print("\n   ⏱️  Waiting 1 second before next batch...")
                     await asyncio.sleep(1)
 
+            # Final report
+            print("\n" + "=" * 60)
+            print("✅ FINAL SUMMARY - ALL BATCHES COMPLETE!")
             print("=" * 60)
-            print("📋 PROCESSING COMPLETE - Organizing results...\n")
 
-            # 3. Filter and organize results
-            lemma_dict = {}
-            removed_words = []
+            print(f"\n📊 FINAL STATISTICS:")
+            print(f"   • Total original words: {total_stats['total_original_words']}")
+            print(f"   • Total unique lemmas found: {total_stats['unique_lemmas_found']}")
+            print(f"   • Total new words added: {total_stats['new_words_added']}")
+            print(f"   • Total words removed (particles): {total_stats['words_removed']}")
+            print(f"   • Total existing words skipped: {total_stats['existing_words_skipped']}")
 
-            # Match results with original ranks
-            for idx, result in enumerate(all_results):
-                if idx < len(all_ranks):
-                    result['original_rank'] = all_ranks[idx]
-
-                if result.get('keep', True):
-                    lemma = result['lemma']
-                    if lemma not in lemma_dict:
-                        lemma_dict[lemma] = {
-                            'pos': result.get('pos', 'unknown'),
-                            'rank': result.get('original_rank', idx + 1),
-                            'normalized': result.get('normalized', result['original']),
-                            'level': self.get_cefr_level(result.get('original_rank', idx + 1)),
-                            'original_forms': [result['original']]
-                        }
-                    else:
-                        # Add this original form to the list
-                        lemma_dict[lemma]['original_forms'].append(result['original'])
-                else:
-                    removed_words.append({
-                        'word': result['original'],
-                        'reason': f"POS: {result.get('pos', 'unknown')}"
-                    })
-
-            # Print lemma summary
-            print("🔍 LEMMA EXTRACTION SUMMARY:")
-            print(f"   • Original words: {len(all_words)}")
-            print(f"   • Unique lemmas found: {len(lemma_dict)}")
-            print(f"   • Words removed (particles/etc): {len(removed_words)}")
-            print("\n📌 Top 20 lemmas with their original forms:")
-
-            sorted_lemmas = sorted(lemma_dict.items(), key=lambda x: x[1]['rank'])[:20]
-            for lemma, info in sorted_lemmas:
-                forms = info['original_forms'][:3]  # Show up to 3 original forms
-                forms_str = ', '.join(forms)
-                if len(info['original_forms']) > 3:
-                    forms_str += f" +{len(info['original_forms']) - 3} more"
-                print(f"   {lemma:15} (Rank: {info['rank']:4}, Level: {info['level']}) → from: {forms_str}")
-
-            print("\n🗑️ Removed words sample (first 20):")
-            for item in removed_words[:20]:
-                print(f"   • {item['word']:15} - {item['reason']}")
-
-            # 4. Check existing words in database
-            print("\n💾 Checking database for existing Turkish words...")
-            existing_words_query = await self.db.execute(
-                select(Word.text).where(Word.language_code == 'tr')
-            )
-            existing_words = {row[0] for row in existing_words_query.fetchall()}
-            print(f"   • Found {len(existing_words)} existing Turkish words in database")
-
-            # 5. Prepare new words for insertion
-            new_words = []
-            skipped_words = []
-
-            for lemma, info in lemma_dict.items():
-                if lemma not in existing_words:
-                    word = Word(
-                        text=lemma,
-                        language_code='tr',
-                        frequency_rank=info['rank'],
-                        level=info['level']
-                    )
-                    new_words.append(word)
-                else:
-                    skipped_words.append(lemma)
-
-            print(f"   • New words to add: {len(new_words)}")
-            print(f"   • Already existing (skipped): {len(skipped_words)}")
-
-            # 6. Batch insert new words
-            if new_words:
-                print("\n📥 Inserting new words into database...")
-                self.db.add_all(new_words)
-                await self.db.flush()
-
-                # Show first 10 inserted words
-                print("   ✅ Inserted words (first 10):")
-                for i, word in enumerate(new_words[:10]):
-                    print(f"      {i + 1:2}. {word.text:15} (Rank: {word.frequency_rank}, Level: {word.level})")
-                if len(new_words) > 10:
-                    print(f"      ... and {len(new_words) - 10} more")
-
-            # 7. Save processing report
-            print("\n📊 Generating final report...")
-
-            report = {
-                'total_original_words': len(all_words),
-                'unique_lemmas_found': len(lemma_dict),
-                'new_words_added': len(new_words),
-                'words_removed': len(removed_words),
-                'existing_words_skipped': len(skipped_words),
-                'removed_words_details': removed_words[:20]
-            }
-
-            await self.db.commit()
-
-            # Save report to file
+            # Save final report
             report_path = Path(__file__).parent / "turkish_processing_report.json"
             with open(report_path, 'w', encoding='utf-8') as f:
-                json.dump(report, f, ensure_ascii=False, indent=2)
+                json.dump(total_stats, f, ensure_ascii=False, indent=2)
 
-            print(f"\n✅ SUCCESS! Processing complete!")
-            print(f"   • Report saved to: {report_path}")
-            print(f"   • Total new Turkish words added: {len(new_words)}")
-            print(f"   • Total unique lemmas in database now: {len(existing_words) + len(new_words)}")
+            print(f"\n📁 Final report saved to: {report_path}")
             print("=" * 60)
 
-            return report
+            return total_stats
 
         except Exception as e:
             print(f"\n❌ ERROR: {str(e)}")
@@ -7395,6 +7404,172 @@ class SaveTurkishWordsToDatabase:
             raise e
         finally:
             await self.client.aclose()
+
+    # async def save_turkish_words_to_database(self):
+    #     """
+    #     Read words, process with AI, and save to database
+    #     """
+    #     try:
+    #         # 1. Read words from CSV
+    #         print("📖 Reading Turkish words from CSV...")
+    #         all_words, all_ranks = await self.read_csv_file()
+    #         print(f"📊 Found {len(all_words)} words to process")
+    #         print("-" * 50)
+    #
+    #         # 2. Process in batches with AI
+    #         batches = self.create_batches(all_words, batch_size=25)
+    #         all_results = []
+    #         processed_count = 0
+    #
+    #         print("🤖 Starting AI processing with DeepSeek...\n")
+    #
+    #         for i, batch in enumerate(batches):
+    #             print(f"🔄 Processing batch {i + 1}/{len(batches)} ({len(batch)} words)")
+    #             print(f"   Words: {', '.join(batch[:5])}{'...' if len(batch) > 5 else ''}")
+    #
+    #             batch_results = await self.processor.process_batch(batch)
+    #             all_results.extend(batch_results)
+    #             processed_count += len(batch)
+    #
+    #             # Show some results from this batch
+    #             if batch_results:
+    #                 print(f"   ✅ Batch results preview:")
+    #                 for res in batch_results[:3]:  # Show first 3 results
+    #                     keep_status = "✅ KEEP" if res.get('keep', True) else "❌ REMOVE"
+    #                     print(
+    #                         f"      • {res['original']:15} → {res.get('lemma', '?'):15} [{res.get('pos', '?'):10}] {keep_status}")
+    #
+    #             print(
+    #                 f"   Progress: {processed_count}/{len(all_words)} words processed ({processed_count / len(all_words) * 100:.1f}%)\n")
+    #
+    #             # Small delay between batches
+    #             if i < len(batches) - 1:
+    #                 await asyncio.sleep(1)
+    #
+    #         print("=" * 60)
+    #         print("📋 PROCESSING COMPLETE - Organizing results...\n")
+    #
+    #         # 3. Filter and organize results
+    #         lemma_dict = {}
+    #         removed_words = []
+    #
+    #         # Match results with original ranks
+    #         for idx, result in enumerate(all_results):
+    #             if idx < len(all_ranks):
+    #                 result['original_rank'] = all_ranks[idx]
+    #
+    #             if result.get('keep', True):
+    #                 lemma = result['lemma']
+    #                 if lemma not in lemma_dict:
+    #                     lemma_dict[lemma] = {
+    #                         'pos': result.get('pos', 'unknown'),
+    #                         'rank': result.get('original_rank', idx + 1),
+    #                         'normalized': result.get('normalized', result['original']),
+    #                         'level': self.get_cefr_level(result.get('original_rank', idx + 1)),
+    #                         'original_forms': [result['original']]
+    #                     }
+    #                 else:
+    #                     # Add this original form to the list
+    #                     lemma_dict[lemma]['original_forms'].append(result['original'])
+    #             else:
+    #                 removed_words.append({
+    #                     'word': result['original'],
+    #                     'reason': f"POS: {result.get('pos', 'unknown')}"
+    #                 })
+    #
+    #         # Print lemma summary
+    #         print("🔍 LEMMA EXTRACTION SUMMARY:")
+    #         print(f"   • Original words: {len(all_words)}")
+    #         print(f"   • Unique lemmas found: {len(lemma_dict)}")
+    #         print(f"   • Words removed (particles/etc): {len(removed_words)}")
+    #         print("\n📌 Top 20 lemmas with their original forms:")
+    #
+    #         sorted_lemmas = sorted(lemma_dict.items(), key=lambda x: x[1]['rank'])[:20]
+    #         for lemma, info in sorted_lemmas:
+    #             forms = info['original_forms'][:3]  # Show up to 3 original forms
+    #             forms_str = ', '.join(forms)
+    #             if len(info['original_forms']) > 3:
+    #                 forms_str += f" +{len(info['original_forms']) - 3} more"
+    #             print(f"   {lemma:15} (Rank: {info['rank']:4}, Level: {info['level']}) → from: {forms_str}")
+    #
+    #         print("\n🗑️ Removed words sample (first 20):")
+    #         for item in removed_words[:20]:
+    #             print(f"   • {item['word']:15} - {item['reason']}")
+    #
+    #         # 4. Check existing words in database
+    #         print("\n💾 Checking database for existing Turkish words...")
+    #         existing_words_query = await self.db.execute(
+    #             select(Word.text).where(Word.language_code == 'tr')
+    #         )
+    #         existing_words = {row[0] for row in existing_words_query.fetchall()}
+    #         print(f"   • Found {len(existing_words)} existing Turkish words in database")
+    #
+    #         # 5. Prepare new words for insertion
+    #         new_words = []
+    #         skipped_words = []
+    #
+    #         for lemma, info in lemma_dict.items():
+    #             if lemma not in existing_words:
+    #                 word = Word(
+    #                     text=lemma,
+    #                     language_code='tr',
+    #                     frequency_rank=info['rank'],
+    #                     level=info['level']
+    #                 )
+    #                 new_words.append(word)
+    #             else:
+    #                 skipped_words.append(lemma)
+    #
+    #         print(f"   • New words to add: {len(new_words)}")
+    #         print(f"   • Already existing (skipped): {len(skipped_words)}")
+    #
+    #         # 6. Batch insert new words
+    #         if new_words:
+    #             print("\n📥 Inserting new words into database...")
+    #             self.db.add_all(new_words)
+    #             await self.db.flush()
+    #
+    #             # Show first 10 inserted words
+    #             print("   ✅ Inserted words (first 10):")
+    #             for i, word in enumerate(new_words[:10]):
+    #                 print(f"      {i + 1:2}. {word.text:15} (Rank: {word.frequency_rank}, Level: {word.level})")
+    #             if len(new_words) > 10:
+    #                 print(f"      ... and {len(new_words) - 10} more")
+    #
+    #         # 7. Save processing report
+    #         print("\n📊 Generating final report...")
+    #
+    #         report = {
+    #             'total_original_words': len(all_words),
+    #             'unique_lemmas_found': len(lemma_dict),
+    #             'new_words_added': len(new_words),
+    #             'words_removed': len(removed_words),
+    #             'existing_words_skipped': len(skipped_words),
+    #             'removed_words_details': removed_words[:20]
+    #         }
+    #
+    #         await self.db.commit()
+    #
+    #         # Save report to file
+    #         report_path = Path(__file__).parent / "turkish_processing_report.json"
+    #         with open(report_path, 'w', encoding='utf-8') as f:
+    #             json.dump(report, f, ensure_ascii=False, indent=2)
+    #
+    #         print(f"\n✅ SUCCESS! Processing complete!")
+    #         print(f"   • Report saved to: {report_path}")
+    #         print(f"   • Total new Turkish words added: {len(new_words)}")
+    #         print(f"   • Total unique lemmas in database now: {len(existing_words) + len(new_words)}")
+    #         print("=" * 60)
+    #
+    #         return report
+    #
+    #     except Exception as e:
+    #         print(f"\n❌ ERROR: {str(e)}")
+    #         print("🔄 Rolling back database changes...")
+    #         await self.db.rollback()
+    #         raise e
+    #     finally:
+    #         await self.client.aclose()
 
 
 class TurkishTranslateWords:
@@ -8043,8 +8218,6 @@ IMPORTANT GUIDELINES:
             await self.client.aclose()
 
 
-# repository.py
-
 class GeneratePosAndCategories:
 
     def __init__(self, db: AsyncSession):
@@ -8449,3 +8622,587 @@ Examples:
             raise e
         finally:
             await self.client.aclose()
+
+
+
+
+############################################################################################################################################# India Language Working
+
+
+class TranslateWordsToIndiaLang:
+    # Language code mapping for DeepSeek
+    LANGUAGE_NAMES = {
+        'en': 'English',
+        'es': 'Spanish',
+        'ru': 'Russian',
+        'hi': 'Hindi',
+    }
+
+    # Target Indian language code (you mentioned 'IN' in your query)
+    TARGET_INDIAN_LANG = 'hi'  # or 'hi' for Hindi, etc.
+
+    # Batch size for API calls
+    BATCH_SIZE = 10  # Smaller batch for testing
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not self.api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY is not set.")
+
+        self.client = httpx.AsyncClient(timeout=30.0)
+        self.base_url = "https://api.deepseek.com/v1/chat/completions"
+
+    async def translate_words(self, lang_code: str, min_id: Optional[int] = None,
+                              max_id: Optional[int] = None, limit: int = 1000) -> Dict[str, Any]:
+        """
+        Translate words from source language (lang_code) to Indian language
+        Example: lang_code='en' means translate English words to Indian language
+        """
+        try:
+            # The target is always Indian language (IN)
+            target_lang = 'hi'  # Your Indian language code
+            source_lang = lang_code  # The language we're translating FROM
+
+            logger.info(f"Translating words from {source_lang} to {target_lang}")
+
+            # Get words to translate (from source language to Indian language)
+            words = await self._get_words_to_translate(
+                source_lang=source_lang,
+                target_lang=target_lang,
+                min_id=min_id,
+                max_id=max_id,
+                limit=limit
+            )
+
+            if not words:
+                return {
+                    "message": f"No {source_lang} words need translation to {target_lang}",
+                    "translated_count": 0,
+                    "source_language": source_lang,
+                    "target_language": target_lang
+                }
+
+            logger.info(f"Found {len(words)} {source_lang} words to translate to {target_lang}")
+
+            # Process in batches
+            all_translations = []
+            for i in range(0, len(words), self.BATCH_SIZE):
+                batch = words[i:i + self.BATCH_SIZE]
+                batch_translations = await self._translate_batch(batch, source_lang, target_lang)
+                all_translations.extend(batch_translations)
+
+                # Save batch to database
+                if batch_translations:
+                    await self._save_translations(batch_translations)
+
+                # Small delay to avoid rate limiting
+                if i + self.BATCH_SIZE < len(words):
+                    await asyncio.sleep(0.5)
+
+            return {
+                "success": True,
+                "translated_count": len(all_translations),
+                "source_language": source_lang,
+                "target_language": target_lang,
+                "word_ids": [t["source_word_id"] for t in all_translations]
+            }
+
+        except Exception as e:
+            logger.error(f"Translation error: {str(e)}", exc_info=True)
+            raise
+        finally:
+            await self.client.aclose()
+
+    async def _get_words_to_translate(self, source_lang: str, target_lang: str,
+                                      min_id: Optional[int], max_id: Optional[int],
+                                      limit: int) -> List[Dict[str, Any]]:
+        """
+        Get words from source language that don't have translations to target language yet
+        """
+
+        # Base query: get words from source language
+        query = select(Word).where(
+            Word.language_code == source_lang  # Only words from source language
+        )
+
+        # Apply ID filters if provided
+        if min_id is not None:
+            query = query.where(Word.id >= min_id)
+        if max_id is not None:
+            query = query.where(Word.id <= max_id)
+
+        # Fix the subquery warning: convert to select() explicitly
+        # Get IDs of words that already have translations to target language
+        subquery = select(Translation.source_word_id).where(
+            Translation.target_language_code == target_lang
+        ).subquery()
+
+        # Exclude words that already have translations
+        query = query.where(Word.id.not_in(subquery))
+
+        # Order and limit
+        query = query.order_by(Word.frequency_rank).limit(limit)
+
+        logger.info(f"Executing query: {query}")
+        result = await self.db.execute(query)
+        words = result.scalars().all()
+
+        return [
+            {
+                "id": word.id,
+                "text": word.text,
+                "language_code": word.language_code,
+                "level": word.level
+            }
+            for word in words
+        ]
+
+    async def _translate_batch(self, batch: List[Dict[str, Any]], source_lang: str, target_lang: str) -> List[
+        Dict[str, Any]]:
+        """
+        Translate a batch of words using DeepSeek API
+        """
+        source_words = [item["text"] for item in batch]
+
+        # Get language names
+        source_lang_name = self.LANGUAGE_NAMES.get(source_lang, source_lang)
+        target_lang_name = "Indian language"  # Customize this based on your target
+
+        # Create prompt for DeepSeek
+        system_prompt = f"""You are a professional translator. Translate the following words from {source_lang_name} to {target_lang_name}.
+        Return ONLY a JSON array with translations in the same order as the input words.
+        Each translation should be a single word or short phrase in the target Indian language, maintaining the original meaning.
+        Example format: ["मित्र", "पुस्तक", "जल"] for Hindi translations"""
+
+        user_prompt = f"Words to translate: {', '.join(source_words)}"
+
+        try:
+            logger.info(f"Sending batch of {len(batch)} words to DeepSeek API")
+
+            response = await self.client.post(
+                self.base_url,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "deepseek-chat",
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    "temperature": 0.3,
+                    "max_tokens": 1000
+                }
+            )
+
+            response.raise_for_status()
+            result = response.json()
+
+            # Parse the response
+            content = result["choices"][0]["message"]["content"]
+            logger.info(f"DeepSeek response: {content[:200]}...")  # Log first 200 chars
+
+            # Extract JSON array from response
+            translations = self._parse_translation_response(content, len(batch))
+
+            # Match translations with source words
+            translated_items = []
+            for i, item in enumerate(batch):
+                if i < len(translations) and translations[i]:
+                    translated_items.append({
+                        "source_word_id": item["id"],
+                        "target_language_code": target_lang,  # 'hi'
+                        "translated_text": translations[i].strip()
+                    })
+                else:
+                    logger.warning(f"Missing translation for word: {item['text']}")
+
+            return translated_items
+
+        except Exception as e:
+            logger.error(f"Batch translation failed: {str(e)}")
+            return []
+
+    def _parse_translation_response(self, content: str, expected_count: int) -> List[str]:
+        """
+        Parse DeepSeek response to extract translations
+        """
+        try:
+            # Try to find JSON array in the response
+            import re
+            json_match = re.search(r'\[(.*?)\]', content, re.DOTALL)
+            if json_match:
+                try:
+                    translations = json.loads(f"[{json_match.group(1)}]")
+                    if isinstance(translations, list):
+                        # Clean up translations
+                        return [str(t).strip().strip('"\'') for t in translations]
+                except:
+                    pass
+
+            # Fallback: try to parse the entire content as JSON
+            try:
+                translations = json.loads(content)
+                if isinstance(translations, list):
+                    return [str(t).strip() for t in translations]
+            except:
+                pass
+
+            # Fallback: split by newlines and clean
+            lines = [line.strip().strip('",') for line in content.split('\n')
+                     if line.strip() and not line.strip().startswith('[') and not line.strip().endswith(']')]
+
+            if lines:
+                # Take first expected_count lines
+                return lines[:expected_count]
+
+            logger.warning(f"Could not parse translations from: {content[:100]}...")
+            return [''] * expected_count
+
+        except Exception as e:
+            logger.error(f"Failed to parse translation response: {str(e)}")
+            return [''] * expected_count
+
+    async def _save_translations(self, translations: List[Dict[str, Any]]):
+        """
+        Save translations to database
+        """
+
+        saved_count = 0
+        updated_count = 0
+
+        for trans_data in translations:
+            # Check if translation already exists
+            stmt = select(Translation).where(
+                and_(
+                    Translation.source_word_id == trans_data["source_word_id"],
+                    Translation.target_language_code == trans_data["target_language_code"]
+                )
+            )
+            result = await self.db.execute(stmt)
+            existing = result.scalar_one_or_none()
+
+            if existing:
+                # Update existing translation
+                existing.translated_text = trans_data["translated_text"]
+                updated_count += 1
+            else:
+                # Create new translation
+                translation = Translation(**trans_data)
+                self.db.add(translation)
+                saved_count += 1
+
+        await self.db.commit()
+        logger.info(f"Saved {saved_count} new translations, updated {updated_count} existing")
+
+
+class TranslateSentencesToHindiLang:
+    # Language code mapping for DeepSeek
+    LANGUAGE_NAMES = {
+        'en': 'English',
+        'es': 'Spanish',
+        'ru': 'Russian',
+        'hi': 'Hindi',
+    }
+
+    # Target Indian language code
+    TARGET_INDIAN_LANG = 'hi'  # Hindi
+
+    # Batch size for API calls
+    BATCH_SIZE = 5  # Smaller batch for sentences (they're longer)
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not self.api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY is not set.")
+
+        self.client = httpx.AsyncClient(timeout=60.0)  # Longer timeout for sentences
+        self.base_url = "https://api.deepseek.com/v1/chat/completions"
+
+    async def translate_sentences(self,
+                                  lang_code: str,
+                                  min_id: Optional[int] = None,
+                                  max_id: Optional[int] = None,
+                                  limit: int = 1000) -> Dict[str, Any]:
+        """
+        Translate sentences from source language (lang_code) to Hindi
+        Example: lang_code='en' means translate English sentences to Hindi
+        """
+        try:
+            # The target is always Hindi
+            target_lang = self.TARGET_INDIAN_LANG  # 'hi'
+            source_lang = lang_code  # The language we're translating FROM
+
+            # First, verify the target language exists in database
+            lang_exists = await self.db.execute(
+                select(Language).where(Language.code == target_lang)
+            )
+            if not lang_exists.scalar_one_or_none():
+                raise ValueError(
+                    f"Target language code '{target_lang}' not found in languages table. "
+                    f"Please add it first."
+                )
+
+            logger.info(f"Translating sentences from {source_lang} to {target_lang}")
+
+            # Get sentences to translate
+            sentences = await self._get_sentences_to_translate(
+                source_lang=source_lang,
+                target_lang=target_lang,
+                min_id=min_id,
+                max_id=max_id,
+                limit=limit
+            )
+
+            if not sentences:
+                return {
+                    "message": f"No {source_lang} sentences need translation to {target_lang}",
+                    "translated_count": 0,
+                    "source_language": source_lang,
+                    "target_language": target_lang
+                }
+
+            logger.info(f"Found {len(sentences)} {source_lang} sentences to translate to {target_lang}")
+
+            # Process in batches
+            all_translations = []
+            for i in range(0, len(sentences), self.BATCH_SIZE):
+                batch = sentences[i:i + self.BATCH_SIZE]
+                batch_translations = await self._translate_batch(batch, source_lang, target_lang)
+                all_translations.extend(batch_translations)
+
+                # Save batch to database
+                if batch_translations:
+                    await self._save_translations(batch_translations)
+
+                # Longer delay for sentences to avoid rate limiting
+                if i + self.BATCH_SIZE < len(sentences):
+                    await asyncio.sleep(1.0)
+
+            return {
+                "success": True,
+                "translated_count": len(all_translations),
+                "source_language": source_lang,
+                "target_language": target_lang,
+                "sentence_ids": [t["source_sentence_id"] for t in all_translations]
+            }
+
+        except Exception as e:
+            logger.error(f"Sentence translation error: {str(e)}", exc_info=True)
+            raise
+        finally:
+            await self.client.aclose()
+
+    async def _get_sentences_to_translate(self,
+                                          source_lang: str,
+                                          target_lang: str,
+                                          min_id: Optional[int],
+                                          max_id: Optional[int],
+                                          limit: int) -> List[Dict[str, Any]]:
+        """
+        Get sentences from source language that don't have translations to target language yet
+        """
+
+        # Base query: get sentences from source language
+        query = select(Sentence).where(
+            Sentence.language_code == source_lang
+        )
+
+        # Apply ID filters if provided
+        if min_id is not None:
+            query = query.where(Sentence.id >= min_id)
+        if max_id is not None:
+            query = query.where(Sentence.id <= max_id)
+
+        # Get IDs of sentences that already have translations to target language
+        subquery = select(SentenceTranslation.source_sentence_id).where(
+            SentenceTranslation.language_code == target_lang
+        ).subquery()
+
+        # Exclude sentences that already have translations
+        query = query.where(Sentence.id.not_in(subquery))
+
+        # Order by ID and limit
+        query = query.order_by(Sentence.id).limit(limit)
+
+        logger.info(f"Executing sentence query: {query}")
+        result = await self.db.execute(query)
+        sentences = result.scalars().all()
+
+        return [
+            {
+                "id": sentence.id,
+                "text": sentence.text,
+                "language_code": sentence.language_code
+            }
+            for sentence in sentences
+        ]
+
+    async def _translate_batch(self,
+                               batch: List[Dict[str, Any]],
+                               source_lang: str,
+                               target_lang: str) -> List[Dict[str, Any]]:
+        """
+        Translate a batch of sentences using DeepSeek API
+        """
+        source_sentences = [item["text"] for item in batch]
+
+        # Get language names
+        source_lang_name = self.LANGUAGE_NAMES.get(source_lang, source_lang)
+        target_lang_name = "Hindi"
+
+        # Create prompt for DeepSeek
+        system_prompt = f"""You are a professional translator. Translate the following sentences from {source_lang_name} to {target_lang_name}.
+        Return ONLY a JSON array with translations in the same order as the input sentences.
+        Maintain the meaning, tone, and context of each sentence. Use proper grammar and punctuation in {target_lang_name}.
+        Example format: ["मेरा नाम जॉन है।", "आप कैसे हैं?", "यह एक किताब है।"]"""
+
+        # Join sentences with clear separators
+        numbered_sentences = "\n".join([f"{i + 1}. {s}" for i, s in enumerate(source_sentences)])
+        user_prompt = f"Sentences to translate:\n{numbered_sentences}"
+
+        try:
+            logger.info(f"Sending batch of {len(batch)} sentences to DeepSeek API")
+
+            response = await self.client.post(
+                self.base_url,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "deepseek-chat",
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    "temperature": 0.3,
+                    "max_tokens": 2000  # Larger for sentences
+                }
+            )
+
+            response.raise_for_status()
+            result = response.json()
+
+            # Parse the response
+            content = result["choices"][0]["message"]["content"]
+            logger.info(f"DeepSeek response preview: {content[:200]}...")
+
+            # Extract translations from response
+            translations = self._parse_translation_response(content, len(batch))
+
+            # Match translations with source sentences
+            translated_items = []
+            for i, item in enumerate(batch):
+                if i < len(translations) and translations[i]:
+                    # Clean up the translation (remove numbering if present)
+                    cleaned_text = self._clean_translation(translations[i])
+                    translated_items.append({
+                        "source_sentence_id": item["id"],
+                        "language_code": target_lang,  # 'hi'
+                        "translated_text": cleaned_text
+                    })
+                else:
+                    logger.warning(f"Missing translation for sentence: {item['text'][:50]}...")
+
+            return translated_items
+
+        except Exception as e:
+            logger.error(f"Batch sentence translation failed: {str(e)}")
+            return []
+
+    def _parse_translation_response(self, content: str, expected_count: int) -> List[str]:
+        """
+        Parse DeepSeek response to extract translations
+        """
+        try:
+            # Try to find JSON array in the response
+            import re
+            json_match = re.search(r'\[(.*?)\]', content, re.DOTALL)
+            if json_match:
+                try:
+                    # Try to parse as JSON
+                    json_str = f"[{json_match.group(1)}]"
+                    translations = json.loads(json_str)
+                    if isinstance(translations, list):
+                        return [str(t).strip() for t in translations]
+                except:
+                    pass
+
+            # Try to parse numbered list
+            lines = content.strip().split('\n')
+            translations = []
+            for line in lines:
+                # Remove numbering (e.g., "1. text" or "1. text")
+                cleaned = re.sub(r'^\d+\.\s*', '', line.strip())
+                if cleaned and not cleaned.startswith('[') and not cleaned.endswith(']'):
+                    translations.append(cleaned)
+
+            if len(translations) >= expected_count:
+                return translations[:expected_count]
+
+            # If all else fails, try to split by newlines
+            simple_lines = [line.strip() for line in content.split('\n')
+                            if line.strip() and not line.strip().startswith('[')]
+            if simple_lines:
+                return simple_lines[:expected_count]
+
+            logger.warning(f"Could not parse translations from response")
+            return [''] * expected_count
+
+        except Exception as e:
+            logger.error(f"Failed to parse translation response: {str(e)}")
+            return [''] * expected_count
+
+    def _clean_translation(self, text: str) -> str:
+        """
+        Clean up a single translation text
+        """
+        # Remove numbering if present (e.g., "1. text" or "1. text")
+        import re
+        text = re.sub(r'^\d+\.\s*', '', text)
+
+        # Remove quotes if present
+        text = text.strip('"\'')
+
+        # Remove extra whitespace
+        text = ' '.join(text.split())
+
+        return text
+
+    async def _save_translations(self, translations: List[Dict[str, Any]]):
+        """
+        Save sentence translations to database
+        """
+
+        saved_count = 0
+        updated_count = 0
+
+        for trans_data in translations:
+            # Check if translation already exists
+            stmt = select(SentenceTranslation).where(
+                and_(
+                    SentenceTranslation.source_sentence_id == trans_data["source_sentence_id"],
+                    SentenceTranslation.language_code == trans_data["language_code"]
+                )
+            )
+            result = await self.db.execute(stmt)
+            existing = result.scalar_one_or_none()
+
+            if existing:
+                # Update existing translation
+                existing.translated_text = trans_data["translated_text"]
+                updated_count += 1
+            else:
+                # Create new translation
+                translation = SentenceTranslation(**trans_data)
+                self.db.add(translation)
+                saved_count += 1
+
+        await self.db.commit()
+        logger.info(f"Saved {saved_count} new sentence translations, updated {updated_count} existing")
+
+
