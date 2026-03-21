@@ -9206,3 +9206,23 @@ class TranslateSentencesToHindiLang:
         logger.info(f"Saved {saved_count} new sentence translations, updated {updated_count} existing")
 
 
+
+class ChineseTranslateWords:
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not self.api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY is not set.")
+
+        self.client = httpx.AsyncClient(timeout=60.0)  # Longer timeout for sentences
+        self.base_url = "https://api.deepseek.com/v1/chat/completions"
+
+    async def translate_words(self,
+                              lang_code: Optional[str] = None,
+                              min_id: Optional[int] = None,
+                              max_id: Optional[int] = None,
+                              limit: Optional[int] = 1000,
+                              ):
+
+        pass

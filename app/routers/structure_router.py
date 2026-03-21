@@ -40,7 +40,9 @@ from app.repositories.structure_repository import (CreateMainStructureRepository
                                                    AITranslateEnglishWords, AITranslateSpanishWords,
                                                    AITranslateRussianWords, SaveTurkishWordsToDatabase,
                                                    TurkishTranslateWords, TurkishGenerateSentence,
-                                                   GeneratePosAndCategories, TranslateWordsToIndiaLang, TranslateSentencesToHindiLang
+                                                   GeneratePosAndCategories, TranslateWordsToIndiaLang, TranslateSentencesToHindiLang,
+                                                    ChineseTranslateWords
+
                                                    )
 
 from app.services.ai_service import AIService
@@ -818,6 +820,29 @@ async def translate_sentences(
     except Exception as ex:
         await db.rollback()
         logger.error(f"Error during sentence translation: {ex}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
+
+
+
+@router.post('/china/translate_words')
+async def chinese_translate_words(
+        lang_code: str = Query(..., description="Source language code to translate from (e.g., 'en')"),
+        min_id: int = Query(None, description="Minimum sentence ID to translate"),
+        max_id: int = Query(None, description="Maximum sentence ID to translate"),
+        limit: int = Query(10, description="Number of sentences to translate if no ID range"),
+        db: AsyncSession = Depends(get_db)
+):
+
+
+    try:
+        repo = ChineseTranslateWords(db)
+        result = await repo.translate_words(lang_code = lang_code, min_id=min_id, max_id=max_id, limit=limit)
+        return {
+            "success": True, "data": result
+        }
+    except Exception as ex:
+        await self.db.rollback()
+        logger.error(f'Error during translate words in chinese {ex}', exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal error: {str(ex)}")
 
 
