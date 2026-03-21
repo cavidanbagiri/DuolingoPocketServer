@@ -217,7 +217,7 @@ class FetchWordRepository:
             return {"words": [], "total_count": 0, "has_more": False}
 
         native_language = user.native
-        lang_code_map = {"Russian": "ru", "English": "en", "Spanish": "es", "Turkish": "tr"}
+        lang_code_map = {"Russian": "ru", "English": "en", "Spanish": "es", "Turkish": "tr", "India": "hi"}
         native_code = lang_code_map.get(native_language)
 
         if not native_code:
@@ -909,6 +909,7 @@ class DetailWordRepository:
             "Spanish":"es",
             "Russian":"ru",
             "Turkish":"tr",
+            "India":"hi"
         }
         user_result = await self.db.execute(
             select(UserModel)
@@ -1019,7 +1020,7 @@ class FetchWordByPosRepository:
             return []
 
         native_language = user.native
-        lang_code_map = {"Russian": "ru", "English": "en", "Spanish": "es", "Turkish": "tr"}
+        lang_code_map = {"Russian": "ru", "English": "en", "Spanish": "es", "Turkish": "tr", "India": "hi"}
         native_code = lang_code_map.get(native_language)
 
         if not native_code:
@@ -2154,7 +2155,7 @@ class FetchWordByCategoryIdRepository:
             return []
 
         native_language = user.native
-        lang_code_map = {"Russian": "ru", "English": "en", "Spanish": "es", "Turkish": "tr"}
+        lang_code_map = {"Russian": "ru", "English": "en", "Spanish": "es", "Turkish": "tr", "India":"hi"}
         native_code = lang_code_map.get(native_language)
 
         if not native_code:
