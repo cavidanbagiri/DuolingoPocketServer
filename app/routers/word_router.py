@@ -381,8 +381,8 @@ async def generate_ai_chat_stream(
         # Initialize repository with database session
         repo = GenerateAIQuestionRepository(db)
 
-        print(f'User ID from token: {user_id}')
-        print(f'Processing word: {data.word}, language: {data.language}')
+        # print(f'User ID from token: {user_id}')
+        # print(f'Processing word: {data.word}, language: {data.language}')
 
         return StreamingResponse(
             repo.generate_ai_chat_stream(user_id, data),

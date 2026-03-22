@@ -1,4 +1,8 @@
 # app/repositories/public_repository.py
+
+import json
+import os
+import httpx
 import asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func
@@ -12,7 +16,13 @@ from app.schemas.public_seo import (
     WordRichPayload, TranslationOut, MeaningOut,
     SentenceOut, CategoryOut, RelatedWordOut, WordSEOPayload, SlugOut
 )
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, AsyncGenerator
+
+
+
+from app.logging_config import setup_logger
+logger = setup_logger(__name__, "word.log")
+
 
 
 
@@ -360,3 +370,125 @@ class TopWordsRepository:
             for w in words
         ]
 
+
+
+
+
+class GeneratePublicAIWordRepository:
+    def __init__(self):
+        self.deepseek_api_key = os.getenv('DEEPSEEK_API_KEY')
+        self.api_url = "https://api.deepseek.com/v1/chat/completions"
+        self.max_tokens = 8192
+
+        if not self.deepseek_api_key:
+            raise ValueError("DEEPSEEK_API_KEY environment variable is not set")
+
+    def _create_system_prompt(self, target_language: Optional[str] = None) -> str:
+        """
+        Create a system prompt that ensures the AI responds in the learning language context
+        and matches the prompt's language.
+        """
+        base_prompt = """You are a specialized language learning assistant. Your role is to help users learn languages effectively.
+
+CRITICAL INSTRUCTIONS:
+1. **LANGUAGE MATCHING**: You MUST respond in EXACTLY the same language as the user's prompt. If the user writes in Spanish, respond in Spanish. If in French, respond in French, etc.
+2. **LEARNING CONTEXT**: Structure your response as a comprehensive language learning resource with these sections:
+   - 📖 **Definition & Pronunciation**: Clear definition with pronunciation guide (IPA if helpful)
+   - 💡 **Example Sentences**: Provide 3+ practical examples with translations in the user's native language (if different from learning language)
+   - 🎯 **Usage Contexts**: Explain when and how to use this word/phrase naturally
+   - 📝 **Grammar Tips**: Key grammatical points related to this word
+   - 🌍 **Cultural Notes**: Cultural context or nuances where relevant
+   - ⭐ **Difficulty Level**: Rate from 1-5 (1=easy, 5=advanced)
+   - 🎓 **Learning Tip**: A practical tip to remember and use this word
+   - ✨ **Motivation**: Brief encouraging message for the learner
+
+3. **FORMAT**: Use emojis for visual organization (📖, 💡, 🎯, etc.) and maintain clear section breaks
+4. **ACCURACY**: Ensure all examples are natural, idiomatic, and grammatically correct
+5. **ADAPTABILITY**: Adjust explanation complexity based on the word's difficulty level
+
+Remember: Your goal is to make language learning engaging, practical, and culturally aware."""
+
+        if target_language and target_language != "auto":
+            base_prompt += f"\n\nNOTE: The user is specifically learning {target_language}. Provide your response with this learning context in mind."
+
+        return base_prompt
+
+    async def generate_ai_question(self, prompt: str, language: str = "auto") -> AsyncGenerator[str, None]:
+        """
+        Generate streaming AI response for language learning content.
+
+        Args:
+            prompt: The word/phrase to learn about
+            language: Target learning language (default: auto-detect from prompt)
+
+        Yields:
+            Streaming chunks of the AI response in SSE format
+        """
+        try:
+            # Determine the language for learning context
+            learning_language = None if language == "auto" else language
+
+            system_prompt = self._create_system_prompt(learning_language)
+
+            # Prepare the user message with explicit instruction about language
+            user_message = f"""Please help me learn: "{prompt}"
+
+IMPORTANT: Respond in the SAME language as this message. If this message is in English, respond in English. If in Spanish, respond in Spanish, etc."""
+
+            headers = {
+                "Authorization": f"Bearer {self.deepseek_api_key}",
+                "Content-Type": "application/json"
+            }
+
+            payload = {
+                "model": "deepseek-chat",  # or "deepseek-coder" depending on your needs
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message}
+                ],
+                "stream": True,
+                "max_tokens": self.max_tokens,
+                "temperature": 0.7,  # Slightly creative but focused
+                "top_p": 0.9
+            }
+
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                async with client.stream(
+                        "POST",
+                        self.api_url,
+                        headers=headers,
+                        json=payload
+                ) as response:
+
+                    if response.status_code != 200:
+                        error_text = await response.aread()
+                        logger.error(f"DeepSeek API error: {response.status_code} - {error_text}")
+                        yield f"data: {json.dumps({'error': f'API error: {response.status_code}'})}\n\n"
+                        return
+
+                    async for line in response.aiter_lines():
+                        if line.startswith("data: "):
+                            data = line[6:]  # Remove "data: " prefix
+
+                            if data == "[DONE]":
+                                yield f"data: {json.dumps({'done': True})}\n\n"
+                                break
+
+                            try:
+                                chunk = json.loads(data)
+                                if "choices" in chunk and len(chunk["choices"]) > 0:
+                                    delta = chunk["choices"][0].get("delta", {})
+                                    if "content" in delta:
+                                        content = delta["content"]
+                                        # Stream the content as SSE
+                                        yield f"data: {json.dumps({'content': content})}\n\n"
+                            except json.JSONDecodeError as e:
+                                logger.warning(f"Failed to parse chunk: {data[:100]}... Error: {e}")
+                                continue
+
+        except httpx.TimeoutException:
+            logger.error("DeepSeek API timeout")
+            yield f"data: {json.dumps({'error': 'Request timeout'})}\n\n"
+        except Exception as e:
+            logger.error(f"Unexpected error in generate_ai_question: {str(e)}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"

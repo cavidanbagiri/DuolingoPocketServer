@@ -2,13 +2,23 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.setup import get_db
-from app.repositories.public_repository import PublicSEORepo, TopWordsRepository
+from app.repositories.public_repository import PublicSEORepo, TopWordsRepository, GeneratePublicAIWordRepository
 from app.schemas.public_seo import  WordRichPayload, SlugOut, WordSEOPayload
 from typing import List
 from urllib.parse import unquote
+from pydantic import BaseModel
+
+from fastapi.responses import StreamingResponse
 
 
 router = APIRouter()
+
+
+
+from app.logging_config import setup_logger
+logger = setup_logger(__name__, "word.log")
+
+
 
 @router.get("/slugs", response_model=List[SlugOut])
 async def list_slugs(db: AsyncSession = Depends(get_db)):
@@ -107,3 +117,48 @@ async def get_top_words_pos(
         raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+# Add a request model
+class AIWordRequest(BaseModel):
+    prompt: str
+    language: str = "auto"
+
+
+@router.post('/generateaiword', status_code=200)
+async def generate_ai_for_word(
+        request: AIWordRequest  # Changed to receive body instead of query params
+):
+    """
+    Generate comprehensive AI-powered language learning content.
+
+    Returns detailed information including:
+    - Definition and pronunciation
+    - 3+ example sentences with translations
+    - Usage contexts and common phrases
+    - Grammar tips and cultural notes
+    - Motivational message
+    - Difficulty level assessment
+
+    Features:
+    - Streaming response
+    - Language-aware content (responds in the same language as the prompt)
+    - Learning language context focus
+    """
+    try:
+        repo = GeneratePublicAIWordRepository()
+
+        return StreamingResponse(
+            repo.generate_ai_question(request.prompt, request.language),  # Changed to access from request body
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Streaming chat error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Streaming service error")
