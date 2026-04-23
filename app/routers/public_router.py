@@ -60,31 +60,106 @@ async def get_rich_word(
         raise HTTPException(status_code=404, detail="Word not found")
 
     return payload
+#
+#
+# @router.get("/top-words/{language_code}")
+# async def get_top_words(
+#         language_code: str,
+#         limit: int = Query(default=1000, le=10000),
+#         db: AsyncSession = Depends(get_db)
+# ):
+#     """
+#     Get top words (Mixed POS) for dynamic pages like /top/english-words/1000
+#     """
+#     try:
+#         repo = TopWordsRepository(db)
+#         words = await repo.get_mixed(language_code, limit)
+#
+#         return {
+#             "words": words,
+#             "count": len(words),
+#             "language": language_code,
+#             "type": "mixed"
+#         }
+#
+#     except Exception as e:
+#         # Log the error internally here if you have a logger
+#         # print(f"Error fetching top words: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
+#
+#
+# @router.get('/top-words/{language_code}/{pos}')
+# async def get_top_words_pos(
+#         language_code: str,
+#         pos: str,
+#         limit: int = Query(default=1000, le=10000),
+#         db: AsyncSession = Depends(get_db)
+# ):
+#     """
+#     Get top words filtered by POS for dynamic pages like /top/english-verbs/1000
+#     """
+#     try:
+#         repo = TopWordsRepository(db)
+#         # Validation: Ensure pos is not something crazy
+#         if len(pos) > 20:
+#             raise HTTPException(status_code=400, detail="Invalid POS category")
+#
+#         words = await repo.get_by_pos(language_code, pos, limit)
+#
+#         return {
+#             "words": words,
+#             "count": len(words),
+#             "language": language_code,
+#             "type": pos
+#         }
+#
+#     except HTTPException as he:
+#         raise he
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
+
+
+# public_router.py
+
+from typing import Optional
 
 
 @router.get("/top-words/{language_code}")
 async def get_top_words(
         language_code: str,
         limit: int = Query(default=1000, le=10000),
+        native_lang: Optional[str] = Query(default=None, regex="^(es|ru|hi|tr|en)$"),  # NEW
         db: AsyncSession = Depends(get_db)
 ):
     """
-    Get top words (Mixed POS) for dynamic pages like /top/english-words/1000
+    Get top words (Mixed POS) for dynamic pages.
+    If native_lang provided, includes translations to that language.
     """
     try:
         repo = TopWordsRepository(db)
-        words = await repo.get_mixed(language_code, limit)
 
-        return {
+        # Choose method based on whether native_lang is provided
+        if native_lang and native_lang != language_code:  # Don't translate to same language
+            words = await repo.get_mixed_with_translation(
+                language_code, native_lang, limit
+            )
+        else:
+            words = await repo.get_mixed(language_code, limit)
+
+
+        result = {
             "words": words,
             "count": len(words),
             "language": language_code,
+            "native_lang": native_lang,  # Return which translation was used
             "type": "mixed"
         }
 
+        print('result..................', result)
+
+        return result
+
     except Exception as e:
-        # Log the error internally here if you have a logger
-        # print(f"Error fetching top words: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -93,23 +168,32 @@ async def get_top_words_pos(
         language_code: str,
         pos: str,
         limit: int = Query(default=1000, le=10000),
+        native_lang: Optional[str] = Query(default=None, regex="^(es|ru|hi|tr|en)$"),  # NEW
         db: AsyncSession = Depends(get_db)
 ):
     """
-    Get top words filtered by POS for dynamic pages like /top/english-verbs/1000
+    Get top words filtered by POS.
+    If native_lang provided, includes translations to that language.
     """
     try:
         repo = TopWordsRepository(db)
-        # Validation: Ensure pos is not something crazy
+
         if len(pos) > 20:
             raise HTTPException(status_code=400, detail="Invalid POS category")
 
-        words = await repo.get_by_pos(language_code, pos, limit)
+        # Choose method based on whether native_lang is provided
+        if native_lang and native_lang != language_code:
+            words = await repo.get_by_pos_with_translation(
+                language_code, pos, native_lang, limit
+            )
+        else:
+            words = await repo.get_by_pos(language_code, pos, limit)
 
         return {
             "words": words,
             "count": len(words),
             "language": language_code,
+            "native_lang": native_lang,  # Return which translation was used
             "type": pos
         }
 
@@ -117,6 +201,16 @@ async def get_top_words_pos(
         raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+
+
+
+
+
+
 
 
 

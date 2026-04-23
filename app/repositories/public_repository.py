@@ -319,15 +319,64 @@ class DeepSeekRepo:
         pass
 
 
+# class TopWordsRepository:
+#     def __init__(self, db: AsyncSession):
+#         self.db = db
+#
+#     async def get_mixed(self, language_code: str, limit: int = 1000):
+#         """
+#         Get top N words by frequency (Mixed categories).
+#         Query is faster because it does not require a JOIN.
+#         """
+#         stmt = (
+#             select(Word)
+#             .where(Word.language_code == language_code)
+#             .order_by(Word.frequency_rank.asc().nulls_last())
+#             .limit(limit)
+#         )
+#         result = await self.db.scalars(stmt)
+#         return self._format_list(result.all())
+#
+#     async def get_by_pos(self, language_code: str, pos: str, limit: int = 1000):
+#         """
+#         Get top N words filtered by Part of Speech (JOINS WordMeaning).
+#         """
+#         stmt = (
+#             select(Word)
+#             .join(WordMeaning, WordMeaning.word_id == Word.id)
+#             .where(and_(
+#                 Word.language_code == language_code,
+#                 WordMeaning.pos.ilike(pos)  # Case insensitive (Verb, verb, VERB)
+#             ))
+#             .order_by(Word.frequency_rank.asc().nulls_last())
+#             .limit(limit)
+#             .distinct()  # vital: prevents seeing the same word twice if it has 2 verb meanings
+#         )
+#
+#         result = await self.db.scalars(stmt)
+#         return self._format_list(result.all())
+#
+#     def _format_list(self, words):
+#         """Helper to format output consistently"""
+#         return [
+#             {
+#                 "id": w.id,
+#                 "text": w.text,
+#                 "frequency_rank": w.frequency_rank,
+#                 "level": w.level,
+#                 # We do not return strict POS here for mixed lists
+#                 # because one word can be both noun and verb.
+#             }
+#             for w in words
+#         ]
+
+
 class TopWordsRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
     async def get_mixed(self, language_code: str, limit: int = 1000):
-        """
-        Get top N words by frequency (Mixed categories).
-        Query is faster because it does not require a JOIN.
-        """
+        """Original method - no translation"""
         stmt = (
             select(Word)
             .where(Word.language_code == language_code)
@@ -337,38 +386,101 @@ class TopWordsRepository:
         result = await self.db.scalars(stmt)
         return self._format_list(result.all())
 
+    async def get_mixed_with_translation(
+            self,
+            language_code: str,
+            native_lang: str,  # 'es', 'ru', 'hi', 'tr'
+            limit: int = 1000
+    ):
+        """Get top words WITH translation to user's native language"""
+        stmt = (
+            select(Word)
+            .where(Word.language_code == language_code)
+            .options(
+                selectinload(Word.translations)  # Eager load translations
+            )
+            .order_by(Word.frequency_rank.asc().nulls_last())
+            .limit(limit)
+        )
+        result = await self.db.scalars(stmt)
+        words = result.all()
+        return self._format_list_with_translation(words, native_lang)
+
     async def get_by_pos(self, language_code: str, pos: str, limit: int = 1000):
-        """
-        Get top N words filtered by Part of Speech (JOINS WordMeaning).
-        """
+        """Original method - no translation"""
         stmt = (
             select(Word)
             .join(WordMeaning, WordMeaning.word_id == Word.id)
             .where(and_(
                 Word.language_code == language_code,
-                WordMeaning.pos.ilike(pos)  # Case insensitive (Verb, verb, VERB)
+                WordMeaning.pos.ilike(pos)
             ))
             .order_by(Word.frequency_rank.asc().nulls_last())
             .limit(limit)
-            .distinct()  # vital: prevents seeing the same word twice if it has 2 verb meanings
+            .distinct()
         )
-
         result = await self.db.scalars(stmt)
         return self._format_list(result.all())
 
+    async def get_by_pos_with_translation(
+            self,
+            language_code: str,
+            pos: str,
+            native_lang: str,  # 'es', 'ru', 'hi', 'tr'
+            limit: int = 1000
+    ):
+        """Get top words by POS WITH translation to user's native language"""
+        stmt = (
+            select(Word)
+            .join(WordMeaning, WordMeaning.word_id == Word.id)
+            .where(and_(
+                Word.language_code == language_code,
+                WordMeaning.pos.ilike(pos)
+            ))
+            .options(
+                selectinload(Word.translations)
+            )
+            .order_by(Word.frequency_rank.asc().nulls_last())
+            .limit(limit)
+            .distinct()
+        )
+        result = await self.db.scalars(stmt)
+        words = result.all()
+        return self._format_list_with_translation(words, native_lang)
+
     def _format_list(self, words):
-        """Helper to format output consistently"""
+        """Original formatter - no translation"""
         return [
             {
                 "id": w.id,
                 "text": w.text,
                 "frequency_rank": w.frequency_rank,
                 "level": w.level,
-                # We do not return strict POS here for mixed lists
-                # because one word can be both noun and verb.
             }
             for w in words
         ]
+
+    def _format_list_with_translation(self, words, native_lang):
+        """New formatter - includes translation to user's language"""
+        result = []
+        for w in words:
+            # Find translation for user's native language
+            translation = None
+            for t in w.translations:
+                if t.target_language_code == native_lang:
+                    translation = t.translated_text
+                    break
+
+            result.append({
+                "id": w.id,
+                "text": w.text,
+                "translation": translation,  # Added!
+                "frequency_rank": w.frequency_rank,
+                "level": w.level,
+            })
+        return result
+
+
 
 
 
