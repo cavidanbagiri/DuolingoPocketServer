@@ -32,26 +32,6 @@ class PublicSEORepo:
         self.db = db
 
 
-    # async def get_all_slugs(self):
-    #     """
-    #     Get all word slugs for static generation.
-    #     Returns: [{lang: "en", word: "book"}, {lang: "es", word: "libro"}, ...]
-    #     """
-    #     try:
-    #         stmt = (
-    #             select(
-    #                 Word.language_code.label("lang"),
-    #                 Word.text.label("word"),
-    #             )
-    #             .distinct(Word.language_code, Word.text)
-    #             .limit(10_000)  # ✅ Safety cap
-    #         )
-    #         rows = (await self.db.execute(stmt)).all()
-    #         return [SlugOut(lang=r.lang, word=r.word) for r in rows]
-    #     except Exception as e:
-    #         print(f"Error in get_all_slugs: {str(e)}")
-    #         return []
-
     async def get_all_slugs(self):
         try:
             langs = ["en", "es", "ru"]
@@ -129,6 +109,8 @@ class PublicSEORepo:
             langTo=lang_to,
         )
 
+
+    # Old Code, will live for seo.
     async def get_word_rich(self, lang_from: str, word: str) -> Optional[WordRichPayload]:
         """
         Fetch comprehensive word data for static page generation.
@@ -206,18 +188,7 @@ class PublicSEORepo:
             if categories and word_obj.categories:
                 category_ids = [cat.id for cat in word_obj.categories if cat]
                 if category_ids:
-                    # related_stmt = (
-                    #     select(Word)
-                    #     .join(word_category_association, word_category_association.c.word_id == Word.id)
-                    #     .where(and_(
-                    #         word_category_association.c.category_id.in_(category_ids),
-                    #         Word.id != word_obj.id,
-                    #         Word.language_code == lang_from
-                    #     ))
-                    #     .order_by(Word.frequency_rank)
-                    #     .limit(8)
-                    #     .distinct(Word.id)
-                    # )
+
                     related_stmt = (
                         select(Word)
                         .join(word_category_association, word_category_association.c.word_id == Word.id)
@@ -300,6 +271,148 @@ class PublicSEORepo:
             import traceback
             traceback.print_exc()
             return None
+
+    async def get_word_rich_with_target_translation(
+            self,
+            lang_from: str,
+            word: str,
+            target: str
+    ) -> Optional[WordRichPayload]:
+
+        try:
+            # 1. First get same base format as SEO function
+            payload = await self.get_word_rich(lang_from, word)
+
+            if not payload:
+                return None
+
+            # 2. Find source word
+            word_stmt = (
+                select(Word)
+                .where(and_(
+                    Word.text == word,
+                    Word.language_code == lang_from
+                ))
+                .options(selectinload(Word.categories))
+                .limit(1)
+            )
+
+            word_obj = await self.db.scalar(word_stmt)
+
+            if not word_obj:
+                return None
+
+            # 3. Get target language name
+            target_lang_name = target.upper()
+
+            target_lang_stmt = (
+                select(Language.name)
+                .where(Language.code == target)
+            )
+
+            lang_name_result = await self.db.scalar(target_lang_stmt)
+
+            if lang_name_result:
+                target_lang_name = lang_name_result
+
+            # 4. Get main word translation
+            translation_stmt = (
+                select(Translation)
+                .where(and_(
+                    Translation.source_word_id == word_obj.id,
+                    Translation.target_language_code == target
+                ))
+                .limit(1)
+            )
+
+            translation_obj = await self.db.scalar(translation_stmt)
+
+            main_translation = ""
+
+            if translation_obj:
+                main_translation = translation_obj.translated_text or ""
+
+            # 5. Get all translations list
+            all_translations_stmt = (
+                select(Translation)
+                .where(Translation.source_word_id == word_obj.id)
+            )
+
+            all_translation_rows = await self.db.scalars(all_translations_stmt)
+
+            translations = []
+
+            for trans in all_translation_rows:
+                if not trans:
+                    continue
+
+                lang_name = trans.target_language_code.upper()
+
+                if trans.target_language:
+                    lang_name = trans.target_language.name
+
+                translations.append(TranslationOut(
+                    language_code=trans.target_language_code,
+                    language_name=lang_name,
+                    translated_text=trans.translated_text or ""
+                ))
+
+            # 6. Get example sentences + target translations
+            sentence_stmt = (
+                select(Sentence)
+                .join(SentenceWord, SentenceWord.sentence_id == Sentence.id)
+                .where(and_(
+                    SentenceWord.word_id == word_obj.id,
+                    Sentence.language_code == lang_from
+                ))
+                .order_by(func.random())
+                .limit(7)
+            )
+
+            sentence_rows = await self.db.scalars(sentence_stmt)
+
+            example_sentences = []
+
+            for sentence in sentence_rows:
+                if not sentence or not sentence.text:
+                    continue
+
+                sentence_translation_stmt = (
+                    select(SentenceTranslation)
+                    .where(and_(
+                        SentenceTranslation.source_sentence_id == sentence.id,
+                        SentenceTranslation.language_code == target
+                    ))
+                    .limit(1)
+                )
+
+                sentence_translation_obj = await self.db.scalar(sentence_translation_stmt)
+
+                example_sentences.append(SentenceOut(
+                    text=sentence.text or "",
+                    translation=sentence_translation_obj.translated_text if sentence_translation_obj else None
+                ))
+
+            # 7. Patch same payload format
+            payload.translation = main_translation
+            payload.translations = translations
+            payload.example_sentences = example_sentences
+            payload.targetLangName = target_lang_name
+            payload.target_languages = [target]
+            payload.langTo = target
+
+            if main_translation:
+                payload.audio_urls[target] = f"https://api.w9999.app/tts/{target}/{main_translation}"
+
+            return payload
+
+        except Exception as e:
+            print(f"Error in get_word_rich_with_target_translation: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+
 
 
 class DeepSeekRepo:
